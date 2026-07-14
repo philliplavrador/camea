@@ -1,0 +1,525 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://camea.local/schemas/project-1.0.json",
+  "title": "Camea Mosaic Builder project file",
+  "description": "THE PROJECT FILE IS A GROUND-TRUTH DOCUMENT WITH EXTRA KEYS. One file, two uses: the app round-trips it, and analysis/benchmark/score.py scores it UNCHANGED. score.load_gt() reads doc['tiles'][k]['status'] == 'anchor' plus x/y, and falls back to doc['tolerance_px']['region_default'] for a missing per-tile r. Every key those two lines need is REQUIRED below. Everything else is additive and score.py ignores it. Keep it that way: a project the scorer cannot read is a project that cannot be checked. ORIENTATION: every position in this file is the TOP-LEFT CORNER of the tile (never the centre; anything drawing a centre adds +256), in px, in the 180-degree-FLIPPED display frame (XML ax=-1, ay=-1) that every prior Camea position, every SWIM dx/dy and all three ground truths live in.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "dataset",
+    "tile_px",
+    "created",
+    "trial_range",
+    "coordinates",
+    "tolerance_px",
+    "origin_trial",
+    "provenance",
+    "unusable_tiles",
+    "tiles"
+  ],
+  "additionalProperties": true,
+
+  "properties": {
+    "schema_version": {
+      "const": "camea-project-1.0",
+      "description": "Bump only on a breaking change. A reader that does not recognise the value must refuse the file, not guess."
+    },
+    "app": {
+      "type": "object",
+      "description": "Who wrote this file.",
+      "properties": {
+        "name": { "const": "Camea Mosaic Builder" },
+        "version": { "type": "string", "examples": ["1.0.0"] }
+      }
+    },
+
+    "dataset": {
+      "type": "string",
+      "description": "The acquisition directory's name. Used to REFUSE loading a project into the wrong session.",
+      "examples": ["260620d"]
+    },
+    "data_dir": {
+      "type": "string",
+      "description": "Absolute path to the acquisition directory. Informational only; NEVER written to, and a project must still open if the path has moved (the user re-points it).",
+      "examples": ["D:/Projects/Camea/data/drive/260620/260620_Imaging/260620d"]
+    },
+    "tile_px": {
+      "const": 512,
+      "description": "512x512 is hard-coded through t33.TILE, t27.H/W, mosaic/io.py and excluded.py. A different tile size is not supported."
+    },
+    "created": {
+      "type": "string",
+      "description": "ISO-8601 date or datetime of first save.",
+      "examples": ["2026-07-12", "2026-07-12T15:22:04Z"]
+    },
+    "modified": { "type": "string", "description": "ISO-8601 UTC of the last save." },
+
+    "trial_range": {
+      "type": "array",
+      "description": "[lo, hi] INCLUSIVE — the acquisition run this project covers. The load guard compares this (and `dataset`) against the open session and REFUSES a mismatch. Pass 2's autosave once silently overwrote pass 1's ground-truth records; that hole stays shut.",
+      "items": { "type": "integer" },
+      "minItems": 2,
+      "maxItems": 2,
+      "examples": [[11, 348]]
+    },
+    "pass_split": {
+      "type": ["integer", "null"],
+      "description": "The LAST TRIAL OF PASS 1. t33 hard-partitions on `t <= pass_split`. This is the one number the placement method cannot measure for itself — it is a fact about the acquisition. The app MEASURES it from log.txt (the largest interior inter-trial time gap, ignoring the block's first step) and lets the user override. null = a single-pass run (use t27, not t33).",
+      "examples": [166]
+    },
+    "gaps": {
+      "type": "array",
+      "description": "DERIVED, and it MUST be recomputed on every change to the excluded set (excluded.gaps / t33.breaks). Consecutive pairs in the trial list that are NOT one acquisition step apart, because an excluded snapshot sits between them. The serpentine one-axis step prior does NOT hold across these. A build that assumes them away silently places the whole tail wrong.",
+      "items": {
+        "type": "array",
+        "items": { "type": "integer" },
+        "minItems": 2,
+        "maxItems": 2
+      },
+      "examples": [[[283, 297], [298, 311]]]
+    },
+
+    "coordinates": {
+      "type": "string",
+      "description": "A human-readable statement of the frame. Written verbatim so nobody has to guess later.",
+      "default": "RELATIVE. Tile TOP-LEFT in px, measured FROM `origin_trial` at (0,0), in the vscope-displayed (180deg-flipped) frame. Absolute position is meaningless; a scorer must slide a build onto this with a CONSENSUS translation before measuring."
+    },
+    "origin_trial": {
+      "type": "integer",
+      "description": "The trial pinned at (0,0). The app writes min(anchored trials). Positions are normalised on save so that this tile is exactly [0.0, 0.0] — matching analysis/ground_truth/.",
+      "examples": [11]
+    },
+    "tolerance_px": {
+      "type": "object",
+      "description": "REQUIRED BY score.load_gt: it uses tolerance_px.region_default as the fallback per-tile `r`. Keep the same three keys the existing ground truths use.",
+      "required": ["anchor", "region_default", "grading"],
+      "properties": {
+        "anchor": { "type": "number", "default": 96 },
+        "region_default": { "type": "number", "default": 256 },
+        "grading": {
+          "type": "number",
+          "default": 10,
+          "description": "The 10 px criterion. Failure on this data is BINARY — a tile is sub-pixel right or hundreds of px wrong — so 10 px costs nothing and 100 % is a fair target."
+        }
+      }
+    },
+
+    "unusable_tiles": {
+      "type": "array",
+      "description": "Every trial with x/y = null: the 26 thrown-out snapshots plus anything the user excluded during the sweep. Mirrors `tiles[*].status == 'excluded'`. Kept as a flat list because that is what the existing ground truths carry.",
+      "items": { "type": "integer" }
+    },
+    "EXCLUDED_TRIALS": {
+      "type": "object",
+      "description": "The hard ruling, copied verbatim from analysis/ground_truth/. Present so the file explains itself to a reader who has never seen this project.",
+      "properties": {
+        "ruling": {
+          "type": "string",
+          "default": "THROWN OUT. The user, 2026-07-11: 'i want these tiles to be thrown out and to never be used for any purposes whatsoever'. These frames are NOT DATA. Never load them, never feed them to a placement method, never let them vote in a solve, never render them, never 'rescue' them with a metric."
+        },
+        "trials": { "type": "array", "items": { "type": "integer" } },
+        "n": { "type": "integer" },
+        "blank": { "type": "object", "description": "11, by measurement (band-passed std below the pass-1 2nd percentile)." },
+        "blurry": { "type": "object", "description": "15, by the user's eye. NO automatic measure reproduces this call — best global blur threshold across 15 focus measures reaches F1 = 0.37, and variance-of-Laplacian is WORSE THAN CHANCE. Do not 'correct' this list from a metric." }
+      }
+    },
+
+    "run": {
+      "type": "object",
+      "description": "How the run was chosen, kept so the choice is auditable.",
+      "properties": {
+        "detected": { "type": "boolean" },
+        "why": { "type": "string", "examples": ["longest contiguous block of Snapshot trials"] },
+        "pass_split_detected": { "type": "boolean" },
+        "pass_split_why": { "type": "string" },
+        "n_trials": { "type": "integer", "description": "The USABLE count. State the denominator on every number: 156 / 156 / 312." }
+      }
+    },
+
+    "cursor": {
+      "type": ["integer", "null"],
+      "description": "The trial currently under judgement in the sweep. Restores the sweep exactly where the user left it."
+    },
+    "tone": {
+      "type": "object",
+      "description": "The GLOBAL tone-mapping window in force. Display only — it NEVER touches the matcher. A per-tile stretch is forbidden: it makes overlapping tiles disagree in brightness and destroys the Difference-mode check the whole verification loop depends on.",
+      "properties": {
+        "lo": { "type": "number" },
+        "hi": { "type": "number" },
+        "level": { "type": "number" },
+        "flat_sigma": { "type": "number", "default": 15.0 },
+        "pct_lo": { "type": "number", "default": 0.5 },
+        "pct_hi": { "type": "number", "default": 99.6 },
+        "auto": { "type": "boolean" }
+      }
+    },
+    "blank_scan": {
+      "type": "object",
+      "description": "What the BLANK measure said. Blanks are REFUSED by the matcher (two blank frames 136 trials apart correlate +0.43 at zero shift — they share fixed-pattern SENSOR structure, which does not move with the stage, so they register confidently and WRONGLY). Blur is NOT judged here and must never be.",
+      "properties": {
+        "threshold": { "type": "number", "examples": [60.11] },
+        "measure": { "const": "std of DoG(sigma=3, sigma=30) of the flipped frame" },
+        "blank": { "type": "array", "items": { "type": "integer" } },
+        "accepted": { "type": "boolean", "description": "Did the user accept the recommendation? The scan RECOMMENDS; it never auto-rejects." }
+      }
+    },
+
+    "build": {
+      "type": ["object", "null"],
+      "description": "The machine build this sweep was seeded from. null = the user placed from scratch, and this document is then an INDEPENDENT truth (see provenance).",
+      "properties": {
+        "build_id": { "type": "string", "examples": ["260620d__t33__20260712T140702Z"] },
+        "method": { "type": "string", "default": "t33" },
+        "created": { "type": "string" },
+        "seconds": { "type": "number" },
+        "gpu": { "type": "boolean" },
+        "n_placed": { "type": "integer" },
+        "config": {
+          "type": "object",
+          "description": "t33.Config as a plain dict. NOTE: t33's own info['config'] is NOT JSON-serializable (it nests a t27.Config object) and json.dumps CRASHES on it. Serialize with default=lambda o: vars(o)."
+        },
+        "info": { "type": "object", "description": "t33's info dict, made JSON-safe. Includes runs, cuts, margins, min_margin, run_origins, pass1_max_dev." },
+        "positions": {
+          "type": "object",
+          "description": "THE MACHINE'S ANSWER, untouched — kept so the QC report can say exactly what the human changed, and so a corrupted sweep can be rolled back to it. {\"<trial>\": [x, y]}.",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "description": "MANDATORY, AND NOT DECORATION. Pass 1's ground truth got tiles 128/129/130/148 WRONG precisely because it was seeded from a build and the human deferred to it — caught only because pass 2 was later authored blind. A verification UI that shows the machine's answer and lets a human click 'accept' is structurally that same hazard. This project has ALREADY destroyed one benchmark by overwriting it with an algorithm's output, after which that algorithm scored 100 % by construction. Stamp the truth about where these numbers came from into the file itself.",
+      "required": ["authored_by", "workflow", "seeded_from", "independent_of_method"],
+      "properties": {
+        "authored_by": { "type": "string", "default": "Camea Mosaic Builder" },
+        "app_version": { "type": "string" },
+        "workflow": {
+          "type": "string",
+          "enum": ["machine-seeded verification sweep", "hand placement from scratch"],
+          "description": "'machine-seeded verification sweep' = a build ran and the human confirmed/corrected it. 'hand placement from scratch' = no build was ever loaded."
+        },
+        "seeded_from": {
+          "type": ["object", "null"],
+          "description": "null iff workflow == 'hand placement from scratch'.",
+          "properties": {
+            "method": { "type": "string", "examples": ["t33"] },
+            "build_id": { "type": "string" },
+            "config": { "type": "object" }
+          }
+        },
+        "independent_of_method": {
+          "type": "boolean",
+          "description": "TRUE only when seeded_from is null. When false, this document MUST NEVER be used to score the method that produced it — the score would be 100 % by construction, and the benchmark could no longer detect its own errors."
+        },
+        "warning": {
+          "type": "string",
+          "description": "REQUIRED whenever independent_of_method is false. Omit it only when the document is genuinely independent.",
+          "default": "NOT AN INDEPENDENT GROUND TRUTH. Every position here started as a machine build's output and was confirmed or corrected by a human who could see it. It MUST NEVER be used to score that method or any method derived from it — the score would be 100 % by construction. This project has already destroyed one benchmark exactly this way."
+        },
+        "human_edits": {
+          "type": "object",
+          "description": "The honest record of what the human actually did. Also the QC report's headline.",
+          "properties": {
+            "accepted_unchanged": { "type": "integer", "description": "anchored at exactly the machine's position (moved < 0.5 px)" },
+            "moved": { "type": "integer" },
+            "excluded": { "type": "integer" },
+            "unverified": { "type": "integer", "description": "placed but never judged — Space without a decision" },
+            "rescued": { "type": "integer", "description": "tiles the solver could not place, that the human placed" },
+            "median_move_px": { "type": "number" },
+            "max_move_px": { "type": "number" }
+          }
+        },
+        "scale": {
+          "type": "object",
+          "description": "PIXELS ONLY, FOR NOW. The MEA grid pitch measures 13.805 px in pass 2 but 14.15 px in pass 1 — a 2.5 % magnification difference between the passes that is NOT YET RESOLVED (app/SCALE.md). Never put a single scale bar on a figure spanning both passes: at best it is right for one pass and 2.5 % wrong for the other.",
+          "properties": {
+            "um_per_px": { "type": ["number", "null"], "default": null },
+            "source": { "type": "string", "enum": ["user-supplied", "measured", "unknown"], "default": "unknown" }
+          }
+        }
+      }
+    },
+
+    "audits": {
+      "type": "array",
+      "description": "Optional. Free-form audit records, matching the existing ground truths' shape.",
+      "items": { "type": "object" }
+    },
+
+    "tiles": {
+      "type": "object",
+      "description": "⭐ THE DOCUMENT. Keys are TRIAL NUMBERS AS DECIMAL STRINGS, unpadded ('11', not '011') — JSON has no integer keys. One entry per trial in the run, INCLUDING the excluded ones (so the file records why a trial is missing rather than losing it).",
+      "propertyNames": { "pattern": "^[0-9]+$" },
+      "additionalProperties": { "$ref": "#/$defs/tile" }
+    }
+  },
+
+  "$defs": {
+    "tile": {
+      "type": "object",
+      "required": ["status", "state", "x", "y"],
+      "additionalProperties": true,
+      "description": "One tile. `status` is the GROUND-TRUTH-COMPATIBLE field that benchmark/score.py reads; `state` is the APP's field. They are two spellings of the same fact and the app writes BOTH, so no reader ever has to reverse-map. On load: `state` wins if present, else derive it from `status` ('anchor'->anchored, 'excluded'->excluded, anything else->unverified if x/y are non-null, else unplaced). Unknown keys are PRESERVED VERBATIM through a round-trip — the bench's gtDoc() does this deliberately, and a lossy round-trip would quietly destroy a hand-written note.",
+      "properties": {
+        "status": {
+          "enum": ["anchor", "unverified", "unplaced", "excluded"],
+          "description": "⛔ score.load_gt() KEEPS ONLY status == 'anchor'. That is the point: an 'unverified' tile is placed but NOT human-certified, so it must not be scored and must not inflate a denominator. 'anchor' <-> state 'anchored' (note the spelling difference: the existing ground truths say 'anchor', so the wire format says 'anchor')."
+        },
+        "state": {
+          "enum": ["anchored", "unverified", "unplaced", "excluded"],
+          "description": "THE APP'S TILE STATE MACHINE. Exactly four states; see app/API.md §2 for the complete transition table.\n  anchored   — the user pressed A. Ground truth. Part of the anchor field every later tile is judged against. Drawn solid, full opacity, BOTTOM layer.\n  unverified — the user pressed Space without deciding. PLACED, drawn dimmer (55 % + dashed outline), NOT part of the anchor field, and it DOES NOT BLOCK PROGRESS. Deferring a hard tile must never stall the sweep.\n  unplaced   — no position yet (not reached, or the solver could not place it). In the queue / rescue list.\n  excluded   — the user pressed E. Not drawn, not matched, not rendered, not exported."
+        },
+        "x": {
+          "type": ["number", "null"],
+          "description": "TOP-LEFT corner, px. null iff state is 'excluded' or 'unplaced'. NOT the centre."
+        },
+        "y": { "type": ["number", "null"], "description": "TOP-LEFT corner, px. null iff state is 'excluded' or 'unplaced'." },
+        "r": {
+          "type": "number",
+          "description": "Per-tile scoring tolerance in px. score.load_gt falls back to tolerance_px.region_default when absent. The existing ground truths write 96 on anchors and 256 on excluded rows; do the same.",
+          "default": 96
+        },
+        "pass": { "type": "integer", "enum": [1, 2], "description": "1 iff trial <= pass_split." },
+
+        "source": {
+          "type": "string",
+          "description": "How this position was arrived at. Free text, but prefer these.",
+          "examples": [
+            "t33 build, accepted unchanged",
+            "t33 build, corrected by hand + snapped against the anchor composite",
+            "placed against the anchor composite (Space)",
+            "hand-dragged + snapped against the anchor composite",
+            "hand-dragged (no snap — blank tile, matcher refused)",
+            "origin tile"
+          ]
+        },
+        "machine": {
+          "type": ["array", "null"],
+          "description": "What the BUILD said, before the human touched it: [x, y], or null if the solver never placed it. Kept per tile so the QC report and the provenance stamp are derivable from this file alone.",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "moved_px": {
+          "type": ["number", "null"],
+          "description": "DERIVED: |final - machine|. 0 (or < 0.5) = accepted unchanged. null if there was no machine position."
+        },
+        "ncc": {
+          "type": ["number", "null"],
+          "description": "The masked NCC of this tile against the anchor composite at its final position, when one was measured. Evidence, not a verdict."
+        },
+        "margin": {
+          "type": ["number", "null"],
+          "description": "best - second NCC from the ranked candidate list. ⚠️ A THIN MARGIN (< 0.10) IS THE SIGNATURE OF A SURVIVING ALIAS — the shipped build's worst run margin is 0.081 against a ~0.47 typical. Flag it; never hide it."
+        },
+        "n_anchors": {
+          "type": ["integer", "null"],
+          "description": "How many tiles were in the anchor field when this tile was matched. APERTURE IS EVERYTHING: at n_anchors = 1 this was a tile-PAIR match, whose exact-NCC argmax is >20 px wrong 5 % of the time at scores up to 0.760. Record it so the evidence can be re-read honestly."
+        },
+
+        "blank": {
+          "type": "boolean",
+          "description": "MEASURED: below the band-passed-std threshold. The matcher REFUSES these — it does not score them."
+        },
+        "unusable_reason": {
+          "enum": ["blank", "blurry", "other"],
+          "description": "Two channels, and they are different kinds of claim: 'blank' is MEASURED, 'blurry' is HUMAN-ASSERTED. No automatic measure reproduces the blur call — do not let one overwrite it."
+        },
+        "excluded": { "type": "boolean", "description": "Legacy mirror of status == 'excluded'. Written for compatibility with the existing ground truths." },
+        "excluded_reason": { "type": "string" },
+        "note": { "type": "string", "description": "The user's free text. PRESERVED VERBATIM across a round-trip." },
+        "last_xy": {
+          "type": ["array", "null"],
+          "description": "The position this tile had before it was excluded, so un-excluding restores it instead of losing it. Never read by anything but the app.",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "judged_at": { "type": ["string", "null"], "description": "ISO-8601 UTC of the A/E press. The sweep's audit trail." }
+      },
+
+      "allOf": [
+        {
+          "description": "A placed tile has a position; an unplaced/excluded one does not. This is the invariant the whole state machine rests on.",
+          "if": { "properties": { "state": { "enum": ["anchored", "unverified"] } }, "required": ["state"] },
+          "then": { "properties": { "x": { "type": "number" }, "y": { "type": "number" } } }
+        },
+        {
+          "if": { "properties": { "state": { "enum": ["excluded", "unplaced"] } }, "required": ["state"] },
+          "then": { "properties": { "x": { "type": "null" }, "y": { "type": "null" } } }
+        },
+        {
+          "description": "status and state must agree. anchored<->anchor is the only spelling difference.",
+          "if": { "properties": { "state": { "const": "anchored" } }, "required": ["state"] },
+          "then": { "properties": { "status": { "const": "anchor" } } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "unverified" } }, "required": ["state"] },
+          "then": { "properties": { "status": { "const": "unverified" } } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "unplaced" } }, "required": ["state"] },
+          "then": { "properties": { "status": { "const": "unplaced" } } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "excluded" } }, "required": ["state"] },
+          "then": { "properties": { "status": { "const": "excluded" } } }
+        }
+      ]
+    }
+  },
+
+  "examples": [
+    {
+      "schema_version": "camea-project-1.0",
+      "app": { "name": "Camea Mosaic Builder", "version": "1.0.0" },
+      "dataset": "260620d",
+      "data_dir": "D:/Projects/Camea/data/drive/260620/260620_Imaging/260620d",
+      "tile_px": 512,
+      "created": "2026-07-12T15:22:04Z",
+      "modified": "2026-07-12T16:41:19Z",
+      "trial_range": [11, 348],
+      "pass_split": 166,
+      "gaps": [[283, 297], [298, 311]],
+      "coordinates": "RELATIVE. Tile TOP-LEFT in px, measured FROM `origin_trial` at (0,0), in the vscope-displayed (180deg-flipped) frame. Absolute position is meaningless; a scorer must slide a build onto this with a CONSENSUS translation before measuring.",
+      "origin_trial": 11,
+      "tolerance_px": { "anchor": 96, "region_default": 256, "grading": 10 },
+      "cursor": 214,
+      "unusable_tiles": [284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 348],
+      "tone": { "lo": 118.4, "hi": 1902.7, "level": 861.0, "flat_sigma": 15.0, "pct_lo": 0.5, "pct_hi": 99.6, "auto": true },
+      "blank_scan": {
+        "threshold": 60.11,
+        "measure": "std of DoG(sigma=3, sigma=30) of the flipped frame",
+        "blank": [289, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309],
+        "accepted": true
+      },
+      "build": {
+        "build_id": "260620d__t33__20260712T140702Z",
+        "method": "t33",
+        "created": "2026-07-12T14:10:52Z",
+        "seconds": 229.9,
+        "gpu": true,
+        "n_placed": 312,
+        "config": { "pass_split": 166, "anchor_ncc": 0.3, "split_px": 12.0, "look": 3, "min_side": 2 },
+        "positions": { "11": [0.0, 0.0], "12": [0.0, 180.0] }
+      },
+      "provenance": {
+        "authored_by": "Camea Mosaic Builder",
+        "app_version": "1.0.0",
+        "workflow": "machine-seeded verification sweep",
+        "seeded_from": { "method": "t33", "build_id": "260620d__t33__20260712T140702Z", "config": {} },
+        "independent_of_method": false,
+        "warning": "NOT AN INDEPENDENT GROUND TRUTH. Every position here started as a machine build's output and was confirmed or corrected by a human who could see it. It MUST NEVER be used to score that method or any method derived from it — the score would be 100 % by construction. This project has already destroyed one benchmark exactly this way.",
+        "human_edits": {
+          "accepted_unchanged": 288,
+          "moved": 19,
+          "excluded": 3,
+          "unverified": 2,
+          "rescued": 0,
+          "median_move_px": 1.4,
+          "max_move_px": 41.2
+        },
+        "scale": { "um_per_px": null, "source": "unknown" }
+      },
+      "tiles": {
+        "11": {
+          "status": "anchor",
+          "state": "anchored",
+          "x": 0.0,
+          "y": 0.0,
+          "r": 96,
+          "pass": 1,
+          "source": "origin tile",
+          "machine": [0.0, 0.0],
+          "moved_px": 0.0,
+          "ncc": null,
+          "margin": null,
+          "n_anchors": 0,
+          "judged_at": "2026-07-12T15:23:10Z"
+        },
+        "12": {
+          "status": "anchor",
+          "state": "anchored",
+          "x": 0.0,
+          "y": 180.0,
+          "r": 96,
+          "pass": 1,
+          "source": "t33 build, accepted unchanged",
+          "machine": [0.0, 180.0],
+          "moved_px": 0.0,
+          "ncc": 0.8137,
+          "margin": 0.2376,
+          "n_anchors": 1,
+          "judged_at": "2026-07-12T15:23:14Z"
+        },
+        "127": {
+          "status": "anchor",
+          "state": "anchored",
+          "x": -257.0,
+          "y": 1088.4,
+          "r": 96,
+          "pass": 1,
+          "source": "t33 build, corrected by hand + snapped against the anchor composite",
+          "machine": [-248.1, 1084.2],
+          "moved_px": 9.84,
+          "ncc": 0.7712,
+          "margin": 0.4103,
+          "n_anchors": 116,
+          "judged_at": "2026-07-12T15:41:02Z"
+        },
+        "214": {
+          "status": "unverified",
+          "state": "unverified",
+          "x": 361.0,
+          "y": -420.0,
+          "r": 96,
+          "pass": 2,
+          "source": "placed against the anchor composite (Space)",
+          "machine": [361.2, -419.6],
+          "moved_px": 0.45,
+          "ncc": 0.6540,
+          "margin": 0.0812,
+          "n_anchors": 203,
+          "note": "thin margin — come back to this one",
+          "judged_at": null
+        },
+        "284": {
+          "status": "excluded",
+          "state": "excluded",
+          "x": null,
+          "y": null,
+          "r": 256,
+          "pass": 2,
+          "blank": false,
+          "unusable_reason": "blurry",
+          "excluded": true,
+          "excluded_reason": "blurry",
+          "note": "Too out of focus to register (excluded by the user, by eye). Has light and contrast but no SHARP detail to lock a match onto. No automatic sharpness measure flags it — which is why the human call is the one that counts.",
+          "last_xy": null,
+          "judged_at": null
+        },
+        "304": {
+          "status": "excluded",
+          "state": "excluded",
+          "x": null,
+          "y": null,
+          "r": 256,
+          "pass": 2,
+          "blank": true,
+          "unusable_reason": "blank",
+          "excluded": true,
+          "excluded_reason": "blank",
+          "note": "Near-featureless glare. What two blank frames share is fixed-pattern SENSOR structure, which does not move with the stage — so they correlate at zero shift no matter where the microscope was. The matcher REFUSES it.",
+          "last_xy": null,
+          "judged_at": null
+        }
+      }
+    }
+  ]
+}

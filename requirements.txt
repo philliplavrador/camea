@@ -1,0 +1,26 @@
+# Camea Mosaic Builder — runtime dependencies.
+# Python >= 3.12 is MANDATORY (spectralign requires it; there is no 3.11 fallback).
+
+# --- the shell ---
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pywebview>=6.0            # Windows: renders in WebView2, preinstalled on Win 11
+
+# --- the engine ---
+numpy>=2.0
+scipy>=1.14
+opencv-python>=4.10       # ⚠️ do NOT swap for scipy: it shifts the blank-detection
+                          #    metric by 0.32% against a threshold whose nearest
+                          #    margin is 0.13% — it can flip a blank classification.
+Pillow>=10.0
+tifffile>=2024.1          # the 16-bit TIFF export
+matplotlib>=3.8           # layout PNGs only
+
+# --- placement (GPL-3.0-or-later; this is why the project is GPL-3.0) ---
+spectralign>=0.4.2
+
+# --- optional: GPU ---
+# A 312-tile build is ~3 min with a CUDA GPU, ~8-10 min without. The interactive
+# sweep — where you actually spend the hour — is only 1.46x slower on CPU, because
+# exact_ncc runs on the CPU either way. CPU-only is genuinely shippable.
+#   pip install cupy-cuda12x

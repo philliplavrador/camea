@@ -1,0 +1,68 @@
+# ---------------------------------------------------------------------------
+# Camea Mosaic Builder — PUBLISHED SUBSET ONLY.
+#
+# This working tree contains far more than it publishes: a ~35 GB read-only data
+# mirror, the placement challenge, the hand-authored ground truth, notebooks, and
+# the cross-session knowledge base. NONE of that is published.
+#
+# Strategy: DENY EVERYTHING, then allow back exactly the app and the engine it
+# calls. A new top-level directory is invisible to git by default — that is the
+# point. If you add something that SHOULD ship, allow it explicitly below.
+#
+# ⚠️ NOTE: git does NOT support trailing comments on a pattern line. A comment
+# after a pattern becomes PART OF THE PATTERN and silently matches nothing.
+# Every comment here is on its own line, deliberately.
+# ---------------------------------------------------------------------------
+
+# --- 1. deny every top-level entry. This is what keeps data/ out, permanently.
+/*
+
+# --- 2. allow back the repo's own furniture
+!/.gitignore
+!/LICENSE
+!/README.md
+!/requirements.txt
+
+# --- 3. the app
+!/app/
+
+# 138 MB of tissue screenshots, server logs, and EXPORTED GROUND TRUTH. Not published.
+app/shots/
+
+# not built yet
+app/packaging/
+
+# the build harness that produced the app — not part of the app
+app/build_workflow.js
+app/final_pass.js
+app/PROMPT.md
+
+# --- 4. the engine the app CALLS.
+# Not a copy: the app imports these directly, so there is exactly one t33 and it
+# cannot silently diverge from a fork.
+!/analysis/
+analysis/*
+!analysis/mosaic/
+!analysis/ground_truth/
+!analysis/benchmark/
+
+# ground_truth: the EXCLUSION RULE is code the app needs.
+# The hand-authored ground-truth JSONs are unpublished research. They stay out.
+analysis/ground_truth/*
+!analysis/ground_truth/excluded.py
+
+# benchmark: the scorer only. Its GT paths resolve to files that are not in this
+# repo, which is fine — nothing reads them at module load.
+analysis/benchmark/*
+!analysis/benchmark/score.py
+
+# --- 5. never, anywhere
+__pycache__/
+*.pyc
+*.pyo
+*.camea.json
+.playwright-mcp/
+*.npz
+*.npy
+*.tif
+*.tiff

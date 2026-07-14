@@ -1,0 +1,517 @@
+/* Camea Mosaic Builder — styles.
+ *
+ * OWNER: agent 4 (with viewer.js). Nobody else edits this file.
+ *
+ * The tokens below are the CONTRACT between the two front-end agents: sweep.js sets the state
+ * classes, viewer.js and this file decide what they look like. Do not rename them.
+ *
+ * ⚠️ THE TILE STATE VISUALS ARE PART OF THE SPEC (API.md §2), NOT A STYLE CHOICE. The dimming of
+ * `unverified` is what tells the user, at a glance, which tiles are still outstanding — and the
+ * whole design rests on "deferring a hard tile must never stall the sweep", which only works if a
+ * deferred tile is VISIBLY deferred.
+ *
+ * ⚠️ Tiles arrive from the server already flat-fielded and globally tone-mapped. NEVER apply a CSS
+ * filter (brightness/contrast) to a tile. A per-tile stretch makes overlapping tiles disagree in
+ * tone and DESTROYS the Difference-mode check the whole verification loop depends on.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────────────────
+ * AGENT 5: THE CLASSES THIS FILE PROVIDES. Use them; do not invent parallel ones.
+ *
+ *   LAYOUT      #app  .shell            the grid: header / rail / stage / rail / footer
+ *               .topbar  .brand  .steps  .step (.on/.done)   the 5-step header
+ *               .rail  .rail-left  .rail-right   .panel  .panel h3  .panel-body
+ *               .stage   (position:relative — the <canvas id="view"> fills it)
+ *               .statusbar   .status-item
+ *
+ *   CONTROLS    .btn  .btn.primary  .btn.ghost  .btn.danger  .btn.sm  [disabled]
+ *               .kbd                a keycap:  <kbd class="kbd">A</kbd>
+ *               .chip  .chip.on     a toggle pill
+ *               .field  .field label  input/select
+ *               .switch
+ *
+ *   READOUTS    .stat  .stat .k  .stat .v            a label/value row
+ *               .badge  .badge.anchored / .unverified / .excluded / .unplaced / .blank
+ *               .meter  .meter > i                   an NCC / progress bar
+ *               .warn  .warn.loud                    ⚠️ USE .loud FOR margin_thin (< 0.10)
+ *               .progress  .progress > i
+ *               .log                                 the job's log_tail drawer
+ *
+ *   SCREENS     .screen (hidden by default)  .screen.on
+ *               .sheet  .sheet .cell  .cell.on  .cell.blank       the contact sheet
+ *               .toast  .toast.show
+ *               .spinner
+ *
+ * Everything is dark-first (a microscopy tool is used in a dim room) and follows the OS in light
+ * mode. `data-theme="light"|"dark"` on <html> overrides the OS.
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   TOKENS
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+:root {
+  /* Tile states — API.md §2 */
+  --tile-anchored-alpha:   1.00;   /* solid, bottom layer, baked into the background canvas */
+  --tile-unverified-alpha: 0.55;   /* dimmer + dashed outline. NOT part of the anchor field. */
+  /* `unplaced` and `excluded` are NOT DRAWN AT ALL. */
+
+  --c-anchored:    #6ee7a8;
+  --c-unverified:  #f5c451;   /* the outstanding-work colour. It should nag. */
+  --c-excluded:    #6b7280;
+  --c-cursor:      #60a5fa;   /* the tile under judgement */
+  --c-alt:         #a78bfa;   /* a ranked alternative candidate */
+  --c-thin-margin: #f87171;   /* margin < 0.10 — the signature of a surviving alias. LOUD. */
+  /* DIVERTED — an unverified tile placed at the SOLVER's position because the match was not
+     confident AND disagreed with it (the fallback ruling, 2026-07-12). It is still `unverified`
+     (dim + dashed, NOT anchored); this colour is what says the position came from the SOLVER and
+     not from the matcher. Without it a diverted tile is drawn identically to a confident one. */
+  --c-diverted:    #e879f9;
+
+  --fade-ms: 1000ms;          /* mirrors viewer.js FADE_MS. The fade is the point; do not shorten it. */
+
+  /* Surfaces. Dark is the default: this is a tool for a dim microscope room, and a bright chrome
+     next to a 55 %-opacity tile makes the tile look wrong when it is not. */
+  --bg:        #0b0d10;   /* app background */
+  --canvas:    #0b0d10;   /* THE CANVAS CLEAR COLOUR — read by viewer.js via getComputedStyle */
+  --grid:      #262c34;   /* the optional 512-px grid */
+  --surface:   #12161c;   /* panels */
+  --surface-2: #171d25;   /* raised: inputs, hovered rows */
+  --line:      #232a34;   /* hairlines */
+  --faint:     #5b6472;   /* tile outlines, disabled ink */
+  --ink:       #e6eaf0;
+  --ink-dim:   #97a1b0;
+  --accent:    #60a5fa;
+  --accent-ink:#08111f;
+  --marquee:   #60a5fa;
+  --ok:        #6ee7a8;
+  --warn:      #f5c451;
+  --bad:       #f87171;
+
+  --r:   8px;    /* radius */
+  --r-s: 6px;
+  --pad: 12px;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --shadow: 0 6px 24px rgba(0, 0, 0, .45);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #eef1f5;
+    --canvas: #dfe4ea;
+    --grid: #c2c9d2;
+    --surface: #ffffff;
+    --surface-2: #f4f6f9;
+    --line: #dde2e9;
+    --faint: #8b95a3;
+    --ink: #10151b;
+    --ink-dim: #5a6472;
+    --accent: #2563eb;
+    --accent-ink: #ffffff;
+    --shadow: 0 6px 24px rgba(15, 23, 42, .12);
+    --c-anchored: #12a06a;
+    --c-unverified: #b07d0b;
+    --c-thin-margin: #dc2626;
+    --c-diverted: #a21caf;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #eef1f5; --canvas: #dfe4ea; --grid: #c2c9d2; --surface: #fff; --surface-2: #f4f6f9;
+  --line: #dde2e9; --faint: #8b95a3; --ink: #10151b; --ink-dim: #5a6472; --accent: #2563eb;
+  --accent-ink: #fff; --shadow: 0 6px 24px rgba(15,23,42,.12);
+  --c-anchored: #12a06a; --c-unverified: #b07d0b; --c-thin-margin: #dc2626;
+  --c-diverted: #a21caf;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   BASE
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13.5px/1.45 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;                 /* the app is a fixed shell; only panels scroll */
+  user-select: none;
+}
+h1, h2, h3, h4 { margin: 0; font-weight: 650; }
+a { color: var(--accent); }
+::selection { background: var(--accent); color: var(--accent-ink); }
+
+/* thin, unobtrusive scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; border: 3px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   SHELL
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+#app, .shell {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 48px 1fr 26px;
+  grid-template-columns: 300px 1fr 320px;
+  grid-template-areas:
+    "top  top    top"
+    "left stage  right"
+    "bar  bar    bar";
+  gap: 0;
+}
+.shell.no-left  { grid-template-columns: 0 1fr 320px; }
+.shell.no-right { grid-template-columns: 300px 1fr 0; }
+.shell.no-left.no-right { grid-template-columns: 0 1fr 0; }
+.shell.no-left  .rail-left,
+.shell.no-right .rail-right { display: none; }
+
+.topbar {
+  grid-area: top;
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 700; letter-spacing: .2px; white-space: nowrap; }
+.brand small { color: var(--ink-dim); font-weight: 500; margin-left: 6px; }
+.topbar .spacer { flex: 1; }
+
+/* the five steps */
+.steps { display: flex; gap: 2px; }
+.step {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px;
+  color: var(--ink-dim); font-size: 12.5px; font-weight: 600;
+  background: transparent; border: 1px solid transparent;
+  cursor: pointer; white-space: nowrap;
+}
+.step:hover { background: var(--surface-2); color: var(--ink); }
+.step .n {
+  display: grid; place-items: center;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: var(--line); color: var(--ink-dim);
+  font: 600 10px/1 var(--mono);
+}
+.step.done .n { background: var(--c-anchored); color: #06211a; }
+.step.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.step.on .n { background: rgba(0, 0, 0, .28); color: #fff; }
+.step[disabled], .step.locked { opacity: .4; pointer-events: none; }
+
+/* rails */
+.rail {
+  overflow-y: auto; overflow-x: hidden;
+  background: var(--surface);
+  display: flex; flex-direction: column;
+}
+.rail-left  { grid-area: left;  border-right: 1px solid var(--line); }
+.rail-right { grid-area: right; border-left: 1px solid var(--line); }
+
+.panel { border-bottom: 1px solid var(--line); }
+.panel > h3 {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px var(--pad);
+  font: 600 11px/1 var(--sans);
+  letter-spacing: .09em; text-transform: uppercase;
+  color: var(--ink-dim);
+  background: var(--surface);
+}
+.panel > h3 .spacer { flex: 1; }
+.panel-body { padding: 0 var(--pad) var(--pad); }
+.panel.collapsed .panel-body { display: none; }
+
+/* stage */
+.stage { grid-area: stage; position: relative; background: var(--canvas); overflow: hidden; }
+.stage > canvas, canvas#view {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: default;
+}
+canvas.panning   { cursor: grabbing; }
+canvas.over-tile { cursor: grab; }
+
+/* a floating control cluster over the canvas */
+.overlay { position: absolute; z-index: 4; display: flex; gap: 6px; align-items: center; }
+.overlay.tl { left: 10px; top: 10px; }
+.overlay.tr { right: 10px; top: 10px; }
+.overlay.bl { left: 10px; bottom: 10px; }
+.overlay.br { right: 10px; bottom: 10px; }
+/* The overlays belong to the SWEEP. A pane (Load/Build/Export) covers the stage at z-index 3, but
+   the overlays are at 4 — so off the sweep they must be taken out of the layout entirely, or they
+   float over the pane's text and eat clicks in the corners. */
+.stage.no-overlays > .overlay { display: none; }
+.overlay .btn, .overlay .chip {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: var(--shadow);
+}
+
+/* status bar */
+.statusbar {
+  grid-area: bar;
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  font: 500 11.5px/1 var(--mono);
+  color: var(--ink-dim);
+}
+.status-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.status-item b { color: var(--ink); font-weight: 600; }
+.statusbar .spacer { flex: 1; }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   CONTROLS
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--line); border-radius: var(--r-s);
+  background: var(--surface-2); color: var(--ink);
+  font: 600 12.5px/1 var(--sans);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, opacity .12s;
+  white-space: nowrap;
+}
+.btn:hover:not([disabled]) { background: color-mix(in srgb, var(--surface-2) 70%, var(--accent) 12%); border-color: var(--accent); }
+.btn:active:not([disabled]) { transform: translateY(.5px); }
+.btn[disabled] { opacity: .42; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover:not([disabled]) { filter: brightness(1.08); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--ink-dim); }
+.btn.ghost:hover:not([disabled]) { background: var(--surface-2); color: var(--ink); }
+.btn.danger { border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); color: var(--bad); }
+.btn.danger:hover:not([disabled]) { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.btn.sm { padding: 4px 8px; font-size: 11.5px; }
+.btn.block { width: 100%; }
+.btn.big { padding: 12px 18px; font-size: 14.5px; }
+
+.btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* a keycap. The sweep IS the keyboard — show the keys. */
+.kbd {
+  display: inline-grid; place-items: center;
+  min-width: 20px; height: 20px; padding: 0 5px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: 600 11px/1 var(--mono);
+}
+.kbd.wide { min-width: 46px; }
+.btn .kbd { background: rgba(0, 0, 0, .22); border-color: rgba(255, 255, 255, .16); color: inherit; }
+
+/* a toggle pill */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: transparent; color: var(--ink-dim);
+  font: 600 11.5px/1 var(--sans);
+  cursor: pointer;
+}
+.chip:hover { color: var(--ink); border-color: var(--faint); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+/* fields */
+.field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.field > label { font: 600 11px/1 var(--sans); color: var(--ink-dim); letter-spacing: .04em; text-transform: uppercase; }
+.field .hint { font-size: 11.5px; color: var(--ink-dim); }
+input[type="text"], input[type="number"], select, textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--line); border-radius: var(--r-s);
+  background: var(--surface-2); color: var(--ink);
+  font: 13px/1.3 var(--mono);
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus, .btn:focus-visible, .chip:focus-visible, .step:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.row.tight { gap: 5px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   READOUTS  —  he watches the evidence strengthen; he does not take it on faith (API.md §7.1)
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+.stat {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 3.5px 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--line) 70%, transparent);
+  font-size: 12.5px;
+}
+.stat:last-child { border-bottom: 0; }
+.stat .k { color: var(--ink-dim); }
+.stat .v { font: 600 12.5px/1.3 var(--mono); color: var(--ink); text-align: right; }
+.stat .v.big { font-size: 17px; }
+.stat .v.na { color: var(--faint); font-weight: 500; }   /* "not measurable" — never print 0.0 */
+
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 999px;
+  font: 600 11px/1.5 var(--sans);
+  border: 1px solid transparent;
+}
+.badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge.anchored   { color: var(--c-anchored);   background: color-mix(in srgb, var(--c-anchored) 14%, transparent);   border-color: color-mix(in srgb, var(--c-anchored) 34%, transparent); }
+.badge.unverified { color: var(--c-unverified); background: color-mix(in srgb, var(--c-unverified) 14%, transparent); border-color: color-mix(in srgb, var(--c-unverified) 34%, transparent); }
+.badge.excluded   { color: var(--c-excluded);   background: color-mix(in srgb, var(--c-excluded) 16%, transparent);   border-color: color-mix(in srgb, var(--c-excluded) 34%, transparent); }
+.badge.unplaced   { color: var(--faint);        background: color-mix(in srgb, var(--faint) 12%, transparent);        border-color: color-mix(in srgb, var(--faint) 30%, transparent); }
+.badge.blank      { color: var(--c-thin-margin);background: color-mix(in srgb, var(--c-thin-margin) 14%, transparent);border-color: color-mix(in srgb, var(--c-thin-margin) 36%, transparent); }
+.badge.gpu        { color: var(--accent);       background: color-mix(in srgb, var(--accent) 14%, transparent);       border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
+/* DIVERTED — placed at the SOLVER's position, not the matcher's. Same colour as the canvas outline. */
+.badge.diverted   { color: var(--c-diverted);   background: color-mix(in srgb, var(--c-diverted) 14%, transparent);   border-color: color-mix(in srgb, var(--c-diverted) 40%, transparent); }
+
+/* an NCC / margin bar */
+.meter { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--c-anchored); border-radius: 3px; transition: width .18s; }
+.meter.thin > i { background: var(--c-thin-margin); }
+
+/* ⚠️ margin_thin (< 0.10) is the signature of a surviving alias. FLAG IT LOUDLY. */
+.warn {
+  display: flex; gap: 8px;
+  padding: 8px 10px; margin: 8px 0;
+  border-radius: var(--r-s);
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.warn.loud {
+  border-left-color: var(--c-thin-margin);
+  background: color-mix(in srgb, var(--c-thin-margin) 14%, transparent);
+  font-weight: 600;
+  animation: pulse-warn 1.1s ease-in-out 3;
+}
+@keyframes pulse-warn {
+  0%, 100% { background: color-mix(in srgb, var(--c-thin-margin) 14%, transparent); }
+  50%      { background: color-mix(in srgb, var(--c-thin-margin) 30%, transparent); }
+}
+.warn.info { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+.progress { height: 7px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.progress > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.progress.indeterminate > i {
+  width: 34%;
+  animation: slide 1.15s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(330%); } }
+
+.log {
+  max-height: 150px; overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--r-s);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font: 11.5px/1.5 var(--mono);
+  color: var(--ink-dim);
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+   SCREENS
+   ═══════════════════════════════════════════════════════════════════════════════════════════ */
+.screen { display: none; }
+.screen.on { display: block; }
+.screen.pad { padding: 20px; overflow: auto; height: 100%; }
+
+/* the contact sheet (step 1) — ONE sprite sheet, positioned by background-position. */
+.sheet {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 3px;
+}
+.sheet .cell {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background-repeat: no-repeat;
+  background-size: auto;            /* the sprite sheet is 1:1 — never scale it per cell */
+  image-rendering: pixelated;
+  cursor: pointer;
+}
+.sheet .cell:hover { border-color: var(--accent); }
+.sheet .cell.on { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent); }
+.sheet .cell.blank { outline: 2px solid var(--c-thin-margin); outline-offset: -2px; }
+.sheet .cell.excluded { opacity: .28; filter: grayscale(1); }   /* chrome only — never on a live tile */
+.sheet .cell .t {
+  position: absolute; left: 1px; bottom: 1px;
+  padding: 0 3px; border-radius: 2px;
+  background: rgba(0, 0, 0, .6); color: #fff;
+  font: 600 9px/1.5 var(--mono);
+  pointer-events: none;
+}
+
+/* toast */
+.toast {
+  position: fixed; left: 50%; bottom: 46px;
+  transform: translate(-50%, 8px);
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  color: var(--ink); font-size: 12.5px; font-weight: 600;
+  opacity: 0; pointer-events: none;
+  transition: opacity .16s, transform .16s;
+  z-index: 40;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.bad { border-color: var(--bad); color: var(--bad); }
+
+/* modal */
+dialog {
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface); color: var(--ink);
+  box-shadow: var(--shadow);
+  padding: 0; max-width: 640px; width: 90vw;
+}
+dialog::backdrop { background: rgba(0, 0, 0, .55); backdrop-filter: blur(2px); }
+dialog > header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+dialog > .body { padding: 16px; max-height: 60vh; overflow: auto; }
+dialog > footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
+
+/* a list of trials (rescue queue, exclusion panel, alternatives) */
+.list { display: flex; flex-direction: column; gap: 1px; max-height: 260px; overflow: auto; }
+.list .item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: var(--r-s);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.list .item:hover { background: var(--surface-2); }
+.list .item.on { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.list .item .t { font: 600 12px/1 var(--mono); min-width: 30px; }
+.list .item .spacer { flex: 1; }
+.list .item .n { font: 500 11.5px/1 var(--mono); color: var(--ink-dim); }
+
+/* the alternatives panel: rank 0 is the placement, 1.. are the "did you mean here?" ghosts —
+   the same purple as the ghost boxes viewer.js draws on the canvas. */
+.list .item.alt .t { color: var(--c-alt); }
+
+.muted { color: var(--ink-dim); }
+.mono  { font-family: var(--mono); }
+.nowrap{ white-space: nowrap; }
+.sep   { height: 1px; background: var(--line); margin: 10px 0; }
+.hidden{ display: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* The 1-second fade is the app's core CHECK, not decoration — viewer.js still runs it.
+     Everything else stops moving. */
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
