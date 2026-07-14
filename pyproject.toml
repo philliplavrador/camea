@@ -1,0 +1,116 @@
+[project]
+name = "camea"
+version = "0.2.0"
+description = "A microscopy analysis desktop app. Build mosaics, and more."
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.12"
+
+# ⚠️ Python >= 3.12 is MANDATORY, not a preference. spectralign depends on salpa,
+# which ships cp312/313/314 wheels and NO sdist. There is no 3.11 fallback.
+
+dependencies = [
+    # --- the shell ---
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pywebview>=6.0",         # Windows: renders in WebView2, preinstalled on Win 11
+
+    # --- the engine ---
+    "numpy>=2.0",
+    "scipy>=1.14",
+    "opencv-python>=4.10",    # ⚠️ do NOT swap for scipy: it shifts the blank-detection
+                              #    metric by 0.32% against a threshold whose nearest
+                              #    margin is 0.13% — it can flip a blank classification.
+                              #    cv2.GaussianBlur IS the DoG(3,30) every number in this
+                              #    project is measured on (quality.band_pass -> t27 -> t33).
+                              #    ✅ opencv-python 5.0.0.93 is CLEARED: the 312/312 guard is
+                              #    green on it (2026-07-14, with numpy 2.5.1 / Python 3.13 —
+                              #    the science was originally measured under conda with
+                              #    OpenCV 4.x). If the guard ever goes red, suspect this
+                              #    first and pin >=4.10,<5 to bisect.
+    "Pillow>=10.0",
+    "tifffile>=2024.1",       # the 16-bit TIFF export
+    "matplotlib>=3.8",        # layout PNGs only
+
+    # --- placement (GPL-3.0-or-later; this is why Camea is GPL-3.0) ---
+    "spectralign>=0.4.2",
+]
+
+[project.optional-dependencies]
+# 🔴 THE [ctk] EXTRA IS NOT OPTIONAL — IT IS THE WHOLE POINT.
+#
+# `cupy-cuda12x` alone installs CuPy with NO CUDA runtime. It does not error. It
+# silently falls back to NumPy and the build runs ~3x slower, with one log line to
+# say so. The [ctk] extra pulls the eight nvidia-* wheels into
+# site-packages/nvidia/*/bin — which is exactly where t27's DLL dance looks.
+#
+# Verified 2026-07-14 under a clean uv venv:  t27.on_gpu()=True, xp=cupy,
+# CuPy 14.1.1, CUDA runtime 12090.  Without [ctk]: 0 nvidia/*/bin dirs, xp=numpy.
+gpu = ["cupy-cuda12x[ctk]"]
+
+[project.scripts]
+camea = "camea.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",            # the FastAPI test client
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    # The 312/312 solver regression guard. ~137 s, and it needs the 35 GB data
+    # mirror + a GPU — so it can NEVER run in CI. It runs on your machine and nightly.
+    # It is the only thing standing between a refactor and silently breaking the
+    # science. If it goes red: STOP. Do not fix forward.
+    #
+    #     uv run pytest tests/slow/test_solver_312.py -q -m slow -s
+    #
+    # It needs two things that are NOT in this repo and must NEVER be committed:
+    #   CAMEA_DATA_DIR  the raw mirror   (default: data/drive/260620/260620_Imaging/260620d)
+    #   CAMEA_GT_DIR    the human's answer key + the exclusion ruling
+    #                   (default: archive/analysis/ground_truth)
+    # If either is absent the guard FAILS — it never skips. A green tick that measured
+    # nothing is worse than a red one. (The fast suite is unaffected: `-m 'not slow'`
+    # deselects the guard before its fixtures are ever asked for.)
+    "slow: needs the real data mirror + a GPU; not run in CI",
+]
+addopts = "-m 'not slow'"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+# 🔴 THE GUARDED SCIENCE IS INVISIBLE TO THE LINTER, AND THAT IS DELIBERATE.
+# These four files are BYTE-IDENTICAL copies of archive/analysis/mosaic/ and are under the
+# 312/312 regression guard. `ruff check --fix` / `ruff format` on them is not a cleanup, it is
+# an unreviewed edit to the science. Excluding them means nobody can do it by accident.
+# (They currently trip 29 lint errors. All 29 are cosmetic. Leave every one of them.)
+extend-exclude = [
+    "src/camea/engine/t27.py",
+    "src/camea/engine/t33.py",
+    "src/camea/engine/quality.py",
+    "src/camea/engine/render.py",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `O` (the per-tile implied shift) is inside robust_align, which is copied BYTE-FOR-BYTE from the
+# canonical scorer. A reimplementation with a different tie-break scored the SAME positions 152/156
+# where this one gives 155/156. Renaming a variable in it is not worth one lint code.
+"src/camea/engine/score.py" = ["E741"]
+
+[tool.mypy]
+python_version = "3.12"
+packages = ["camea"]
+ignore_missing_imports = true
