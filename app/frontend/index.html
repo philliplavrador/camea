@@ -5,41 +5,37 @@
 <title>Camea Mosaic Builder</title>
 <link rel="stylesheet" href="/style.css">
 
-<!-- STRUCTURAL ONLY, and deliberately AFTER style.css.
-     Agent 4 owns the look (style.css) and gave this file an explicit class contract, which the
-     markup below uses verbatim: .shell/.topbar/.rail/.panel/.stage/.statusbar, .btn(.primary/.sm/
-     .danger/.ghost), .kbd, .chip, .field, .stat/.k/.v(.na), .badge.<state>, .meter, .warn(.loud),
-     .progress, .log, .list .item, .sheet .cell, .screen(.on), .toast(.show).
+<!-- STRUCTURAL ONLY, and deliberately AFTER style.css. style.css owns the look and gives this file
+     an explicit class contract, used verbatim: .shell/.topbar/.rail/.panel/.stage/.statusbar,
+     .btn(.primary/.sm/.danger/.ghost), .kbd, .chip, .field, .stat/.k/.v, .badge.<state>, .meter,
+     .warn(.loud), .help, .facts/.fact, .stepnav, .progress, .log, .list .item, .sheet .cell,
+     .screen(.on), .toast(.show).
 
-     The only thing style.css cannot know is that the four non-sweep SCREENS sit inside the stage
-     and must cover the canvas. That is a layout consequence of the router in sweep.js, so it lives
-     here, with the router. It uses agent 4's own tokens and adds no colours of its own. -->
+     The only thing style.css cannot know is that the wizard SCREENS sit inside the stage and must
+     cover the canvas. That is a layout consequence of the router in sweep.js, so it lives here,
+     with the router. It uses style.css's own tokens and adds no colours of its own. -->
 <style id="structural">
   .stage > .screen        { position: absolute; inset: 0; background: var(--bg); z-index: 3;
                             overflow: auto; }
   .stage > .screen:not(.on) { display: none; }
-  .pane                   { max-width: 980px; margin: 0 auto; padding: 24px 20px 60px; }
-  .pane h1                { font-size: 21px; margin: 4px 0 10px; }
-  .pane h2                { font-size: 15px; margin: 26px 0 8px; }
-  .pane p                 { margin: 8px 0; }
-  .cards                  { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-                            gap: 10px; margin: 12px 0; }
-  .card                   { background: var(--surface); border: 1px solid var(--line);
-                            border-radius: var(--r); padding: 12px; }
-  .card .k                { font: 600 10.5px/1 var(--sans); letter-spacing: .08em;
-                            text-transform: uppercase; color: var(--ink-dim); }
-  .card .v                { font: 600 20px/1.3 var(--mono); margin: 5px 0; }
-  .card .why              { font-size: 11.5px; color: var(--ink-dim); }
+  .pane                   { max-width: 900px; margin: 0 auto; padding: 26px 20px 60px; }
+  .pane h1                { display: flex; align-items: center; font-size: 20px; margin: 2px 0 4px; }
+  .pane h2                { display: flex; align-items: center; font-size: 13px; margin: 24px 0 8px;
+                            color: var(--ink-dim); letter-spacing: .04em; text-transform: uppercase; }
+  .pane .lede             { color: var(--ink-dim); font-size: 13px; margin: 0 0 16px; }
   .grid2                  { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
                             gap: 10px; }
   .inline                 { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
   .inline .field          { margin: 0; }
-  .tbl                    { width: 100%; border-collapse: collapse; font: 12px/1.5 var(--mono); }
-  .tbl th, .tbl td        { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
-  .tbl th                 { color: var(--ink-dim); font-family: var(--sans); font-size: 11px;
-                            text-transform: uppercase; letter-spacing: .06em; }
-  .sheet-wrap             { max-height: 380px; overflow: auto; border: 1px solid var(--line);
+  .sheet-wrap             { max-height: 300px; overflow: auto; border: 1px solid var(--line);
                             border-radius: var(--r); padding: 6px; background: var(--surface); }
+  /* The blank-scan cards are a GRID, not the .facts flex row: a flex row stretches its LAST row to
+     fill the width, so three leftover frames rendered at double size. Uniform cells, always. */
+  #blank-list             { display: grid; gap: 10px; margin-top: 14px;
+                            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  #blank-list .fact       { flex: none; min-width: 0; }
+  #blank-list .fact img,
+  #blank-list .fact canvas{ width: 100%; height: auto; image-rendering: pixelated; border-radius: 3px; }
   .qgrid                  { display: flex; flex-wrap: wrap; gap: 3px; max-height: 240px; overflow: auto; }
   .q                      { min-width: 36px; padding: 3px 4px; border-radius: 4px;
                             border: 1px solid var(--line); background: var(--surface-2);
@@ -63,31 +59,36 @@
 </head>
 <body>
 <!--
-  OWNER: agent 5 (with sweep.js). Agent 4 owns style.css and viewer.js.
-  CONTRACT: app/API.md. The five screens are app/PLAN.md's five steps.
+  CONTRACT: app/API.md.
 
   SCRIPT ORDER IS LOAD-BEARING: viewer.js defines window.Viewer; sweep.js consumes it.
   `window.CAMEA_API` is injected by main.py before the page loads (fall back to location.origin).
 
-  THE FIVE SCREENS
-    1  LOAD    pick a directory -> the DETECTED run + pass split + a contact sheet. Both detections
-               are MEASURED and both are validated on n = 1 dataset. ALWAYS SHOW THEM; ALWAYS LET
-               HIM OVERRIDE.
-    2  SCREEN  the blank scan RECOMMENDS; he ticks. No slider. No auto-reject. NO BLUR SCORE, and
-               never a variance-of-Laplacian number - across 15 focus measures the best global blur
-               threshold reaches F1 = 0.37 and varlap is WORSE THAN CHANCE.
-    3  BUILD   ONE BUTTON. t33's shipped 312/312 config is the default and stays that way. The
-               Advanced drawer warns, in the drawer, that its knobs are off the validated path.
-               No GPU? Run anyway and state the real cost. Never degrade silently.
-    4  SWEEP   THE HEART OF THE APP. A / E / Space, and the 1-second fade. It is not a screen pane:
-               it IS the stage - the canvas with both rails. See sweep.js.
-    5  EXPORT  16-bit TIFF (+ the MANDATORY coverage mask), display PNG, positions + GT JSON, and
-               the QC report - which is also the honest provenance record.
+  ⭐ THE APP IS A TOOL, NOT AN EXPLAINER (his ruling, 2026-07-14). Assume he knows. Every
+  explanation lives behind a hover `?` (`<span class="help" data-help="...">`), never as a
+  paragraph on the page. THE ONE EXCEPTION is a LIVE WARNING ABOUT THE CURRENT STATE — a stale
+  build, a thin margin, a diverted tile, a failed autosave, the provenance stamp. Those fire only
+  when something is actually wrong and they change what he would DO, so they stay on the page, in
+  a .warn. Background to a warning may go behind a `?` ON the warning; the fact that it is
+  happening may not.
 
-  The top bar always carries the anchored count, the OUTSTANDING unverified count, and whether the
-  GPU is in play. The right rail carries, on every placement, n_anchors / composite area / NCC /
-  MARGIN - with margin_thin (< 0.10) flagged LOUDLY (.warn.loud). He watches the evidence
-  strengthen; he does not take a placement on faith.
+  ⛔ THE APP KNOWS NOTHING ABOUT ANY DATASET (his ruling, 2026-07-14). It ships with no exclusion
+  list, no ruling, no "is this 260620d?" detection. The ONLY things that exclude a frame are the
+  human, here, now — or a project file he loaded. The project file is the app's whole memory:
+  save it, and it restores exclusions, placements, cursor and the build.
+
+  THE SIX STEPS — one question per screen, in order.
+    1  LOAD    pick a directory. That is all this screen asks.
+    2  RANGE   the numbers, then: which trials are the mosaic? Detections are MEASURED and
+               validated on n = 1 dataset — always let him override.
+    3  SCREEN  the blank scan RECOMMENDS; he ticks. No slider. No auto-reject. NO BLUR SCORE,
+               and never a variance-of-Laplacian number — across 15 focus measures the best
+               global blur threshold reaches F1 = 0.37 and varlap is WORSE THAN CHANCE.
+    4  PLACE   ONE BUTTON. t33's shipped config is the default and stays that way.
+    5  SWEEP   THE HEART OF THE APP. A / E / Space, and the 1-second fade. Not a pane: it IS the
+               stage — the canvas with both rails. See sweep.js.
+    6  MOSAIC  16-bit TIFF (+ the MANDATORY coverage mask), display PNG, positions + GT JSON, and
+               the QC report — which is also the honest provenance record.
 -->
 
 <div id="app" class="shell no-left no-right">
@@ -98,16 +99,24 @@
 
     <nav class="steps" id="steps">
       <button class="step" data-screen="load"   id="step-load"><span class="n">1</span>Load</button>
-      <button class="step" data-screen="screen" id="step-screen"><span class="n">2</span>Screen</button>
-      <button class="step" data-screen="build"  id="step-build"><span class="n">3</span>Build</button>
-      <button class="step" data-screen="sweep"  id="step-sweep"><span class="n">4</span>Sweep</button>
-      <button class="step" data-screen="export" id="step-export"><span class="n">5</span>Export</button>
+      <button class="step" data-screen="range"  id="step-range"><span class="n">2</span>Range</button>
+      <button class="step" data-screen="screen" id="step-screen"><span class="n">3</span>Screen</button>
+      <button class="step" data-screen="place"  id="step-place"><span class="n">4</span>Place</button>
+      <button class="step" data-screen="sweep"  id="step-sweep"><span class="n">5</span>Sweep</button>
+      <button class="step" data-screen="mosaic" id="step-mosaic"><span class="n">6</span>Mosaic</button>
     </nav>
 
     <div class="spacer"></div>
 
-    <span class="badge anchored"   title="anchored — ground truth, in the anchor field"><b id="n-anchored">0</b>&nbsp;anchored</span>
-    <span class="badge unverified" title="OUTSTANDING: placed by Space but never judged. NOT in the anchor field."><b id="n-unverified">0</b>&nbsp;unverified</span>
+    <!-- ⭐ SAVE IS REACHABLE FROM EVERY SCREEN (his ruling, 2026-07-14): "at any time in the process
+         I can export the save file so I can resume later". The project file is the app's ONLY
+         memory — burying it on the last step would mean the one thing that makes a session
+         resumable is the one thing he cannot reach mid-session. Ctrl+S too. -->
+    <button class="btn sm ghost" id="btn-save">Save…<kbd class="kbd">^S</kbd></button>
+    <span class="help" style="margin-right:8px" data-help="Save the project file — at any point, from any screen.&#10;&#10;It is the app's ONLY memory: your exclusions, every placement, what you anchored, where you are in the sweep, and the build. Load it back and you resume exactly here.&#10;&#10;There is also a rolling autosave (see the Mosaic screen), but this is the copy you control."></span>
+
+    <span class="badge anchored"   title="anchored — in the reference field"><b id="n-anchored">0</b>&nbsp;anchored</span>
+    <span class="badge unverified" title="placed, never judged. Not in the anchor field."><b id="n-unverified">0</b>&nbsp;unverified</span>
     <span class="badge unplaced"   title="no position yet — the rescue queue"><b id="n-unplaced">0</b>&nbsp;unplaced</span>
     <span class="badge excluded"   title="excluded — not drawn, not matched, not exported"><b id="n-excluded">0</b>&nbsp;excluded</span>
     <!-- ⭐ DIVERTED: unverified tiles sitting on the SOLVER's position because the matcher was not
@@ -116,7 +125,7 @@
          tile on the canvas, and without this the mosaic looks exactly like a confidently-matched one.
          Hidden while the count is zero. On the canvas these tiles carry a MAGENTA outline. -->
     <span class="badge diverted hidden" id="diverted-badge"
-          title="DIVERTED (and still unverified): placed at the SOLVER's position, not the matcher's — the match was not confident AND disagreed with the solver by more than 10 px. Nothing here is anchored; press A to accept it, or drag / S / V to overrule. Magenta outline on the canvas."><b id="n-diverted">0</b>&nbsp;diverted&nbsp;→&nbsp;solver</span>
+          title="DIVERTED: placed where the SOLVER said, not the matcher — the match was not confident and disagreed. Magenta outline. Press A to accept, or drag / S / V to overrule."><b id="n-diverted">0</b>&nbsp;diverted</span>
     <span class="badge gpu" id="gpu-badge" title="">GPU ?</span>
   </header>
 
@@ -137,12 +146,14 @@
     </section>
 
     <section class="panel">
-      <h3>Rescue <span class="spacer"></span><span class="muted">unplaced</span></h3>
+      <h3>Rescue <span class="spacer"></span>
+        <span class="help" data-help="Tiles the solver could not place at all. They have no position — pick one and place it by hand; the app matches it against your anchor field exactly as it does in the sweep."></span></h3>
       <div class="panel-body"><div class="list" id="rescue-list"><div class="muted">None.</div></div></div>
     </section>
 
     <section class="panel">
-      <h3>Tone <span class="spacer"></span><span class="muted">display only</span></h3>
+      <h3>Tone <span class="spacer"></span>
+        <span class="help" data-help="Display brightness only — it never touches the matcher.&#10;&#10;One GLOBAL window across every frame. A per-tile stretch would make overlapping tiles disagree in brightness and destroy the Difference check (D), which is how you see a misalignment."></span></h3>
       <div class="panel-body">
         <div class="inline">
           <div class="field" style="flex:1"><label>lo</label><input type="number" id="tone-lo"></div>
@@ -150,9 +161,6 @@
           <button class="btn sm" id="btn-tone">Apply</button>
           <button class="btn sm ghost" id="btn-tone-auto">Auto</button>
         </div>
-        <div class="hint muted" style="margin-top:6px">One <b>global</b> window across every frame.
-          A per-tile stretch would make overlapping tiles disagree in brightness and destroy the
-          Difference check. It never touches the matcher.</div>
       </div>
     </section>
 
@@ -160,14 +168,14 @@
       <h3>Keys</h3>
       <div class="panel-body">
         <div class="keys">
-          <kbd class="kbd">A</kbd><span>anchor — accept as ground truth</span>
+          <kbd class="kbd">A</kbd><span>anchor</span>
           <kbd class="kbd">E</kbd><span>exclude</span>
           <kbd class="kbd wide">Space</kbd><span>next</span>
-          <kbd class="kbd">R</kbd><span>replay the 1 s fade</span>
-          <kbd class="kbd">D</kbd><span>Difference mode</span>
+          <kbd class="kbd">R</kbd><span>replay the fade</span>
+          <kbd class="kbd">D</kbd><span>difference</span>
           <kbd class="kbd">V</kbd><span>alternatives</span>
           <kbd class="kbd">S</kbd><span>snap</span>
-          <kbd class="kbd">←↑↓→</kbd><span>nudge 1 px (Shift = 10)</span>
+          <kbd class="kbd">←↑↓→</kbd><span>nudge (Shift = 10 px)</span>
           <kbd class="kbd">F</kbd><span>fit</span>
           <kbd class="kbd">0</kbd><span>1:1</span>
           <kbd class="kbd">Esc</kbd><span>deselect</span>
@@ -179,7 +187,7 @@
   <!-- ============================== STAGE ============================== -->
   <main class="stage" id="stage">
 
-    <!-- 4 · THE SWEEP is the stage itself: the canvas + both rails. -->
+    <!-- 5 · THE SWEEP is the stage itself: the canvas + both rails. -->
     <canvas id="view"></canvas>
 
     <div class="overlay tl" id="banner-wrap">
@@ -204,17 +212,19 @@
     </div>
 
     <!-- ---------------------------- 1 · LOAD ---------------------------- -->
+    <!-- This screen asks ONE question: which directory? Everything it finds is shown on step 2. -->
     <section class="screen pad" id="screen-load">
       <div class="pane">
-        <h1>Open an acquisition directory</h1>
-        <p class="muted">A vscope acquisition directory: trial <code>.dat</code> files plus
-          <code>log.txt</code>. Nothing in it is ever written to.</p>
+        <h1>Load
+          <span class="help" data-help="A vscope acquisition directory: the trial .dat files plus log.txt.&#10;&#10;Nothing in it is ever written to."></span>
+        </h1>
+        <p class="lede">Pick an acquisition directory.</p>
 
         <div class="inline">
           <div class="field" style="flex:1 1 460px">
             <label>directory</label>
             <input type="text" id="in-datadir" spellcheck="false"
-                   placeholder="D:/Projects/Camea/data/drive/260620/260620_Imaging/260620d">
+                   placeholder="D:/…/260620d">
           </div>
           <button class="btn" id="btn-browse">Browse…</button>
           <button class="btn primary" id="btn-open">Open</button>
@@ -225,142 +235,134 @@
           <div class="muted" style="font-size:12px;margin-top:5px" id="open-msg">…</div>
         </div>
 
-        <div id="load-result" class="hidden">
-          <h2>What was detected</h2>
-          <div class="warn">Both rules below are <b>measured</b>, and both are validated on
-            <b>n&nbsp;=&nbsp;1 dataset</b>. Check them — and override either if they are wrong.</div>
-
-          <div class="cards">
-            <div class="card">
-              <div class="k">The mosaic run</div>
-              <div class="v" id="run-range">—</div>
-              <div class="why" id="run-why">—</div>
-              <div class="why" style="margin-top:6px;color:var(--ink)">
-                <b id="run-n">—</b> usable of <b id="run-n-in-range">—</b> in range
-                (<span id="run-n-excluded">—</span> thrown out — <b>never loaded, for any purpose</b>)
-              </div>
-            </div>
-            <div class="card">
-              <div class="k">Pass split (last trial of pass 1)</div>
-              <div class="v" id="split-value">—</div>
-              <div class="why" id="split-why">—</div>
-              <div class="why" style="margin-top:6px;color:var(--ink)">
-                pass 1 <b id="split-n1">—</b> · pass 2 <b id="split-n2">—</b></div>
-            </div>
-            <div class="card">
-              <div class="k">Acquisition gaps</div>
-              <div class="v" id="gaps-v">—</div>
-              <div class="why">Consecutive pairs that are <b>not one acquisition step apart</b>. The
-                serpentine one-axis prior does <b>not</b> hold across these. Recomputed on every
-                change to the excluded set.</div>
-            </div>
-          </div>
-
-          <div class="inline">
-            <div class="field"><label>lo</label><input type="number" id="in-lo"></div>
-            <div class="field"><label>hi</label><input type="number" id="in-hi"></div>
-            <div class="field"><label>pass split</label><input type="number" id="in-split"></div>
-            <button class="btn" id="btn-override">Apply &amp; reload</button>
-            <span class="muted" style="font-size:12px">A reload invalidates the build, the tone
-              window and the scan.</span>
-          </div>
-
-          <h2>Contact sheet</h2>
-          <p class="muted" style="font-size:12px">Every frame in the run, in the <b>global</b> tone
-            window. The thrown-out snapshots are not here: they are never loaded.</p>
-          <div class="sheet-wrap"><div class="sheet" id="sheet"></div></div>
-
-          <div class="row" style="margin-top:16px">
-            <button class="btn primary" id="btn-to-screen">Next — screen the frames →</button>
-          </div>
+        <h2>Resume
+          <span class="help" data-help="A project file is the app's ONLY memory. It carries your exclusions, every placement, which tiles you anchored, where you were in the sweep, and the build.&#10;&#10;Load one and you pick up exactly where you left off. The app itself remembers nothing between runs."></span>
+        </h2>
+        <div class="row">
+          <button class="btn" id="btn-load">Load a project…</button>
+          <span class="muted" style="font-size:12px">…or open a directory above to start fresh.</span>
         </div>
       </div>
     </section>
 
-    <!-- ---------------------------- 2 · SCREEN ---------------------------- -->
+    <!-- ---------------------------- 2 · RANGE ---------------------------- -->
+    <!-- The numbers, then the one decision: which trials are the mosaic? -->
+    <section class="screen pad" id="screen-range">
+      <div class="pane">
+        <h1>Range</h1>
+        <p class="lede">Which trials are the mosaic?</p>
+
+        <div class="facts">
+          <div class="fact">
+            <div class="k">Trials <span class="help" id="help-run" data-help=""></span></div>
+            <div class="v" id="run-n">—</div>
+          </div>
+          <div class="fact">
+            <div class="k">Range</div>
+            <div class="v" id="run-range">—</div>
+          </div>
+          <div class="fact">
+            <div class="k">Pass split <span class="help" id="help-split" data-help=""></span></div>
+            <div class="v" id="split-value">—</div>
+            <div class="muted mono" style="font-size:11.5px">
+              <span id="split-n1">—</span> · <span id="split-n2">—</span></div>
+          </div>
+          <div class="fact">
+            <div class="k">Gaps <span class="help" id="help-gaps"
+                  data-help="Consecutive trials that are NOT one acquisition step apart — because something between them was excluded.&#10;&#10;The serpentine one-step prior does not hold across a gap, so the solver is told about them. Recomputed every time you exclude a tile."></span></div>
+            <div class="v sm" id="gaps-v">—</div>
+          </div>
+        </div>
+
+        <div class="inline">
+          <div class="field"><label>lo</label><input type="number" id="in-lo"></div>
+          <div class="field"><label>hi</label><input type="number" id="in-hi"></div>
+          <div class="field"><label>pass split</label><input type="number" id="in-split"></div>
+          <button class="btn" id="btn-override">Apply
+            <span class="help" data-help="Reloading discards the build, the tone window and the blank scan — they were all computed for the old range."></span>
+          </button>
+        </div>
+
+        <h2>Contact sheet</h2>
+        <div class="sheet-wrap"><div class="sheet" id="sheet"></div></div>
+
+        <div class="stepnav">
+          <button class="btn ghost" id="btn-back-load">← Load</button>
+          <span class="spacer"></span>
+          <button class="btn primary" id="btn-to-screen">Screen the frames →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------------------- 3 · SCREEN ---------------------------- -->
+    <!-- 🔴 THE BOXES START EMPTY, AND THEY MUST. They used to render `checked`, with "Exclude the
+         ticked frames" as the primary button — so the DEFAULT ACTION of the DEFAULT BUTTON threw
+         four frames away. On 260620d the scan names 34, 55, 56 and 127, and all four are ANCHORS in
+         the hand-authored ground truth of the 100 %-solved pass 1. One click = four tiles of real
+         tissue gone from the TIFF, the PNG, the coverage mask, positions.csv and the exported GT.
+         THE SCAN RECOMMENDS. THE USER TICKS. -->
     <section class="screen pad" id="screen-screen">
       <div class="pane">
-        <h1>Screen the frames</h1>
-        <div class="warn">
-          <div><b>The scan recommends only what the code is genuinely sure of: blanks.</b><br>
-            Blur is <b>not</b> judged here and never will be — across 15 focus measures the best
-            global blur threshold reaches <b>F1 = 0.37</b>, and the textbook autofocus metric
-            (variance of Laplacian) scores <b>worse than chance</b>: it is dominated by sensor noise,
-            which is identical in sharp and blurry frames. Catching all 15 of the blurry frames in
-            this dataset would also throw away <b>62 good ones</b>. You meet every tile again in the
-            sweep — exclude a blurry one there, with <kbd class="kbd">E</kbd>, by eye.
-            <b>Nothing is auto-excluded.</b> Tick what you want gone.</div>
-        </div>
+        <h1>Screen
+          <span class="help" data-help="The scan recommends only what the code is genuinely sure of: BLANK frames (near-featureless glare).&#10;&#10;Blur is not judged here and never will be. Across 15 focus measures the best global blur threshold reaches F1 = 0.37, and the textbook metric (variance of Laplacian) scores WORSE THAN CHANCE — it is dominated by sensor noise, which is identical in sharp and blurry frames. Catching all 15 blurry frames in this dataset would also throw away 62 good ones.&#10;&#10;So blur is your call, by eye, in the sweep — press E. Nothing is auto-excluded, ever."></span>
+        </h1>
+        <p class="lede">Tick what you want thrown out. Nothing is ticked for you.</p>
 
-        <!-- 🔴 THE BOXES START EMPTY, AND THEY MUST. They used to render `checked`, with
-             "Exclude the ticked frames" as the primary button — so the DEFAULT ACTION of the
-             DEFAULT BUTTON threw four frames away. On 260620d the scan names 34, 55, 56 and 127,
-             and all four are ANCHORS in the hand-authored ground truth of the 100 %-solved pass 1.
-             One click = four tiles of real tissue gone from the TIFF, the PNG, the coverage mask,
-             positions.csv and the exported GT — and the document then recorded
-             `excluded_reason: "…ticked by the user"` about a box the code had ticked itself.
-             THE SCAN RECOMMENDS. THE USER TICKS. -->
-        <div class="warn info">
-          <div><b>Two different questions, and the code answers neither.</b>
-            <b>Exclude</b> throws the frame out of the mosaic entirely — that is yours to tick.
-            <b>Let the matcher score it</b> lifts the correlator's refusal: by default a frame the
-            measure calls blank is <b>refused, not scored</b>, because two blank frames 136 trials
-            apart correlate <b>+0.43 at zero shift</b> — what they share is fixed-pattern
-            <i>sensor</i> structure, which does not move with the stage, so they register
-            <b>confidently and wrongly</b>. But this measure has <b>no margin</b> at the boundary and
-            the usable and blank frames interleave below it, so some of these are ordinary tiles: on
-            this dataset three of the four land <b>sub-pixel</b> on the truth once scored, and the
-            fourth is <b>679 px wrong at NCC 0.66</b>. Look at the thumbnail. You decide, per frame.
-            (A refused frame is not lost: you can always drop it in by hand in the sweep.)</div>
-        </div>
-
-        <div class="cards">
-          <div class="card"><div class="k">Blank measure</div>
-            <div class="v"><span id="blank-n">—</span> recommended</div>
-            <div class="why" id="blank-measure">—</div></div>
-          <div class="card"><div class="k">Threshold</div>
-            <div class="v" id="blank-thr">—</div>
-            <div class="why" id="blank-thrsrc">—</div></div>
-          <div class="card"><div class="k">Margin</div>
-            <div class="v">tight</div>
-            <div class="why" id="blank-margin">—</div></div>
+        <div class="facts">
+          <div class="fact">
+            <div class="k">Recommended <span class="help" id="help-blank" data-help=""></span></div>
+            <div class="v" id="blank-n">—</div>
+          </div>
+          <div class="fact">
+            <div class="k">Threshold</div>
+            <div class="v sm" id="blank-thr">—</div>
+          </div>
+          <div class="fact wide">
+            <div class="k">Let the matcher score it
+              <span class="help" data-help="Two different questions.&#10;&#10;EXCLUDE throws the frame out of the mosaic entirely — that is the tick on the left.&#10;&#10;LET THE MATCHER SCORE IT lifts the correlator's refusal. By default a frame the measure calls blank is refused, not scored: two blank frames 136 trials apart correlate +0.43 at ZERO SHIFT, because what they share is fixed-pattern SENSOR structure, which does not move with the stage. They register confidently and wrongly.&#10;&#10;But the measure has no margin at the boundary — usable and blank frames interleave below it. On this dataset three of the four land sub-pixel on the truth once scored, and the fourth is 679 px wrong at NCC 0.66. Look at the thumbnail and decide per frame. A refused frame is not lost: you can always drop it in by hand in the sweep."></span>
+            </div>
+            <div class="v sm muted">per frame, below</div>
+          </div>
         </div>
 
         <div class="row">
-          <button class="btn sm" id="btn-blank-all">Tick all for exclusion</button>
+          <button class="btn sm" id="btn-blank-all">Tick all</button>
           <button class="btn sm" id="btn-blank-none">Tick none</button>
-          <button class="btn primary" id="btn-blank-apply">Exclude the ticked frames</button>
-          <span class="muted" style="font-size:12px">Nothing is ticked. Excluding a frame
-            <b>opens an acquisition gap</b> — the gaps are recomputed immediately.</span>
+          <button class="btn" id="btn-blank-apply">Exclude the ticked
+            <span class="help" data-help="Excluding a frame opens an acquisition gap and changes the solver's input. If a build already exists it is marked stale — re-run it."></span>
+          </button>
         </div>
 
-        <div class="cards" id="blank-list"></div>
+        <div class="facts" id="blank-list"></div>
 
-        <div class="row"><button class="btn primary" id="btn-to-build">Next — build →</button></div>
+        <div class="stepnav">
+          <button class="btn ghost" id="btn-back-range">← Range</button>
+          <span class="spacer"></span>
+          <button class="btn primary" id="btn-to-build">Place the tiles →</button>
+        </div>
       </div>
     </section>
 
-    <!-- ---------------------------- 3 · BUILD ---------------------------- -->
-    <section class="screen pad" id="screen-build">
+    <!-- ---------------------------- 4 · PLACE ---------------------------- -->
+    <section class="screen pad" id="screen-place">
       <div class="pane">
-        <h1>Build</h1>
-        <p class="muted">One button. t33's shipped 312/312 configuration is the default and stays
-          that way. The build's real job is to give the sweep a good starting point and the evidence
-          to judge it — the sweep re-places every tile against your anchor field anyway.</p>
+        <h1>Place
+          <span class="help" data-help="The solver (t33) places every tile. Its job is to give the sweep a good starting point and the evidence to judge it — in the sweep, every tile is re-matched against the anchor field you build, so this is a first draft, not the answer.&#10;&#10;The shipped configuration is the validated one. Leave it alone unless you know why you are changing it."></span>
+        </h1>
+        <p class="lede">Run the solver.</p>
 
-        <div class="warn info" id="build-cost">…</div>
+        <div id="build-cost" class="muted" style="font-size:12px;margin-bottom:12px">…</div>
 
         <div class="row">
-          <button class="btn primary big" id="btn-build">Build the mosaic</button>
+          <button class="btn primary big" id="btn-build">Run</button>
           <button class="btn danger hidden" id="btn-build-cancel">Cancel</button>
           <label class="chip"><input type="checkbox" id="in-usecache" checked
                  style="width:12px;height:12px"> use cache</label>
-          <button class="btn ghost" id="btn-skip-build">Skip — place from scratch</button>
+          <span class="spacer"></span>
+          <button class="btn ghost" id="btn-skip-build">Skip — place by hand
+            <span class="help" data-help="Shows you NO machine answer at all. Every tile starts unplaced and you place it yourself.&#10;&#10;Slower, but the document it produces is an INDEPENDENT ground truth. A document seeded from a build is honestly stamped as one — and must never be used to score the solver that produced it, because it would score ~100 % by construction."></span>
+          </button>
         </div>
-        <p class="muted" style="font-size:12px">“Place from scratch” shows you <b>no machine answer at
-          all</b>, and the document it produces is an <b>independent</b> truth. Building first is much
-          faster, but the file is then honestly stamped “a build a human signed off on” — and it must
-          never be used to score the solver that produced it.</p>
 
         <div id="build-progress" class="hidden" style="margin-top:14px">
           <div class="progress"><i id="build-fill"></i></div>
@@ -372,32 +374,42 @@
         </div>
 
         <div id="build-result" class="hidden">
-          <div class="cards">
-            <div class="card"><div class="k">Placed</div><div class="v" id="bres-n">—</div>
-              <div class="why" id="bres-unplaced">—</div></div>
-            <div class="card"><div class="k">Took</div><div class="v" id="bres-s">—</div>
-              <div class="why" id="bres-gpu">—</div></div>
-            <div class="card"><div class="k">Build id</div>
-              <div class="v" style="font-size:12px" id="bres-id">—</div>
-              <div class="why">Stamped into the project file's provenance.</div></div>
+          <div class="facts">
+            <div class="fact">
+              <div class="k">Placed</div>
+              <div class="v" id="bres-n">—</div>
+              <div class="muted mono" style="font-size:11.5px" id="bres-unplaced">—</div>
+            </div>
+            <div class="fact">
+              <div class="k">Took</div>
+              <div class="v" id="bres-s">—</div>
+              <div class="muted mono" style="font-size:11.5px" id="bres-gpu">—</div>
+            </div>
+            <div class="fact wide">
+              <div class="k">Build id
+                <span class="help" data-help="Stamped into the project file's provenance, so the file always records which build it came from."></span>
+              </div>
+              <div class="v sm" id="bres-id">—</div>
+            </div>
           </div>
-          <div class="warn loud">
-            <div>The per-tile numbers below are a <b>“go look here first” list, not a verdict</b>.
-              <b>Pass-1 tiles have no per-tile confidence at all</b> — and the worst tile in the
-              shipped 312/312 build (trial&nbsp;127, 9.94&nbsp;px out) is a <b>pass-1</b> tile. The
-              absence of a warning is <b>not</b> a clean bill of health.</div>
-          </div>
+
+          <h2>Look here first
+            <span class="help" data-help="A “go look here first” list — NOT a verdict.&#10;&#10;Pass-1 tiles have no per-tile confidence at all, and the worst tile in the shipped 312/312 build (trial 127, 9.94 px out) is a pass-1 tile. The ABSENCE of a warning here is not a clean bill of health. Everything gets swept."></span>
+          </h2>
           <div id="bres-worklist"></div>
-          <div class="row"><button class="btn primary big" id="btn-to-sweep">Start the sweep →</button></div>
+
+          <div class="stepnav">
+            <button class="btn ghost" id="btn-back-screen">← Screen</button>
+            <span class="spacer"></span>
+            <button class="btn primary big" id="btn-to-sweep">Start the sweep →</button>
+          </div>
         </div>
 
         <details id="adv" style="margin-top:26px">
-          <summary class="muted">Advanced</summary>
-          <div class="warn loud" style="margin-top:10px">
-            <div>These are <b>off the validated path</b>. The shipped 312/312 build used the
-              defaults.</div>
-          </div>
-          <div class="grid2">
+          <summary class="muted">Advanced
+            <span class="help" data-help="Off the validated path. The shipped 312/312 build used the defaults — every one of them."></span>
+          </summary>
+          <div class="grid2" style="margin-top:10px">
             <div class="field"><label>pass_split</label><input type="number" id="cfg-pass-split"></div>
             <div class="field"><label>anchor_ncc</label><input type="number" step="0.01" id="cfg-anchor-ncc" placeholder="0.30"></div>
             <div class="field"><label>split_px</label><input type="number" step="0.5" id="cfg-split-px" placeholder="12.0"></div>
@@ -410,19 +422,12 @@
       </div>
     </section>
 
-    <!-- ---------------------------- 5 · EXPORT ---------------------------- -->
-    <section class="screen pad" id="screen-export">
+    <!-- ---------------------------- 6 · MOSAIC ---------------------------- -->
+    <section class="screen pad" id="screen-mosaic">
       <div class="pane">
-        <h1>Export</h1>
+        <h1>Mosaic</h1>
+        <p class="lede">Build the outputs.</p>
 
-        <div class="row">
-          <button class="btn" id="btn-save">Save project…</button>
-          <button class="btn" id="btn-load">Load project…</button>
-          <span class="spacer"></span>
-          <span class="muted mono" style="font-size:11.5px" id="autosave-note">autosave: —</span>
-        </div>
-
-        <h2>Outputs</h2>
         <div class="inline">
           <div class="field" style="flex:1 1 400px"><label>directory</label>
             <input type="text" id="in-exportdir" spellcheck="false" placeholder="D:/work/out"></div>
@@ -437,38 +442,29 @@
           <label class="chip"><input type="checkbox" id="out-positions" checked style="width:12px;height:12px"> positions.csv</label>
           <label class="chip"><input type="checkbox" id="out-gt" checked style="width:12px;height:12px"> ground-truth JSON</label>
           <label class="chip"><input type="checkbox" id="out-qc" checked style="width:12px;height:12px"> QC report</label>
-        </div>
-        <div class="warn">
-          <div>The TIFF always ships with its <b>coverage mask</b>. <b>13.1 % of the canvas is
-            background encoded as exactly 0.0</b>, indistinguishable from a legitimately black pixel,
-            and a TIFF has no alpha channel. Without the mask, “empty” and “black” merge forever.</div>
+          <span class="help" data-help="The TIFF always ships with its COVERAGE MASK. 13.1 % of the canvas is background encoded as exactly 0.0, indistinguishable from a legitimately black pixel — and a TIFF has no alpha channel. Without the mask, “empty” and “black” merge forever."></span>
         </div>
 
-        <div class="inline">
-          <div class="field"><label>render mode</label>
+        <div class="inline" style="margin-top:12px">
+          <div class="field"><label>render</label>
             <select id="in-rendermode">
-              <option value="feather" selected>feather — 1.1 s (the only interactive one)</option>
+              <option value="feather" selected>feather — 1.1 s</option>
               <option value="median">median — 42 s</option>
-              <option value="alpha">alpha — 74 s (needs spectralign)</option>
+              <option value="alpha">alpha — 74 s</option>
             </select></div>
           <label class="chip"><input type="checkbox" id="in-include-unverified" checked
-                 style="width:12px;height:12px"> include unverified tiles</label>
+                 style="width:12px;height:12px"> include unverified</label>
           <div class="field"><label>µm/px</label>
             <input type="number" step="0.001" id="in-umpx" placeholder="(blank)"></div>
-        </div>
-        <div class="warn">
-          <div><b>Pixels only, unless you type a number in.</b> This app does not measure µm/px, so
-            by default none is written: no scale bar, no OME-TIFF physical size. Anything you enter
-            here is stamped <b>USER-SUPPLIED BY HAND, not measured</b>.
-            <br><br>
-            <b>There is NO magnification difference between the passes</b> — cross-pass tissue scale
-            is 1.0000 ± 0.0002, so <b>one scale bar spanning both passes is safe</b>. (The old
-            “2.5 % magnification” scare came from the electrode-grid pitch, which tracks
-            <b>focus</b>, not magnification — the 20 s pause at trial 166→167 was a refocus. See
-            <code>app/SCALE.md</code>.)</div>
+          <span class="help" data-help="PIXELS ONLY, unless you type a number in.&#10;&#10;This app does not measure µm/px, so by default none is written: no scale bar, no OME-TIFF physical size. Anything you enter is stamped USER-SUPPLIED BY HAND, not measured.&#10;&#10;There is NO magnification difference between the passes — cross-pass tissue scale is 1.0000 ± 0.0002, so one scale bar spanning both is safe."></span>
         </div>
 
-        <div class="row"><button class="btn primary big" id="btn-export">Export</button></div>
+        <div class="row" style="margin-top:16px">
+          <button class="btn primary big" id="btn-export">Export</button>
+          <span class="spacer"></span>
+          <span class="muted mono" style="font-size:11.5px" id="autosave-note">autosave: —</span>
+          <span class="help" data-help="A rolling autosave, written after every judgement so a crash cannot cost you the sweep.&#10;&#10;It is NOT the same file as Save… — that one goes where you choose. If this ever reads FAILED, stop and fix it."></span>
+        </div>
 
         <div id="export-progress" class="hidden" style="margin-top:12px">
           <div class="progress"><i id="export-fill"></i></div>
@@ -478,6 +474,10 @@
 
         <h2>Provenance</h2>
         <div id="provenance" class="warn loud"><div>—</div></div>
+
+        <div class="stepnav">
+          <button class="btn ghost" id="btn-back-sweep">← Sweep</button>
+        </div>
       </div>
     </section>
   </main>
@@ -485,25 +485,26 @@
   <!-- ============================== RIGHT RAIL (the evidence) ============================== -->
   <aside class="rail rail-right">
     <section class="panel">
-      <h3>Evidence <span class="spacer"></span><span class="muted">what the pixels say</span></h3>
+      <h3>Evidence <span class="spacer"></span>
+        <span class="help" data-help="What the pixels say about THIS tile, measured against the anchors you have certified — not against its neighbours.&#10;&#10;NCC is how well it correlates at its best position. MARGIN is how much better that position is than the runner-up: a big margin means the answer is unambiguous. Watch these strengthen as the anchor field grows."></span></h3>
       <div class="panel-body">
         <div id="refused" class="warn loud hidden"></div>
 
         <div class="stat"><span class="k">NCC</span><span class="v big" id="ev-ncc">—</span></div>
         <div class="meter" id="ev-ncc-meter"><i style="width:0"></i></div>
 
-        <div class="stat" style="margin-top:8px"><span class="k">margin (best − second)</span>
+        <div class="stat" style="margin-top:8px"><span class="k">margin</span>
           <span class="v" id="ev-margin">—</span></div>
-        <div class="stat"><span class="k">anchors in the field</span><span class="v" id="ev-anchors">—</span></div>
+        <div class="stat"><span class="k">anchors</span><span class="v" id="ev-anchors">—</span></div>
         <div class="stat"><span class="k">composite area</span><span class="v" id="ev-area">—</span></div>
         <div class="stat"><span class="k">overlap</span><span class="v" id="ev-npix">—</span></div>
         <div class="stat"><span class="k">took</span><span class="v" id="ev-ms">—</span></div>
 
+        <!-- ⚠️ A LIVE WARNING ABOUT THE CURRENT STATE. It stays on the page — it is not an
+             explanation, it fires only when something is wrong, and it changes what he does next. -->
         <div id="ev-thin" class="warn loud hidden">
-          <div><b>THIN MARGIN.</b> best − second &lt; 0.10. <b>This is what a surviving grid alias
-            looks like</b> — the shipped build's worst run margin is 0.081 against a ~0.47 typical.
-            Check it in Difference mode (<kbd class="kbd">D</kbd>) and look at the alternatives
-            (<kbd class="kbd">V</kbd>) before you anchor it.</div>
+          <b>THIN MARGIN.</b> best − second &lt; 0.10.
+          <span class="help" data-help="This is what a surviving grid alias looks like: the correlator found a second position almost as good as the first, and it may have picked the wrong one. The shipped build's worst run margin is 0.081, against a ~0.47 typical.&#10;&#10;Check it in Difference mode (D) and look at the alternatives (V) before you anchor it."></span>
         </div>
 
         <div id="ev-aperture" class="warn hidden"></div>
@@ -512,7 +513,8 @@
     </section>
 
     <section class="panel">
-      <h3>Alternatives <span class="spacer"></span><span class="muted">“did you mean here?”</span></h3>
+      <h3>Alternatives <span class="spacer"></span>
+        <span class="help" data-help="The other positions the correlator ranked — “did you mean here?”. Drawn as purple ghost boxes on the canvas. Click one to move the tile there."></span></h3>
       <div class="panel-body">
         <div class="list" id="alts-list">
           <div class="muted">Press <kbd class="kbd">V</kbd>.</div>
@@ -527,7 +529,7 @@
 
     <!-- ⚠️ THE BUILD WAS SOLVED ON A DIFFERENT INPUT. Excluding a tile mid-sweep removes a frame
          from the solver's chain and opens a gap where the serpentine one-step prior does not hold —
-         the tiles either side of it were placed THROUGH it. Nothing in the app said so before. -->
+         the tiles either side of it were placed THROUGH it. A LIVE WARNING: it stays on the page. -->
     <section class="panel">
       <div class="panel-body"><div id="build-stale" class="warn loud hidden"></div></div>
     </section>
@@ -547,6 +549,9 @@
 
   <div id="toast" class="toast"></div>
 </div>
+
+<!-- the one help bubble, body-level and position:fixed so no overflow:auto pane can clip it -->
+<div id="help-tip"></div>
 
 <script src="/viewer.js"></script>
 <script src="/sweep.js"></script>

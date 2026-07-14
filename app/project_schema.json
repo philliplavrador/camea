@@ -106,22 +106,8 @@
 
     "unusable_tiles": {
       "type": "array",
-      "description": "Every trial with x/y = null: the 26 thrown-out snapshots plus anything the user excluded during the sweep. Mirrors `tiles[*].status == 'excluded'`. Kept as a flat list because that is what the existing ground truths carry.",
+      "description": "Every trial the USER excluded. Mirrors `tiles[*].status == 'excluded'`. Kept as a flat list because that is what the existing ground truths carry. ⛔ The app ships with NO exclusion list of its own (his ruling, 2026-07-14): the only things that exclude a frame are the human, in the session, or a project file he loaded. THIS FILE IS THE APP'S ENTIRE MEMORY — it is what makes a session resumable.",
       "items": { "type": "integer" }
-    },
-    "EXCLUDED_TRIALS": {
-      "type": "object",
-      "description": "The hard ruling, copied verbatim from analysis/ground_truth/. Present so the file explains itself to a reader who has never seen this project.",
-      "properties": {
-        "ruling": {
-          "type": "string",
-          "default": "THROWN OUT. The user, 2026-07-11: 'i want these tiles to be thrown out and to never be used for any purposes whatsoever'. These frames are NOT DATA. Never load them, never feed them to a placement method, never let them vote in a solve, never render them, never 'rescue' them with a metric."
-        },
-        "trials": { "type": "array", "items": { "type": "integer" } },
-        "n": { "type": "integer" },
-        "blank": { "type": "object", "description": "11, by measurement (band-passed std below the pass-1 2nd percentile)." },
-        "blurry": { "type": "object", "description": "15, by the user's eye. NO automatic measure reproduces this call — best global blur threshold across 15 focus measures reaches F1 = 0.37, and variance-of-Laplacian is WORSE THAN CHANCE. Do not 'correct' this list from a metric." }
-      }
     },
 
     "run": {

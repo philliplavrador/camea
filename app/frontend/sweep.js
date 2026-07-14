@@ -1,12 +1,36 @@
 /* ⭐ Camea Mosaic Builder — THE VERIFICATION SWEEP. This is the actual app.
  *
- * OWNER: agent 5 (with index.html). Nobody else edits this file.
- * CONTRACT: app/API.md — §2 (the tile state machine), §7 (the anchor-composite primitive),
- *           §7.4 (the prefetch and its correctness trap), §15 (front-end obligations).
+ * OWNER: agent 5. index.html and style.css are the CONTRACT and they are FINAL — read them, do not
+ * edit them. CONTRACT: app/API.md — §2 (the tile state machine), §7 (the anchor-composite
+ * primitive), §7.4 (the prefetch and its correctness trap), §15 (front-end obligations).
  *
  * THE BOUNDARY (see viewer.js's header): sweep.js owns the DOCUMENT, the undo/redo stack, the
  * keyboard map, every fetch(), the prefetch and the panels. It drives `window.Viewer` through its
  * public methods and NEVER touches its canvases.
+ *
+ *
+ * ⛔⛔ THREE RULINGS FROM THE USER, 2026-07-14. They are why this file looks the way it does.
+ * ------------------------------------------------------------------------------------------
+ * 1. **THE APP KNOWS NOTHING ABOUT ANY DATASET.** *"The app itself shouldn't store the exclusions
+ *    for this experiment."* There is NO built-in exclusion list, no "is this 260620d?" detection, no
+ *    ruling, no auto-exclusion — not from the blank scan either, which only RECOMMENDS. **Every
+ *    trial starts `unplaced`.** The ONLY things that ever exclude a frame are the human, here, now
+ *    (`E`, or a tick on Screen) — and a PROJECT FILE he loaded. The project file is the app's entire
+ *    memory: it is the one place an exclusion can come from, and `exportDoc()` writes no other.
+ *
+ * 2. **THE APP IS A TOOL, NOT AN EXPLAINER.** *"Assume the user knows. If they don't, they have the
+ *    option to hover."* Every explanation lives behind a `?` (`.help[data-help]` -> `#help-tip`);
+ *    every toast, banner and error is ONE SHORT CLAUSE.
+ *
+ *    🔴 **THE ONE EXCEPTION: A LIVE WARNING ABOUT THE CURRENT STATE IS NOT AN EXPLANATION.** A stale
+ *    build · a thin margin · a diverted tile · a failed autosave · the provenance stamp. Those fire
+ *    only when something is ACTUALLY WRONG and they change what he would DO. They stay on the page,
+ *    loud. Their BACKGROUND may move onto a `?` on the warning; the fact that they are FIRING may
+ *    not. Do not "tidy" one of them into a tooltip — every one of them is here because it, or its
+ *    absence, has already cost this project real work.
+ *
+ * 3. **SIX STEPS.** Load -> Range -> Screen -> Place -> Sweep -> Mosaic. The header is a PROGRESS
+ *    INDICATOR, not a menu: a step is locked until the ones before it are ready (`lockSteps`).
  *
  *
  * THE LOOP
@@ -177,6 +201,10 @@ window.Sweep = (function () {
   const SOLVER_NCC_MIN     = 0.65;
   const SOLVER_DISAGREE_PX = 10.0;
 
+  /* The Difference-mode banner. It only means anything because the tone window is GLOBAL — that is
+   * the `?` on the Tone panel's business, not a paragraph over the canvas. */
+  const DIFF_MSG = 'Difference: |tile − background|. <b>Misalignment shows as bright doubling.</b>';
+
   const MAX_CANDIDATES  = 8;
   const UNDO_DEPTH      = 100;
   const FOLD_MS         = 700;     // tagged folding, as in the bench (template.html:1649)
@@ -286,11 +314,104 @@ window.Sweep = (function () {
   }
 
   // =========================================================================================
+  // ⭐ HELP — "THE APP IS A TOOL, NOT AN EXPLAINER" (his ruling, 2026-07-14)
+  //     "Assume the user knows. If they don't, they have the option to hover."
+  // =========================================================================================
+  /* Every explanation that used to be a paragraph on the page is the body of a tooltip on a small
+   * `?` beside the thing it explains. Nothing was deleted — it moved.
+   *
+   * 🔴 THE ONE EXCEPTION IS A LIVE WARNING ABOUT THE CURRENT STATE — a stale build, a thin margin,
+   *    a diverted tile, a failed autosave, the provenance stamp. Those fire only when something is
+   *    actually wrong and they change what he would DO, so they stay on the page in a `.warn`.
+   *    BACKGROUND to a warning may go behind a `?` ON the warning. The fact that it is FIRING may
+   *    not. Do not "tidy" one of them into a tooltip.
+   *
+   * ⚠️ ONE delegated listener per event, never a per-node bind: the rails and the blank list are
+   *    re-rendered constantly, so any `?` may be destroyed and rebuilt under our feet.
+   * ⚠️ #help-tip is body-level and `position: fixed` BY NECESSITY, not by taste: every pane and rail
+   *    is `overflow: auto`, and a bubble nested inside one gets CLIPPED at the pane's edge. */
+  const Help = (function () {
+    const GAP = 8, MARGIN = 8;
+    let cur = null;
+
+    const textOf = (n) => (n && n.dataset && n.dataset.help) ? n.dataset.help : '';
+
+    function place(node) {
+      const tip = el.helpTip;
+      const r = node.getBoundingClientRect();
+      const w = tip.offsetWidth, h = tip.offsetHeight;   // measured with the text already in
+      const vw = window.innerWidth, vh = window.innerHeight;
+      let x = r.right + GAP;
+      if (x + w > vw - MARGIN) x = r.left - w - GAP;                 // flip to the left
+      x = Math.max(MARGIN, Math.min(x, vw - w - MARGIN));            // and never off the edge
+      let y = r.top + r.height / 2 - h / 2;
+      y = Math.max(MARGIN, Math.min(y, vh - h - MARGIN));
+      tip.style.left = Math.round(x) + 'px';
+      tip.style.top  = Math.round(y) + 'px';
+    }
+
+    function show(node) {
+      if (!el.helpTip || !node) return;
+      const txt = textOf(node);
+      if (!txt) { hide(); return; }        // a `?` never promises an explanation it cannot give
+      cur = node;
+      // textContent, not innerHTML: the body of a tooltip can be a backend `why` string, and
+      // style.css sets `white-space: pre-wrap`, so a `\n` in data-help IS a line break.
+      el.helpTip.textContent = txt;
+      el.helpTip.classList.add('show');
+      place(node);
+    }
+    function hide() {
+      if (el.helpTip) el.helpTip.classList.remove('show');
+      cur = null;
+    }
+
+    const target = (e) => (e.target && e.target.closest) ? e.target.closest('[data-help]') : null;
+
+    function init() {
+      document.addEventListener('mouseover', (e) => {
+        const n = target(e);
+        if (n === cur) return;
+        if (n) show(n); else if (cur) hide();
+      });
+      document.addEventListener('focusin', (e) => { const n = target(e); if (n) show(n); else hide(); });
+      document.addEventListener('focusout', hide);
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+      // CAPTURE. A `?` inside an `overflow: auto` pane scrolls away from a FIXED bubble, and a
+      // scroll inside a pane does not bubble to window.
+      window.addEventListener('scroll', hide, true);
+      window.addEventListener('resize', hide);
+      reindex();
+    }
+
+    /** Keyboard-reachable, set from JS so the HTML stays clean. Idempotent. */
+    function reindex(root) {
+      (root || document).querySelectorAll('.help').forEach((n) => {
+        if (!n.hasAttribute('tabindex')) n.setAttribute('tabindex', '0');
+      });
+    }
+
+    /** Fill a `?` from a string the BACKEND measured. Empty = the `?` hides itself (style.css). */
+    function set(node, txt) {
+      if (!node) return;
+      node.dataset.help = txt || '';
+      if (node === cur) hide();
+    }
+
+    return { init, show, hide, reindex, set };
+  })();
+
+  // =========================================================================================
   // THE DOCUMENT
   // =========================================================================================
 
-  /** A fresh document for the open session. Every trial in `run.trials` gets an entry — including
-   *  the ones the blank scan recommends, because NOTHING IS AUTO-EXCLUDED (API.md §9). */
+  /** A fresh document for the open session.
+   *
+   *  ⛔ EVERY TRIAL STARTS `unplaced`. THE APP EXCLUDES NOTHING (his ruling, 2026-07-14: "the app
+   *     itself shouldn't store the exclusions for this experiment"). There is no built-in exclusion
+   *     list, no dataset detection, no auto-exclude — not from the blank scan either, which only
+   *     RECOMMENDS (API.md §9). The only things that ever exclude a frame are the human, in this
+   *     session, and a project file he loaded. The project file is the app's entire memory. */
   function newDoc() {
     const blanks = new Set((session.blank && session.blank.blank) || []);
     const tiles = {};
@@ -299,6 +420,8 @@ window.Sweep = (function () {
         status: 'unplaced', state: 'unplaced', x: null, y: null,
         r: 96,
         pass: (session.pass_split && t <= session.pass_split.value) ? 1 : 2,
+        // ⚠️ A MEASUREMENT about the pixels, not a judgement and not an exclusion. It is what the
+        // matcher refuses to score (API.md §7.3); it excludes nothing and it never will.
         blank: blanks.has(t),
         machine: null,
       };
@@ -307,10 +430,9 @@ window.Sweep = (function () {
       schema_version: 'camea-project-1.0',
       app: { name: 'Camea Mosaic Builder', version: APP_VERSION },
       dataset: session.dataset,
-      /* ⭐ THE ACQUISITION'S OWN NAME — `log.txt`'s `New experiment:` line, which is what
-       * `loader.detect_ruling()` decides the 26-snapshot ruling on. `dataset` is the FOLDER NAME, a
-       * label a human typed: a restored backup called `260620d` and the real 260620d opened through
-       * a junction both make it lie. Nothing downstream may key the ruling on `dataset`. */
+      /* THE ACQUISITION'S OWN NAME — `log.txt`'s `New experiment:` line. `dataset` is the FOLDER
+       * NAME, a label a human typed, and a restored backup or a junction makes it lie. Both are
+       * recorded so the file says which acquisition it describes; NEITHER decides anything. */
       experiment: session.experiment || session.dataset,
       data_dir: session.data_dir,
       tile_px: TILE,
@@ -328,36 +450,11 @@ window.Sweep = (function () {
                     'vscope-displayed (180deg-flipped) frame.'),
       origin_trial: null,
       tolerance_px: { anchor: 96, region_default: 256, grading: 10 },
+      /* ⛔ THE ONLY EXCLUSION LIST THAT EXISTS. It starts EMPTY and it only ever grows from what the
+       * HUMAN does — `E` in the sweep, or a tick on the Screen page. `exportDoc()` rebuilds it from
+       * live tile state on every save. There is no other exclusion list anywhere in this app: no
+       * built-in ruling, no dataset detection, nothing seeded at load. (His ruling, 2026-07-14.) */
       unusable_tiles: [],
-      /* ⛔ THE RULING, AND **WHETHER IT APPLIES HERE** (the user's ruling #2, 2026-07-12).
-       *
-       * 🔴 `applies` USED TO BE MISSING FROM THIS BLOCK, and that was a live P0. The backend's
-       * `doc_ruling_applies()` reads it; with no key it fell through to `doc.dataset` — the FOLDER
-       * NAME — and so re-derived, from a typed label, the question `detect_ruling()` had already
-       * answered from `log.txt`. Driven, both directions broke:
-       *   · a folder NAMED `260620d` whose log says otherwise: the loader served 284-348 as data,
-       *     the validator then refused every document describing them — **the project was
-       *     unsaveable from the first keystroke** (HTTP 500 on every autosave).
-       *   · the real 260620d through a differently-named junction: the ruling read as NOT applying,
-       *     and the hard guard ("a position on one of the 26 means a frame was loaded that must
-       *     never be") went silent — a doc with 284 anchored was accepted.
-       * The session already carries the verdict. Copy it, always. (The backend also re-stamps it
-       * from the open session on every save/load, so the document is never the authority.) */
-      EXCLUDED_TRIALS: session.excluded ? (session.excluded.applies === false ? {
-        applies: false,
-        ruling: 'NOT APPLIED. The 26 thrown-out snapshots (284-296, 299, 300-310, 348) are ' +
-                "260620d's blank and blurry frames. This is not 260620d — they are bare trial " +
-                'NUMBERS and they say nothing about this acquisition. Nothing is excluded by them.',
-        trials: [],
-        n: 0,
-        why: (session.ruling && session.ruling.why) || '',
-      } : {
-        applies: true,
-        ruling: "THROWN OUT. The user, 2026-07-11: 'i want these tiles to be thrown out and to " +
-                "never be used for any purposes whatsoever'. These frames are NOT DATA.",
-        trials: session.excluded.trials.slice(),
-        n: session.excluded.n,
-      }) : undefined,
       run: {
         detected: !!session.run.detected,
         why: session.run.why,
@@ -408,7 +505,8 @@ window.Sweep = (function () {
     }
     return c;
   };
-  const anyPlaced = () => trials().some((t) => tileOf(t).x !== null);
+  // ⚠️ Guarded: the step-lock (`READY.sweep`) asks this before a document necessarily exists.
+  const anyPlaced = () => !!doc && trials().some((t) => tileOf(t) && tileOf(t).x !== null);
 
   /** The anchor field a match against `target` would actually see — the anchored set MINUS the
    *  target (a tile is never an anchor for its own match; see `matchAnchor`), with its positions.
@@ -627,19 +725,18 @@ window.Sweep = (function () {
     const why = [];
     if (!res || !res.best) {
       why.push(res && res.refused
-        ? 'the matcher REFUSED this tile (' + (res.refused.reason || 'refused') + ') — it has no vote here'
-        : 'the anchor-composite search returned no candidate at all');
+        ? 'matcher refused (' + (res.refused.reason || 'refused') + ')'
+        : 'no candidate at all');
       return { confident: false, none: true, why };
     }
     const m = (res.margin === undefined) ? null : res.margin;
+    // ⚠️ The NUMBERS stay — this string is also written to `tile.divert_reason` and shipped in the
+    // QC report, and "not confident" without the measurement is an assertion, not evidence.
     if (m !== null && m < SOLVER_MARGIN_MIN) {
-      why.push('best-vs-second margin <b>' + fmt(m, 4) + '</b> (below ' + SOLVER_MARGIN_MIN.toFixed(2) +
-               '; the worst margin ever measured on a <i>correct</i> placement is 0.0139, and the ' +
-               'worst on a WRONG one is 0.1962 — a near-tie is the signature of a grid alias)');
+      why.push('margin <b>' + fmt(m, 4) + '</b> &lt; ' + SOLVER_MARGIN_MIN.toFixed(2));
     }
     if (isFinite(res.best.ncc) && res.best.ncc < SOLVER_NCC_MIN) {
-      why.push('NCC <b>' + fmt(res.best.ncc, 4) + '</b> (below ' + SOLVER_NCC_MIN.toFixed(2) +
-               '; every match measured >10 px wrong scored under 0.6392)');
+      why.push('NCC <b>' + fmt(res.best.ncc, 4) + '</b> &lt; ' + SOLVER_NCC_MIN.toFixed(2));
     }
     return { confident: why.length === 0, none: false, why };
   }
@@ -750,26 +847,20 @@ window.Sweep = (function () {
   function placementMessage(t, dec) {
     if (dec.noSolver && !dec.conf.confident) {
       return { kind: 'warn', msg:
-        'Trial ' + t + ' is at the <b>matcher\'s</b> answer, and the matcher is <b>not confident</b>: ' +
-        dec.conf.why.join('; ') + '. There is <b>no solver position</b> for this tile to fall back ' +
-        'on, so this is the only answer there is. <b>Look at it</b> (<kbd class="kbd">D</kbd>) ' +
-        'before you press <kbd class="kbd">A</kbd>.' };
+        '<b>Trial ' + t + ': match not confident</b> (' + dec.conf.why.join(', ') + ') and there is ' +
+        'no solver position to fall back on. Check it (<kbd class="kbd">D</kbd>) before ' +
+        '<kbd class="kbd">A</kbd>.' };
     }
     if (!dec.diverted) return null;              // the confident path banners elsewhere
 
     return { kind: 'warn', msg:
-      '<b>SHOWING THE SOLVER\'S POSITION for trial ' + t + ', not the matcher\'s.</b> ' +
+      '<b>Trial ' + t + ' — diverted to the solver.</b> ' +
       (dec.conf.none
-        ? 'The anchor-composite matcher gave nothing here — ' + dec.conf.why.join('; ') + '. '
-        : 'The anchor-composite match is <b>not confident</b> (' + dec.conf.why.join('; ') + ') and ' +
-          'it disagrees with the batch solve by <b>' + fmt(dec.d, 0) + ' px</b>. At a thin aperture ' +
-          'the matcher lies confidently — measured, with only trial 11 anchored it put trial 13 ' +
-          '<b>284.8 px</b> out at margin 0.0129 — while the batch solve places 312/312. ') +
-      'So the tile is at the <b>solver\'s</b> answer. It is ' +
-      '<b><span style="color:var(--c-unverified)">unverified</span></b>, not anchored: it has no ' +
-      'vote and nothing is judged against it. <b>Look at it</b> (<kbd class="kbd">D</kbd>), then ' +
-      '<kbd class="kbd">A</kbd> to accept it, <kbd class="kbd">V</kbd> to see what the matcher ' +
-      'wanted instead, or drag it.' };
+        ? 'The matcher gave nothing (' + dec.conf.why.join(', ') + ').'
+        : 'Match not confident (' + dec.conf.why.join(', ') + '), ' + fmt(dec.d, 0) +
+          ' px from the solver.') +
+      ' Unverified. <kbd class="kbd">D</kbd> to check, <kbd class="kbd">A</kbd> to accept, ' +
+      '<kbd class="kbd">V</kbd> for the matcher\'s answer, or drag it.' };
   }
 
   /** The Space path: banner it now. (`A` routes the same message through `afterJudge`.) */
@@ -803,7 +894,7 @@ window.Sweep = (function () {
         // Every OTHER placement path fades. Watching the tile materialise is the whole point, and
         // the origin landing on an empty canvas is the one the user has least reason to expect.
         if (viewerOk) Viewer.fadeIn(t, 0, 0);
-        afterJudge(t, 'Origin. Trial ' + t + ' is now (0, 0) and the anchor field starts here.');
+        afterJudge(t, 'Origin — trial ' + t + ' is (0, 0).');
         return;
       }
       /* ⭐ `A` on a tile that has NO POSITION YET has to place it before it can certify it — and the
@@ -815,8 +906,7 @@ window.Sweep = (function () {
       const res = await foregroundMatch(t, 'global', null);
       const dec = decidePlacement(t, res);
       if (!dec.xy) {
-        toast('Cannot anchor trial ' + t + ' — no position, the matcher gave nothing, and there is ' +
-              'no solver answer to fall back on. Drag it into place, then press A.', 'bad');
+        toast('Trial ' + t + ': no match, no solver answer. Drag it into place, then A.', 'bad');
         return;
       }
       pushUndo('anchor:' + t);
@@ -880,14 +970,13 @@ window.Sweep = (function () {
 
     const g = recomputeGaps();
     doc.unusable_tiles = trials().filter((x) => tileOf(x).state === 'excluded');
-    afterJudge(t, 'Excluded ' + t + '. The acquisition chain changed — ' +
-      (g.length ? g.length + ' gap' + (g.length === 1 ? '' : 's') + ' now: ' +
-        g.map((p) => p[0] + '→' + p[1]).join(', ') +
-        '. The serpentine one-step prior does not hold across a gap.'
-        : 'no gaps.') +
-      (nStale ? ' <b>' + t + ' was an ANCHOR</b>, so its pixels have just left the composite: <b>' +
-                nStale + '</b> tile' + (nStale === 1 ? ' was' : 's were') + ' matched against a field ' +
-                'that included it. They are flagged stale — re-check them.' : ''),
+    afterJudge(t, 'Excluded ' + t + '. ' +
+      (g.length ? g.length + ' gap' + (g.length === 1 ? '' : 's') + ': ' +
+        g.map((p) => p[0] + '→' + p[1]).join(', ') + '.' : 'No gaps.') +
+      // ⚠️ A LIVE WARNING, not an explanation: its pixels have LEFT the composite that N tiles were
+      // matched against. It changes what he does next (re-check them), so it stays on the page.
+      (nStale ? ' <b>' + t + ' was an anchor</b> — ' + nStale + ' tile' +
+                (nStale === 1 ? '' : 's') + ' flagged stale.' : ''),
       nStale ? 'warn' : 'ok');
   }
 
@@ -917,7 +1006,7 @@ window.Sweep = (function () {
    *  invisible; it only opens when the memo genuinely misses — which is exactly when it is unsafe. */
   function busyPlacing(what) {
     if (!advancing) return false;
-    toast('Still placing — ' + what + ' ignored. Wait for the tile to land, then press it again.', 'bad');
+    toast('Still placing — ' + what + ' ignored.', 'bad');
     return true;
   }
 
@@ -969,8 +1058,7 @@ window.Sweep = (function () {
     // 2. The next tile.
     const nxt = nextTrial(cur);
     if (nxt === null) {
-      banner('End of the run. <b>' + counts().unverified + '</b> tiles are still unverified — ' +
-             'they are placed but not certified, and they are flagged in every export.', 'ok');
+      banner('End of the run. <b>' + counts().unverified + '</b> still unverified.', 'ok');
       refresh();
       return;
     }
@@ -1002,15 +1090,13 @@ window.Sweep = (function () {
       showEvidence(nxt);
     } else if (tile.human && tile.x !== null) {
       showEvidence(nxt);
-      banner('Trial ' + nxt + ' is <b>where you put it by hand</b> — the matcher has not been let ' +
-             'near it. Press <kbd class="kbd">S</kbd> to snap it against the anchor field, ' +
-             '<kbd class="kbd">V</kbd> for alternatives, or <kbd class="kbd">A</kbd> to certify it.',
-             'ok');
+      banner('Trial ' + nxt + ' is <b>where you put it</b> — not re-matched. ' +
+             '<kbd class="kbd">S</kbd> to snap, <kbd class="kbd">V</kbd> for alternatives, ' +
+             '<kbd class="kbd">A</kbd> to certify.', 'ok');
     } else if (!anchored().length) {
       // Nothing to match against yet. The user has to anchor an origin first.
       commitCursor();
-      banner('No anchors yet — press <kbd class="kbd">A</kbd> to make trial ' + nxt +
-             ' the origin (0, 0).', 'warn');
+      banner('No anchors — <kbd class="kbd">A</kbd> makes trial ' + nxt + ' the origin (0, 0).', 'warn');
       refresh();
       return;
     } else {
@@ -1033,11 +1119,10 @@ window.Sweep = (function () {
         // field disagrees with the solver. (When we DIVERTED, moved_px is 0 by construction and
         // `announcePlacement` has already said the louder thing.)
         if (!dec.diverted && tile.machine && tile.moved_px > 20) {
-          banner('The anchor field disagrees with the solver by <b>' + fmt(tile.moved_px, 0) +
-                 ' px</b> on trial ' + nxt + ' — and the match is <b>confident</b> (NCC ' +
-                 fmt(tile.ncc, 4) + ', margin ' + fmt(tile.margin, 4) + '), so the field wins: it is ' +
-                 'human-certified and it has the bigger aperture. But <b>look at it</b> ' +
-                 '(<kbd class="kbd">D</kbd>) before you anchor it.', 'warn');
+          banner('Trial ' + nxt + ': the anchor field disagrees with the solver by <b>' +
+                 fmt(tile.moved_px, 0) + ' px</b>, but the match is <b>confident</b> (NCC ' +
+                 fmt(tile.ncc, 4) + ', margin ' + fmt(tile.margin, 4) + ') — so the field wins. ' +
+                 'Check it (<kbd class="kbd">D</kbd>) before you anchor.', 'warn');
         }
       } else if (tile.x === null) {
         commitCursor();
@@ -1078,7 +1163,7 @@ window.Sweep = (function () {
       return res;
     } catch (e) {
       if (e.code === 'busy' || e.status === 409) {
-        toast('A build is running — it owns the GPU. The sweep is paused until it finishes.', 'bad');
+        toast('A build is running — it owns the GPU.', 'bad');
       } else {
         toast('Match failed: ' + e.message, 'bad');
       }
@@ -1103,22 +1188,23 @@ window.Sweep = (function () {
     const placedAnyway = !!(tl && tl.diverted && tl.x !== null);
     if (refused.reason === 'no_anchors') {
       el.refused.className = 'warn info';
-      el.refused.innerHTML = '<div><b>No anchor field yet.</b> ' + refused.message + '</div>';
+      el.refused.innerHTML = '<div><b>No anchor field yet.</b> ' + (refused.message || '') + '</div>';
     } else {
       el.refused.className = 'warn loud';
       el.refused.innerHTML =
-        '<div><b>REFUSED — ' + (refused.reason || 'blank') + '.</b> ' +
-        (refused.message || '') +
+        '<div><b>REFUSED — ' + (refused.reason || 'blank') + '.</b> The matcher gets no vote here.' +
+        // The background — WHY a blank frame is refused — is a hover, not a paragraph.
+        '<span class="help" data-help="Two blank frames 136 trials apart correlate +0.43 at ZERO ' +
+        'SHIFT: what they share is fixed-pattern SENSOR structure, which does not move with the ' +
+        'stage. They register confidently and wrongly.&#10;&#10;There is no force flag. Your eye may ' +
+        'still drag it into place; the correlator may not."></span>' +
         (refused.texture !== undefined
           ? '<div class="muted mono" style="font-size:11px;margin-top:4px">texture ' +
             fmt(refused.texture, 2) + ' &lt; threshold ' + fmt(refused.threshold, 2) + '</div>' : '') +
         (placedAnyway
-          ? '<div class="warn info" style="margin-top:8px"><b>It has been placed anyway, at the ' +
-            '<u>solver\'s</u> position</b> (' + fmt(tl.x, 1) + ', ' + fmt(tl.y, 1) + ') — the batch ' +
-            'solve places 312/312 and a tile with no position at all is useless. The correlator was ' +
-            'given <b>no vote</b> here, and the tile is <b>unverified</b>, not anchored. It will ' +
-            'still refuse to <kbd class="kbd">S</kbd>-snap. <b>Your eye is the authority on this ' +
-            'one</b> — drag it if it is wrong.</div>'
+          ? '<div class="warn info" style="margin-top:8px"><b>Placed anyway, at the solver\'s ' +
+            'position</b> (' + fmt(tl.x, 1) + ', ' + fmt(tl.y, 1) + '). Unverified, and it will not ' +
+            '<kbd class="kbd">S</kbd>-snap. Drag it if it is wrong.</div>'
           : '') +
         '<div class="row tight" style="margin-top:8px">' +
         (placedAnyway ? '' : '<button class="btn sm" id="btn-handplace">Drop it by hand</button>') +
@@ -1127,6 +1213,7 @@ window.Sweep = (function () {
       if (hp) hp.onclick = () => handPlace(target);
       const ex = $('btn-refuse-exclude');
       if (ex) ex.onclick = () => exclude();
+      Help.reindex(el.refused);     // the `?` we just injected must be keyboard-reachable too
     }
     el.refused.classList.remove('hidden');
     // Only wipe the rail when there is genuinely nothing to show. A tile placed at the solver's
@@ -1140,7 +1227,7 @@ window.Sweep = (function () {
   function handPlace(t) {
     const p = prevTrial(t);
     const src = p !== null && tileOf(p).x !== null ? tileOf(p) : null;
-    if (!src) { toast('Nothing placed nearby to drop it next to.', 'bad'); return; }
+    if (!src) { toast('Nothing placed nearby to drop it beside.', 'bad'); return; }
     pushUndo('handplace:' + t);
     setState(t, 'unverified', src.x, src.y);
     tileOf(t).source = 'hand-dragged (no snap — blank tile, matcher refused)';
@@ -1150,8 +1237,8 @@ window.Sweep = (function () {
     // NOT clear these — anchoring a diverted tile must KEEP the record of how it got there.
     delete tileOf(t).diverted; delete tileOf(t).divert_reason; delete tileOf(t).rejected_match;
     if (viewerOk) Viewer.setDiverted(t, false);   // and the magenta outline goes with the claim
-    banner('Trial ' + t + ' dropped by hand. <b>It will not snap</b> — the matcher refuses blank ' +
-           'frames. Drag it with the mouse; your eye is the authority here.', 'warn');
+    banner('Trial ' + t + ' dropped by hand. <b>It will not snap</b> — blank frames are refused. ' +
+           'Drag it.', 'warn');
     if (viewerOk) Viewer.fadeIn(t, src.x, src.y);
     refresh();
     scheduleAutosave();
@@ -1242,9 +1329,9 @@ window.Sweep = (function () {
         n++;
       }
     }
+    // ⚠️ A LIVE WARNING: N tiles were matched against a field that no longer exists. It stays.
     if (n && announce !== false) {
-      banner('You moved an anchor. <b>' + n + '</b> tile' + (n === 1 ? '' : 's') +
-             ' were matched against the field <i>before</i> that move — they may be stale.', 'warn');
+      banner('Anchor moved — <b>' + n + '</b> tile' + (n === 1 ? '' : 's') + ' may be stale.', 'warn');
     }
     return n;
   }
@@ -1259,7 +1346,7 @@ window.Sweep = (function () {
     const t = cursor;
     if (t === null) return;
     const tile = tileOf(t);
-    if (tile.x === null) { toast('Nothing to snap — trial ' + t + ' has no position yet.', 'bad'); return; }
+    if (tile.x === null) { toast('Trial ' + t + ' has no position to snap.', 'bad'); return; }
     const res = await foregroundMatch(t, 'local', [tile.x, tile.y]);
     if (!res || res.refused || !res.best) return;
     pushUndo('snap:' + t);
@@ -1277,8 +1364,8 @@ window.Sweep = (function () {
     recordEvidence(t, res);
     const d = Math.hypot(res.best.x - before[0], res.best.y - before[1]);
     banner('Snapped ' + d.toFixed(2) + ' px. NCC <b>' + fmt(res.best.ncc, 4) + '</b>' +
-           (res.margin !== null && res.margin !== undefined ? ', margin ' + fmt(res.margin, 3) : '') + '.',
-           res.margin_thin ? 'warn' : 'ok');
+           (res.margin !== null && res.margin !== undefined ? ', margin ' + fmt(res.margin, 3) : '') +
+           '.', res.margin_thin ? 'warn' : 'ok');
     if (viewerOk) Viewer.fadeIn(t, tile.x, tile.y);
     refresh();
     scheduleAutosave();
@@ -1385,8 +1472,9 @@ window.Sweep = (function () {
       const r = await POST('/api/project/autosave', { doc: exportDoc() });
       if (el.autosaveNote) el.autosaveNote.textContent = 'autosave: ' + (r.saved_at || 'ok');
     } catch (e) {
-      // NEVER swallow this silently — a silent autosave failure is exactly what burned him before.
-      toast('AUTOSAVE FAILED: ' + e.message + ' — save the project by hand.', 'bad');
+      /* 🔴 NEVER SWALLOW THIS. A silent autosave failure has burned him before and nearly cost a
+       * day's work. It is a LIVE warning about the current state — it stays, loud, both places. */
+      toast('AUTOSAVE FAILED: ' + e.message + ' — save by hand.', 'bad');
       if (el.autosaveNote) el.autosaveNote.textContent = 'autosave: FAILED';
     }
   }
@@ -1394,6 +1482,12 @@ window.Sweep = (function () {
   /** The document as it goes over the wire: derived fields filled in, NORMALISED, provenance honest. */
   function exportDoc() {
     const d = JSON.parse(JSON.stringify(doc));
+    /* ⛔ THE APP CARRIES NO DATASET KNOWLEDGE, SO NEITHER DOES ANYTHING IT WRITES (his ruling,
+     * 2026-07-14). This block used to be a hard-coded ruling about 26 named trials of one specific
+     * acquisition. It is gone from `newDoc()` — and it is deleted HERE TOO, so that loading an OLD
+     * project file and re-saving it does not silently resurrect it. The ONLY exclusion record that
+     * survives is `unusable_tiles`, rebuilt below from what the HUMAN actually excluded. */
+    delete d.EXCLUDED_TRIALS;
     const anc = anchored();
     const placedT = trials().filter((t) => tileOf(t).x !== null);
     d.origin_trial = anc.length ? Math.min.apply(null, anc)
@@ -1485,6 +1579,11 @@ window.Sweep = (function () {
     const tag = (e.target && e.target.tagName) || '';
     if (/INPUT|TEXTAREA|SELECT/.test(tag) || (e.target && e.target.isContentEditable)) return;
 
+    // ⭐ Ctrl+S SAVES FROM ANY SCREEN (his ruling, 2026-07-14: "at any time in the process I can
+    // export the save file so I can resume later"). It MUST be handled up here, above the
+    // `screen !== 'sweep'` gate below — the whole point is that it works everywhere, and an hour
+    // into a sweep is exactly when he wants it. The project file is the app's only memory.
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveProject(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1513,10 +1612,7 @@ window.Sweep = (function () {
   function syncViewerUI() {
     diffOn = Viewer.isDifference ? Viewer.isDifference() : diffOn;
     if (el.btnDiff) el.btnDiff.classList.toggle('on', diffOn);
-    if (diffOn) {
-      banner('Difference mode: |tile − background| in the overlap. <b>Misalignment shows as bright ' +
-             'doubling.</b> It only means anything because the tone window is GLOBAL.', 'ok');
-    }
+    if (diffOn) banner(DIFF_MSG, 'ok');
     refresh();
   }
 
@@ -1525,10 +1621,7 @@ window.Sweep = (function () {
     diffOn = !diffOn;
     Viewer.setDifference(diffOn);
     if (el.btnDiff) el.btnDiff.classList.toggle('on', diffOn);
-    banner(diffOn
-      ? 'Difference mode: |tile − background| in the overlap. <b>Misalignment shows as bright ' +
-        'doubling.</b> It only means anything because the tone window is GLOBAL.'
-      : null, 'ok');
+    banner(diffOn ? DIFF_MSG : null, 'ok');
   }
 
   // =========================================================================================
@@ -1543,10 +1636,17 @@ window.Sweep = (function () {
     el.nExcluded.textContent   = c.excluded;
     // ⭐ the diverted count. Hidden at zero (it is not a normal part of the vocabulary), shown the
     // moment one tile sits on the solver's answer — see counts().
-    if (el.nDiverted && el.nDiverted.parentElement) {
-      el.nDiverted.textContent = c.diverted;
-      el.nDiverted.parentElement.classList.toggle('hidden', !c.diverted);
+    if (el.nDiverted) el.nDiverted.textContent = c.diverted;
+    if (el.divertedBadge) el.divertedBadge.classList.toggle('hidden', !c.diverted);
+
+    /* ⚠️ THE GAPS ARE LIVE. Excluding a tile opens an acquisition gap, and the Range screen's `?`
+     * promises they are "recomputed every time you exclude a tile" — so they must actually be. This
+     * used to be written once, at load, from the SESSION's list, and then never again. */
+    if (el.gapsV) {
+      const g = doc.gaps || [];
+      el.gapsV.textContent = g.length ? g.map((p) => p[0] + '→' + p[1]).join(', ') : 'none';
     }
+    lockSteps();
 
     const t = cursor;
     el.cbTrial.textContent = t === null ? '—' : t;
@@ -1628,16 +1728,21 @@ window.Sweep = (function () {
     el.evThin.classList.toggle('hidden', !thin);
     if (el.evNccMeter) el.evNccMeter.classList.toggle('thin', thin);
 
-    // The aperture warning: at n_anchors == 1 this IS a TILE-PAIR match — the weak case.
+    /* ⚠️ A LIVE WARNING ABOUT THE CURRENT TILE: at n_anchors <= 2 this IS a tile-pair match — the
+     * weak case, and the one that lies confidently. It fires only when the aperture is genuinely
+     * thin, so it stays on the page. Its BACKGROUND lives on the `?`. */
     const na = res.n_anchors;
     if (na !== undefined && na <= 2) {
       el.evAperture.classList.remove('hidden');
       el.evAperture.innerHTML =
-        '<div><b>Small aperture (' + na + ' anchor' + (na === 1 ? '' : 's') + ').</b> This is ' +
-        'essentially a tile-pair match, and at tile-pair aperture the exact-NCC winner is &gt;20 px ' +
-        'wrong <b>5 % of the time, at scores up to 0.760</b>. What saves the opening is that ' +
-        'consecutive snapshots overlap ~78 %. Check it in Difference mode before you anchor it — ' +
-        'the aperture, and the evidence, strengthen with every anchor you add.</div>';
+        '<div><b>Small aperture (' + na + ' anchor' + (na === 1 ? '' : 's') + ').</b> Check it in ' +
+        'Difference (<kbd class="kbd">D</kbd>) before you anchor.' +
+        '<span class="help" data-help="Essentially a tile-pair match. At tile-pair aperture the ' +
+        'exact-NCC winner is >20 px wrong 5 % of the time, at scores up to 0.760 — one measured ' +
+        'pair scores 0.760 and is 757 px wrong, while the truth is the runner-up at 0.677.&#10;&#10;' +
+        'What saves the opening is that consecutive snapshots overlap ~78 %. The aperture, and the ' +
+        'evidence, strengthen with every anchor you add."></span></div>';
+      Help.reindex(el.evAperture);
     } else {
       el.evAperture.classList.add('hidden');
     }
@@ -1671,30 +1776,36 @@ window.Sweep = (function () {
       const rm = tile.rejected_match;
       head =
         '<div class="warn loud" style="margin-bottom:8px">' +
-        '<div><b>THIS IS THE SOLVER\'S POSITION, NOT THE MATCHER\'S.</b> The anchor-composite match ' +
-        'was not confident here, so it was overruled by the batch solve (which places 312/312).</div>' +
-        '<div class="muted" style="margin-top:4px">why: ' + (tile.divert_reason || '—') + '</div>' +
+        '<div><b>SOLVER\'S POSITION, NOT THE MATCHER\'S.</b>' +
+        '<span class="help" data-help="The anchor-composite match was not confident here, so it was ' +
+        'overruled by the batch solve.&#10;&#10;At a thin aperture the matcher lies CONFIDENTLY: ' +
+        'measured, with only trial 11 anchored it put trial 13 284.8 px out at margin 0.0129. The ' +
+        'batch solve places 312/312.&#10;&#10;The NCC above is measured where the tile ACTUALLY ' +
+        'SITS, not at the answer that was rejected. Nothing is anchored until you press A."></span>' +
+        '</div>' +
+        '<div class="muted" style="margin-top:4px">' + (tile.divert_reason || '—') + '</div>' +
         (rm
-          ? '<div class="mono" style="font-size:11px;margin-top:4px">the matcher wanted (' +
+          ? '<div class="mono" style="font-size:11px;margin-top:4px">matcher wanted (' +
             fmt(rm.x, 1) + ', ' + fmt(rm.y, 1) + ') — <b>' + fmt(rm.px_from_solver, 0) + ' px away</b>' +
             ', NCC ' + fmt(rm.ncc, 4) +
             (rm.margin === null || rm.margin === undefined ? '' : ', margin ' + fmt(rm.margin, 4)) +
-            '. Press <kbd class="kbd">V</kbd> to see it and take it if your eye says so.</div>'
-          : '<div class="mono" style="font-size:11px;margin-top:4px">the matcher returned nothing at ' +
-            'all here, so there is no alternative to compare against.</div>') +
-        '<div class="muted" style="margin-top:4px">The NCC above is measured <b>where the tile ' +
-        'actually sits</b>, not at the answer that was rejected. Nothing is anchored until you press ' +
-        '<kbd class="kbd">A</kbd>.</div></div>';
+            '. <kbd class="kbd">V</kbd> to see it.</div>'
+          : '<div class="mono" style="font-size:11px;margin-top:4px">the matcher returned nothing — ' +
+            'there is no alternative to compare.</div>') +
+        '</div>';
     }
 
-    if (!tile.machine) { el.evMachine.innerHTML = head; return; }
+    if (!tile.machine) { el.evMachine.innerHTML = head; Help.reindex(el.evMachine); return; }
     const d = tile.x === null ? null : Math.hypot(tile.x - tile.machine[0], tile.y - tile.machine[1]);
+    /* ⚠️ THE ANCHORING HAZARD, said out loud: "I looked at it" and "I agreed with it" must not blur
+     * together. A tile still sitting exactly where the machine put it says so. */
     el.evMachine.innerHTML = head + ((d !== null && d < 0.5)
       ? '<span style="color:var(--c-unverified)">At the machine\'s position, <b>' +
-        (tile.diverted ? 'because the app put it there — NOT because you agreed' : 'untouched') +
+        (tile.diverted ? 'because the app put it there — not because you agreed' : 'untouched') +
         '</b>.</span>'
-      : '<span style="color:var(--c-anchored)">Moved <b>' + fmt(d, 2) + ' px</b> from the machine\'s ' +
-        'answer (' + fmt(tile.machine[0], 1) + ', ' + fmt(tile.machine[1], 1) + ').</span>');
+      : '<span style="color:var(--c-anchored)">Moved <b>' + fmt(d, 2) + ' px</b> from the machine (' +
+        fmt(tile.machine[0], 1) + ', ' + fmt(tile.machine[1], 1) + ').</span>');
+    Help.reindex(el.evMachine);
   }
 
   /** ⭐ "Did you mean HERE instead?" — the human takes a runner-up peak.
@@ -1731,7 +1842,7 @@ window.Sweep = (function () {
     }
     showEvidence(t);
     banner('Moved to alternative #' + c.rank + ' (NCC ' + fmt(c.ncc, 4) + '). ' +
-           'Press <kbd class="kbd">S</kbd> to snap it sub-pixel.', 'ok');
+           '<kbd class="kbd">S</kbd> to snap.', 'ok');
     if (viewerOk) Viewer.fadeIn(t, c.x, c.y);
   }
 
@@ -1815,13 +1926,16 @@ window.Sweep = (function () {
     if (!st.length) return;
 
     const bad = st.filter((t) => tileOf(t).recheck_px != null && tileOf(t).recheck_px > RECHECK_TOL_PX);
-    let h = '<div><b>' + st.length + ' tile' + (st.length === 1 ? '' : 's') +
-      ' may be stale</b> — matched against an anchor field that has since changed. ' +
-      '<button class="btn sm" id="btn-recheck">Re-check them</button></div>';
+    let h = '<div><b>' + st.length + ' stale</b> — matched against an anchor field that has since ' +
+      'changed.' +
+      '<span class="help" data-help="A tile knocked off by a moved anchor is off by HUNDREDS of px — ' +
+      'failure on this data is binary, sub-pixel right or wildly wrong.&#10;&#10;The re-check matches ' +
+      'GLOBALLY and is allowed to say NO: it never moves the tile, it only measures it. Anything that ' +
+      'disagrees by more than ' + RECHECK_TOL_PX + ' px STAYS flagged."></span> ' +
+      '<button class="btn sm" id="btn-recheck">Re-check</button></div>';
     if (bad.length) {
-      h += '<div style="margin-top:8px"><b>' + bad.length + ' DISAGREE with the current field</b> ' +
-           'by more than ' + RECHECK_TOL_PX + ' px. On this data a tile is either sub-pixel right or ' +
-           'hundreds of px wrong — go and look:<div class="row tight" style="margin-top:6px">' +
+      h += '<div style="margin-top:8px"><b>' + bad.length + ' disagree</b> by &gt; ' + RECHECK_TOL_PX +
+           ' px — go and look:<div class="row tight" style="margin-top:6px">' +
            bad.map((t) => '<button class="btn sm danger go-stale" data-trial="' + t + '">' + t +
                           ' · ' + fmt(tileOf(t).recheck_px, 0) + ' px</button>').join('') +
            '</div></div>';
@@ -1830,6 +1944,7 @@ window.Sweep = (function () {
     el.stale.querySelectorAll('button.go-stale').forEach((b) => {
       b.onclick = () => setCursor(+b.dataset.trial);
     });
+    Help.reindex(el.stale);
 
     const b = $('btn-recheck');
     if (b) b.onclick = async () => {
@@ -1856,16 +1971,14 @@ window.Sweep = (function () {
       }
       refresh(); scheduleAutosave();
       if (off.length) {
-        banner('Re-checked against the CURRENT anchor field: <b>' + agreed + ' agree</b>, and <b>' +
-               off.length + ' DO NOT</b> (' + off.map((t) => t + ' by ' + fmt(tileOf(t).recheck_px, 0) +
-               ' px').join(', ') + '). They are still flagged, and they have <b>not</b> been moved — ' +
-               'go and look at each one (<kbd class="kbd">D</kbd>), then <kbd class="kbd">V</kbd> or ' +
-               'drag + <kbd class="kbd">S</kbd>.', 'warn');
+        // ⚠️ LIVE: these tiles are still wrong and they have NOT been moved. Loud.
+        banner('<b>' + agreed + ' agree, ' + off.length + ' do not</b> (' +
+               off.map((t) => t + ' by ' + fmt(tileOf(t).recheck_px, 0) + ' px').join(', ') +
+               '). Still flagged, not moved — go and look.', 'warn');
       } else {
-        banner('Re-checked ' + st.length + ' tiles against the current anchor field: <b>' + agreed +
-               ' agree</b> to within ' + RECHECK_TOL_PX + ' px' +
-               (refused ? ', ' + refused + ' refused (blank — not checkable)' : '') +
-               (failed ? ', ' + failed + ' could not be checked and stay flagged' : '') + '.', 'ok');
+        banner('Re-checked ' + st.length + ': <b>' + agreed + ' agree</b> to ' + RECHECK_TOL_PX + ' px' +
+               (refused ? ', ' + refused + ' refused (blank)' : '') +
+               (failed ? ', ' + failed + ' unchecked' : '') + '.', 'ok');
       }
     };
   }
@@ -1880,18 +1993,20 @@ window.Sweep = (function () {
      * from ever showing "Independent" over a seeded document.) */
     const seeded = !!doc.build || trials().some((t) => tileOf(t) && tileOf(t).machine);
     if (seeded && p.independent_of_method) { p.independent_of_method = false; }
+    const method = (p.seeded_from && p.seeded_from.method) || 't33';
     el.provenance.className = p.independent_of_method ? 'warn info' : 'warn loud';
     el.provenance.innerHTML = p.independent_of_method
-      ? '<div><b>Independent.</b> No machine build seeded this document — every position here was ' +
-        'placed by hand against the anchor field you built. It <b>is</b> an honest truth, and it may ' +
-        'be used to score a solver.</div>'
-      : '<div><b>NOT AN INDEPENDENT GROUND TRUTH.</b> Every position here started as ' +
-        (p.seeded_from ? p.seeded_from.method : 't33') + "'s output and was confirmed or corrected " +
-        'by a human who could see it. <b>It must never be used to score that method, or any method ' +
-        'derived from it</b> — the score would be 100 % by construction. This project has already ' +
-        'destroyed one benchmark exactly this way, and pass 1\'s ground truth got tiles ' +
-        '128/129/130/148 wrong for precisely this reason. The stamp goes into every file you ' +
-        'export.</div>';
+      ? '<div><b>Independent.</b> No build seeded this — it may be used to score a solver.' +
+        '<span class="help" data-help="Every position here was placed by hand against the anchor ' +
+        'field you built. It is an honest truth."></span></div>'
+      : '<div><b>NOT AN INDEPENDENT GROUND TRUTH.</b> Every position started as ' + method +
+        "'s output. <b>Never score " + method + ' with this.</b>' +
+        '<span class="help" data-help="Confirmed or corrected by a human who could SEE the solver\'s ' +
+        'answer. Scoring that method against this file returns ~100 % by construction.&#10;&#10;This ' +
+        'project has already destroyed one benchmark exactly this way, and pass 1\'s ground truth got ' +
+        'tiles 128/129/130/148 wrong for precisely this reason.&#10;&#10;The stamp goes into every ' +
+        'file you export."></span></div>';
+    Help.reindex(el.provenance);
   }
 
   function setCursor(t) {
@@ -1907,34 +2022,77 @@ window.Sweep = (function () {
   function setCursorUI(t) { if (viewerOk) Viewer.setCursor(t); }
 
   // =========================================================================================
-  // Screens
+  // ⭐ THE SIX-STEP WIZARD — his ruling, 2026-07-14: "make it more step by step"
+  //      1 Load · 2 Range · 3 Screen · 4 Place · 5 Sweep · 6 Mosaic
   // =========================================================================================
-  /** The router. The SWEEP is not a pane — it IS the stage (canvas + both rails). The other four
+  /* THE HEADER IS A PROGRESS INDICATOR, NOT A MENU. A step is LOCKED until everything before it is
+   * ready — style.css's `.step.locked` does the look (and kills pointer-events); this enforces it.
+   *
+   * ⚠️ The gates are the ones that are REAL. There is no gate on "did he tick a blank box" or "did
+   * he run the solver", because *not* ticking and *not* solving are both legitimate answers — Skip
+   * goes straight to a hand-placed sweep. What is genuinely impossible is: a Range with no session,
+   * and a Mosaic with nothing placed. Do not invent gates the workflow does not have; a wizard that
+   * locks a step he is entitled to reach is worse than one that locks nothing. */
+  const STEPS = ['load', 'range', 'screen', 'place', 'sweep', 'mosaic'];
+  const READY = {
+    load:   () => !!session,                       // a session exists = the Load step is done
+    range:  () => !!session,                       // the range always has a value (the detected one)
+    screen: () => !!session,
+    place:  () => !!session,
+    sweep:  () => anyPlaced(),                     // nothing to export until something has a position
+    mosaic: () => true,
+  };
+
+  /** The furthest step he may click: everything before it must be ready. */
+  function unlockedThrough() {
+    let i = 0;
+    while (i < STEPS.length - 1 && READY[STEPS[i]]()) i++;
+    return i;
+  }
+  const isLocked = (name) => STEPS.indexOf(name) > unlockedThrough();
+
+  function lockSteps() {
+    const max = unlockedThrough();
+    const at  = STEPS.indexOf(screen);
+    STEPS.forEach((s, i) => {
+      const b = $('step-' + s);
+      if (!b) return;
+      b.classList.toggle('locked', i > max);
+      b.classList.toggle('on', s === screen);
+      // `.done` = behind him AND actually finished. The origin tile is step 5's evidence, not a tick
+      // on step 5 itself, so a step is only `done` once he has moved PAST it.
+      b.classList.toggle('done', i < at && READY[s]());
+    });
+  }
+
+  /** The router. The SWEEP is not a pane — it IS the stage (canvas + both rails). The other five
    *  screens are panes that cover the stage, and they hide the rails (style.css gives us
    *  `.shell.no-left` / `.no-right` for exactly this). */
   function show(name) {
+    if (STEPS.indexOf(name) < 0) return;
+    if (isLocked(name)) { toast('Finish the step before it first.', 'bad'); return; }
     screen = name;
-    for (const s of ['load', 'screen', 'build', 'export']) {
+    Help.hide();                     // a bubble anchored to a `?` on the screen we are leaving
+    // The sweep has NO pane — it is the stage itself. Every other step does.
+    for (const s of STEPS) {
       const pane = $('screen-' + s);
       if (pane) pane.classList.toggle('on', s === name);
     }
-    for (const s of ['load', 'screen', 'build', 'sweep', 'export']) {
-      const st = $('step-' + s);
-      if (st) st.classList.toggle('on', s === name);
-    }
+    lockSteps();
+
     const sweeping = (name === 'sweep');
     el.app.classList.toggle('no-left', !sweeping);
     el.app.classList.toggle('no-right', !sweeping);
     // The stage OVERLAYS (banner, A/E/Space cluster, camera + undo) sit at z-index 4, above the
     // panes' z-index 3. Hiding the rails is not enough: without this they float on top of Load /
-    // Build / Export, obscure the text and swallow clicks in their corners.
+    // Range / Screen / Place / Mosaic, obscure the text and swallow clicks in the corners.
     if (el.stage) el.stage.classList.toggle('no-overlays', !sweeping);
     if (sweeping) {
       mountViewer();
       if (viewerOk) Viewer.resize();
       refresh();
     }
-    if (name === 'export') renderProvenance();
+    if (name === 'mosaic') renderProvenance();
   }
 
   function mountViewer() {
@@ -1979,7 +2137,16 @@ window.Sweep = (function () {
         // (It used to be its own three lines, and they lost the evidence — see `pickAlternative`.)
         onAlternativePick: (t, c) => pickAlternative(t, c),
 
-        onSelect: (t) => setCursor(t),
+        /* 🔴 `Esc` MUST NOT KILL THE SWEEP. viewer.js's Escape clears the marquee selection and the
+         * alternative ghosts, and reports it as `onSelect(null)` — and this used to pass that
+         * straight into `setCursor(null)`. The cursor IS the tile under judgement, so Esc left the
+         * sweep with no cursor at all: `advance()`, `anchor()` and `exclude()` all begin with
+         * `if (cursor === null) return`, so Space / A / E then did NOTHING, silently, and the only
+         * way back was to click a trial in the queue. Driven on the real app: Esc, then three
+         * Spaces, and the status bar read `trial —` with the sweep frozen. It also wrote
+         * `cursor: null` into the project file, so a RESUME landed back at the top of the run.
+         * Esc deselects. It does not abandon the tile you are judging. */
+        onSelect: (t) => { if (t !== null) setCursor(t); },
         onFadeEnd: () => {},
         onError: (t, err) => toast('Tile ' + t + ': ' + err, 'bad'),
       });
@@ -1997,11 +2164,11 @@ window.Sweep = (function () {
         } catch (_) {}
       }, 1000);
     } catch (e) {
-      toast('The viewer failed to mount: ' + e.message, 'bad');
+      toast('Viewer failed to mount: ' + e.message, 'bad');
     }
   }
 
-  // ---- 1 · LOAD -------------------------------------------------------------------------
+  // ---- 1 · LOAD — one question: which directory? ------------------------------------------
   async function openDir() {
     const dir = el.inDatadir.value.trim();
     if (!dir) { toast('Pick a directory first.', 'bad'); return; }
@@ -2012,7 +2179,7 @@ window.Sweep = (function () {
         el.openFill.style.width = (job.pct || 0) + '%';
         el.openMsg.textContent = (job.phase || '') + ' — ' + (job.message || '');
       });
-      await loadSession();
+      await loadSession();          // -> Range. The question this screen asks has been answered.
       el.openProgress.classList.add('hidden');
     } catch (e) {
       el.openProgress.classList.add('hidden');
@@ -2020,7 +2187,10 @@ window.Sweep = (function () {
     }
   }
 
-  async function loadSession() {
+  /** `{silent: true}` = load the SESSION (pixels, tone, blank scan, trial list) but do not navigate
+   *  and do not announce. The resume path uses it: it needs the session, and then it replaces the
+   *  fresh document this builds with the one from the project file. */
+  async function loadSession(opts) {
     session = await GET('/api/session');
     toneVersion = (session.tone && session.tone.version) || 1;
     cacheKey = bustKey();
@@ -2043,33 +2213,40 @@ window.Sweep = (function () {
       Viewer.fit();
     }
 
+    /* ⛔ THE NUMBERS ONLY. There is no "312 usable of 338 (26 thrown out)" line any more, because
+     * THE APP EXCLUDES NOTHING AT LOAD (his ruling, 2026-07-14). `run.n` is simply the trial count.
+     * The DETECTION's reasoning — a measured `why` string — goes behind the `?`, not on the page. */
     el.hdrDataset.textContent = session.dataset + ' · ' + session.run.n + ' tiles';
     el.runRange.textContent   = session.run.lo + '–' + session.run.hi;
-    el.runWhy.textContent     = session.run.why || '';
     el.runN.textContent       = session.run.n;
-    el.runNInRange.textContent = session.run.n_in_range;
-    el.runNExcluded.textContent = session.excluded ? session.excluded.n : 0;
+    // The TOOLTIP is where the long version belongs — that is the whole point of moving it off the
+    // page. Prefer `why_detail` (the full reasoning) and fall back to the terse `why`.
+    Help.set(el.helpRun, session.run.why_detail || session.run.why || '');
+
     const ps = session.pass_split || {};
     el.splitValue.textContent = ps.value ?? '—';
-    el.splitWhy.textContent   = ps.why || '';
     el.splitN1.textContent    = ps.n_pass1 ?? '—';
     el.splitN2.textContent    = ps.n_pass2 ?? '—';
-    el.gapsV.textContent      = (session.gaps && session.gaps.length)
-      ? session.gaps.map((g) => g[0] + '→' + g[1]).join(', ') : 'none';
+    Help.set(el.helpSplit, ps.why_detail || ps.why || '');
+
     el.inLo.value = session.run.lo; el.inHi.value = session.run.hi;
     el.inSplit.value = ps.value ?? '';
     el.cfgPassSplit.value = ps.value ?? '';
     el.inBasename.value = session.dataset + '_mosaic';
     if (session.tone) { el.toneLo.value = fmt(session.tone.lo, 1); el.toneHi.value = fmt(session.tone.hi, 1); }
-    el.loadResult.classList.remove('hidden');
 
     renderSheet();
     renderBlankScan();
-    // renderGpu() is ASYNC. It must be awaited before renderBuildCost() reads `gpu`, or the build
-    // screen prints "No GPU." on a machine that has one — a false statement in the one panel whose
-    // whole job is an honest cost report. (renderGpu also calls renderBuildCost on settle.)
+    // renderGpu() is ASYNC. `gpu` must be known before renderBuildCost() reads it, or the Place
+    // screen prints "No GPU" on a machine that has one — a false statement in the one line whose
+    // whole job is an honest cost report. (renderGpu calls renderBuildCost on settle.)
     renderGpu();
     refresh();
+    if (opts && opts.silent) return;
+    // ⭐ Opening a directory lands him on RANGE, not back on Load. Load asks ONE question and it
+    //    has been answered. (Every path in — Open, Apply, a page reload, `--data-dir` — comes here.)
+    show('range');
+    toast('Loaded ' + session.run.n + ' tiles.', 'ok');
   }
 
   async function renderGpu() {
@@ -2084,36 +2261,42 @@ window.Sweep = (function () {
     renderBuildCost();   // only now is `gpu` actually known — see the note at the call site.
   }
 
-  /** No GPU? RUN ANYWAY, and state the real cost. Never degrade the result silently. */
+  /** No GPU? RUN ANYWAY, and state the real cost. Never degrade the result silently.
+   *  ⚠️ A COST, not a warning — style.css makes this a `.muted` line and the HTML gives it no
+   *     `.warn`. One clause. The `why` (a CUDA DLL path problem is FIXABLE, and is not the same
+   *     thing as "no card") lives on the GPU badge's tooltip — see `renderGpu`. */
   function renderBuildCost() {
+    if (!el.buildCost) return;
     const on = gpu && gpu.available;
-    el.buildCost.className = on ? 'warn info' : 'warn';
-    el.buildCost.innerHTML = on
-      ? '<div>GPU detected (' + (gpu.name || gpu.backend) + '). A 312-tile build takes <b>~3 min</b> ' +
-        'cold, ~25 s on a warm cache.</div>'
-      : '<div><b>No GPU.</b> The build will run anyway, and the result will be <b>identical</b> — it ' +
-        'will just take <b>~8–10 min</b> instead of ~3. And the sweep itself is only <b>1.46×</b> ' +
-        'slower without a GPU (1,562 vs 1,068 ms per Space), because the exact-NCC scoring runs on ' +
-        'the CPU either way. The hour you spend in the sweep is barely affected.' +
-        (gpu && gpu.reason
-          ? '<div class="muted mono" style="font-size:11px;margin-top:6px">why: ' + gpu.reason +
-            '<br>If this machine <i>does</i> have an NVIDIA card, this is a CUDA <b>DLL path</b> ' +
-            'problem, not a missing GPU — and it is fixable.</div>'
-          : '') + '</div>';
+    // ⚠️ The `?`'s body is set through `Help.set` (a property), NEVER interpolated into an HTML
+    //    attribute: `gpu.reason` is a backend string and a single `"` in it would break out of
+    //    data-help and mangle the page.
+    el.buildCost.innerHTML = (on
+      ? 'GPU · ' + (gpu.name || gpu.backend) + ' — ~3 min cold, ~25 s cached.'
+      : '<b>No GPU</b> — ~8–10 min. The result is identical.') +
+      '<span class="help" data-help=""></span>';
+    Help.set(el.buildCost.querySelector('.help'), on
+      ? 'For a 312-tile build. The sweep itself is unaffected.'
+      : 'The build runs anyway and the answer is the SAME; it just takes ~8-10 min instead of ~3.\n\n' +
+        'The sweep itself is only 1.46x slower without a GPU (1,562 vs 1,068 ms per Space), because ' +
+        'the exact-NCC scoring runs on the CPU either way.\n\n' +
+        (gpu && gpu.reason ? 'why: ' + gpu.reason + '\n\n' : '') +
+        'If this machine DOES have an NVIDIA card, this is a CUDA DLL-path problem, not a missing ' +
+        'GPU — and it is fixable.');
+    Help.reindex(el.buildCost);
   }
 
   async function overrideRun() {
     try {
       const body = { lo: +el.inLo.value, hi: +el.inHi.value, pass_split: +el.inSplit.value };
+      // ⚠️ DESTRUCTIVE, and he has work on the canvas. Say what dies, in one line, and let him stop.
       if (anyPlaced()) {
-        if (!confirm('A reload invalidates the build result and every position from it. ' +
-                     'Tile states keyed on trial survive, positions from a stale build do not. Continue?')) return;
+        if (!confirm('Reloading discards the build and every position in it. Continue?')) return;
       }
       const j = await PATCH('/api/session/run', body);
       await pollJob(j.job_id, (job) => { el.openMsg.textContent = job.phase + ' — ' + (job.message || ''); });
-      await loadSession();
-      toast('Run reloaded.', 'ok');
-    } catch (e) { toast('Override failed: ' + e.message, 'bad'); }
+      await loadSession();     // -> Range
+    } catch (e) { toast('Reload failed: ' + e.message, 'bad'); }
   }
 
   // ---- 2 · SCREEN -----------------------------------------------------------------------
@@ -2125,36 +2308,50 @@ window.Sweep = (function () {
     return (b.scanned || b.blank || []).slice();
   };
 
+  /** ⚠️ `#blank-list` is `class="facts"` in the HTML, so each frame must be a `.fact` — that is the
+   *  CSS contract (`.fact .k` / `.fact .v`). It used to emit `.card`, which style.css does not
+   *  define at all, and the whole list would have rendered unstyled. */
   function renderBlankScan() {
     const b = session.blank;
-    if (!b) { el.blankList.innerHTML = '<div class="muted">No scan.</div>'; return; }
-    el.blankN.textContent    = b.n_blank;
-    el.blankMeasure.textContent = b.measure || '';
-    el.blankThr.textContent  = fmt(b.threshold, 2);
-    el.blankThrsrc.textContent = b.threshold_source || '';
-    el.blankMargin.textContent = b.margin_warning || '';
-    el.blankN.textContent = scannedBlanks().length;
+    if (!b) {
+      el.blankList.innerHTML = '<div class="muted">No scan.</div>';
+      el.blankN.textContent = '0';
+      el.blankThr.textContent = '—';
+      Help.set(el.helpBlank, '');
+      return;
+    }
+    const scan = scannedBlanks();
+    el.blankN.textContent   = scan.length;
+    el.blankThr.textContent = fmt(b.threshold, 2);
+    // The measure, where the threshold came from, and how little margin it has — all of it is
+    // background, so all of it is a hover. (his ruling: a tool, not an explainer.)
+    Help.set(el.helpBlank, [b.measure, b.threshold_source,
+                            b.margin_warning_detail || b.margin_warning]
+      .filter(Boolean).join('\n\n'));
+
     el.blankList.innerHTML = '';
-    for (const t of scannedBlanks()) {
-      const d = document.createElement('div');
-      d.className = 'card';
-      d.style.cssText = 'display:flex;gap:10px;align-items:center';
+    if (!scan.length) {
+      el.blankList.innerHTML = '<div class="muted">Nothing recommended.</div>';
+      return;
+    }
+    for (const t of scan) {
       const tex = b.texture ? b.texture[K(t)] : null;
+      const d = document.createElement('div');
+      d.className = 'fact';
       /* 🔴 NOT `checked`. See the note in index.html: a pre-ticked box under a primary button
-       * reading "Exclude the ticked frames" IS an auto-exclude, and on this dataset it threw away
-       * four tiles the user himself hand-anchored into the ground truth. THE SCAN RECOMMENDS. */
+       * reading "Exclude the ticked" IS an auto-exclude, and on this dataset it threw away four
+       * tiles the user himself hand-anchored into the ground truth. THE SCAN RECOMMENDS. HE TICKS. */
       d.innerHTML =
+        '<div class="k">trial ' + t + '<span class="spacer"></span></div>' +
         '<img src="' + API() + '/api/tile/' + t + '.png?v=' + cacheKey + '" alt="trial ' + t + '" ' +
-        'style="width:72px;height:72px;image-rendering:pixelated;border-radius:4px">' +
-        '<span><b>trial ' + t + '</b><br><span class="muted mono" style="font-size:11px">texture ' +
-        fmt(tex, 1) + '</span><br>' +
-        '<label style="cursor:pointer;font-size:12px">' +
-        '<input type="checkbox" class="blank-chk" data-trial="' + t + '"> exclude it</label><br>' +
-        '<label style="cursor:pointer;font-size:12px" title="By default the matcher REFUSES this ' +
-        'frame — a blank frame registers confidently and wrongly on fixed-pattern sensor structure. ' +
-        'Tick this only if you can see real tissue in the thumbnail.">' +
-        '<input type="checkbox" class="blank-score" data-trial="' + t + '"> let the matcher score it' +
-        '</label></span>';
+        'style="width:100%;aspect-ratio:1;object-fit:cover;image-rendering:pixelated;' +
+        'border-radius:4px;margin:4px 0">' +
+        '<div class="muted mono" style="font-size:11px">texture ' + fmt(tex, 1) + '</div>' +
+        '<label style="display:flex;gap:5px;align-items:center;cursor:pointer;font-size:12px;' +
+        'margin-top:4px"><input type="checkbox" class="blank-chk" data-trial="' + t + '">exclude</label>' +
+        '<label style="display:flex;gap:5px;align-items:center;cursor:pointer;font-size:12px" ' +
+        'title="Lift the matcher&#39;s refusal on this frame. Only if you can see real tissue.">' +
+        '<input type="checkbox" class="blank-score" data-trial="' + t + '">score it</label>';
       el.blankList.appendChild(d);
     }
     // The refusal override is a decision, so it reaches the server the moment it is made — not only
@@ -2191,13 +2388,9 @@ window.Sweep = (function () {
         doc.blank_scan.scanned = scan;                   // what the MEASURE said (never rewritten)
         doc.blank_scan.overruled_by_user = overruled;    // and what the human overruled, on the record
       }
-      if (overruled.length) {
-        toast('The matcher will now score ' + overruled.join(', ') +
-              ' — you overruled the blank measure on ' +
-              (overruled.length === 1 ? 'that frame' : 'those frames') + '.', 'ok');
-      }
+      if (overruled.length) toast('The matcher will now score ' + overruled.join(', ') + '.', 'ok');
     } catch (e) {
-      toast('Could not update the matcher’s refusal list: ' + e.message, 'bad');
+      toast('Refusal list failed: ' + e.message, 'bad');
     }
   }
 
@@ -2216,7 +2409,7 @@ window.Sweep = (function () {
         c.style.width = cell + 'px';
         c.style.backgroundImage = 'url(' + url + ')';
         c.style.backgroundPosition = '-' + (i % grid) * cell + 'px -' + Math.floor(i / grid) * cell + 'px';
-        c.title = 'trial ' + t + (blanks.has(t) ? ' — the scan says BLANK (a recommendation, not a verdict)' : '');
+        c.title = 'trial ' + t + (blanks.has(t) ? ' — scanned BLANK (a recommendation)' : '');
         c.innerHTML = '<span class="t">' + t + '</span>';
         c.onclick = () => { setCursor(t); show('sweep'); };
         frag.appendChild(c);
@@ -2264,9 +2457,9 @@ window.Sweep = (function () {
     if (doc.blank_scan) doc.blank_scan.accepted = true;
     if (cursor !== null && tileOf(cursor).state === 'excluded') setCursor(nextTrial(cursor));
     refresh(); autosaveNow();
-    toast('Excluded ' + n + ' frame' + (n === 1 ? '' : 's') + '. Gaps recomputed: ' +
+    toast('Excluded ' + n + '. Gaps: ' +
           (g.length ? g.map((p) => p[0] + '→' + p[1]).join(', ') : 'none') + '.' +
-          (nStale ? ' ' + nStale + ' tile(s) flagged stale — an anchor left the composite.' : ''), 'ok');
+          (nStale ? ' ' + nStale + ' stale.' : ''), 'ok');
   }
 
   // ---- 3 · BUILD ------------------------------------------------------------------------
@@ -2316,26 +2509,32 @@ window.Sweep = (function () {
     const added = now.filter((t) => !was.includes(t));
     if (!dropped.length && !added.length) return { stale: false, reason: null };
     const bits = [];
-    if (dropped.length) bits.push('<b>' + dropped.length + '</b> trial' + (dropped.length === 1 ? '' : 's') +
-      ' excluded since the build (' + dropped.slice(0, 12).join(', ') + (dropped.length > 12 ? ' …' : '') + ')');
-    if (added.length) bits.push('<b>' + added.length + '</b> un-excluded (' + added.slice(0, 12).join(', ') + ')');
-    return { stale: true, reason: bits.join(' and ') +
-      '. The build was solved on a <b>different input</b>: the tiles either side of an excluded one ' +
-      'were placed <i>through</i> it, and the serpentine one-step prior does not hold across the gap ' +
-      'that just opened. <b>Re-solve</b>, or place the affected tiles against the anchor field ' +
-      'yourself — do not keep these positions as if nothing had changed.' };
+    if (dropped.length) bits.push('<b>' + dropped.length + '</b> excluded since the build (' +
+      dropped.slice(0, 12).join(', ') + (dropped.length > 12 ? ' …' : '') + ')');
+    if (added.length) bits.push('<b>' + added.length + '</b> un-excluded (' +
+      added.slice(0, 12).join(', ') + ')');
+    return { stale: true, reason: bits.join(', ') + '.' };
   }
 
+  /** ⚠️⚠️ A LIVE WARNING ABOUT THE CURRENT STATE, AND IT STAYS ON THE PAGE. He excluded a tile; the
+   *  positions were solved on a DIFFERENT input, and the tiles either side of an excluded one were
+   *  placed *through* it. He must re-solve, or knowingly not. Its BACKGROUND is on the `?`; the
+   *  fact that it is firing is not negotiable. */
   function renderBuildStale() {
     if (!el.buildStale) return;
     const { stale, reason } = buildStale();
     el.buildStale.classList.toggle('hidden', !stale);
     if (!stale) return;
     el.buildStale.className = 'warn loud';
-    el.buildStale.innerHTML = '<div><b>⚠️ THE BATCH BUILD IS STALE.</b> ' + reason +
-      ' <button class="btn sm" id="btn-restale">Re-solve</button></div>';
+    el.buildStale.innerHTML = '<div><b>THE BUILD IS STALE.</b> ' + reason +
+      '<span class="help" data-help="The build was solved on a different input. The tiles either ' +
+      'side of an excluded one were placed THROUGH it, and the serpentine one-step prior does not ' +
+      'hold across the gap that just opened.&#10;&#10;Re-solve, or place the affected tiles against ' +
+      'the anchor field yourself. Do not keep these positions as if nothing had changed."></span> ' +
+      '<button class="btn sm" id="btn-restale">Re-solve</button></div>';
     const b = $('btn-restale');
-    if (b) b.onclick = () => show('build');
+    if (b) b.onclick = () => show('place');
+    Help.reindex(el.buildStale);
   }
 
   async function startBuild() {
@@ -2424,9 +2623,8 @@ window.Sweep = (function () {
       if (!dxs.length) {
         // Not one of the human's tiles is in the build. There is no measurable translation between
         // the two frames, so ANY seed would be a guess dressed as an answer. Refuse.
-        toast('This build places none of the ' + keepT.length + ' tiles you have placed by hand, so ' +
-              'the two frames cannot be tied together. Nothing was seeded — your positions are ' +
-              'untouched.', 'bad');
+        toast('This build places none of your ' + keepT.length + ' hand-placed tiles — the frames ' +
+              'cannot be tied together. Nothing seeded.', 'bad');
         return;
       }
       ox = median(dxs); oy = median(dys);
@@ -2488,7 +2686,7 @@ window.Sweep = (function () {
 
     el.bresN.textContent = r.n_placed + ' / ' + trials().length;
     el.bresUnplaced.textContent = (r.unplaced && r.unplaced.length)
-      ? ('unplaced: ' + r.unplaced.join(', ') + ' — they are in the rescue queue')
+      ? ('unplaced: ' + r.unplaced.join(', ') + ' — in the rescue queue')
       : 'every tile placed';
     el.bresS.textContent = Math.round(r.seconds) + ' s';
     el.bresGpu.textContent = r.gpu ? 'on the GPU' : 'CPU only';
@@ -2497,21 +2695,20 @@ window.Sweep = (function () {
     el.buildResult.classList.remove('hidden');
     refresh(); autosaveNow();
     if (kept) {
-      banner('Seeded <b>' + n + '</b> tiles from the build. <b>' + kept + '</b> tile' +
-             (kept === 1 ? '' : 's') + ' you had already anchored or placed by hand ' +
-             (kept === 1 ? 'was' : 'were') + ' <b>kept exactly where you put ' +
-             (kept === 1 ? 'it' : 'them') + '</b> — the build was translated onto your field by (' +
-             fmt(ox, 1) + ', ' + fmt(oy, 1) + ') px to match. Nothing you judged has moved.', 'ok');
-      toast('Seeded ' + n + ' tiles. ' + kept + ' human judgement' + (kept === 1 ? '' : 's') +
-            ' preserved.', 'ok');
+      // ⚠️ HIS WORK SURVIVED, and he needs to know it did — a re-solve used to silently wipe it.
+      toast('Seeded ' + n + '. ' + kept + ' of your placements kept (build shifted ' +
+            fmt(ox, 1) + ', ' + fmt(oy, 1) + ' px onto your field).', 'ok');
     } else {
-      toast('Seeded ' + n + ' tiles from the build. None of them is anchored — that is your job.', 'ok');
+      toast('Seeded ' + n + ' tiles. Nothing is anchored — that is your job.', 'ok');
     }
   }
 
   /** "Go look here first" — sorted by anchor_residual_px. NOT a verdict, and it is BLIND to pass 1.
    *  ⛔ It is deliberately NOT built on quality.score_positions: on the ground-truth-perfect 312/312
    *     build that flags 11 tiles and ALL 11 ARE FALSE POSITIVES (precision 0/11). */
+  /** ⚠️ `#bres-worklist` has no class of its own, so we pick from style.css's vocabulary: `.list` /
+   *  `.item` (a clickable trial row — `.t`, `.n`, `.spacer`). The old code emitted `<table class=
+   *  "tbl">`, and `.tbl` DOES NOT EXIST in style.css — the whole worklist rendered unstyled. */
   function renderWorklist(r) {
     const rows = [];
     for (const t of trials()) {
@@ -2522,36 +2719,41 @@ window.Sweep = (function () {
     const withRes = rows.filter((x) => x.res != null).sort((a, b) => b.res - a.res).slice(0, 12);
     const thin = rows.filter((x) => x.m != null && x.m < THIN_MARGIN);
     const noConf = rows.filter((x) => x.pass === 1).length;
-    let h = '';
-    if (withRes.length) {
-      h += '<h2>Largest anchor residual — go look at these first</h2><table class="tbl"><tr>' +
-           '<th>trial</th><th>residual px</th><th>anchor NCC</th><th>run margin</th></tr>';
-      for (const x of withRes) {
-        h += '<tr><td>' + x.t + '</td><td' + (x.res > 20 ? ' style="color:var(--bad)"' : '') + '>' +
-             fmt(x.res, 1) + '</td><td>' + fmt(x.ncc, 3) + '</td><td' +
-             (x.m != null && x.m < THIN_MARGIN ? ' style="color:var(--bad)"' : '') + '>' +
-             fmt(x.m, 3) + '</td><td><button class="btn sm go" data-trial="' + x.t + '">go</button></td></tr>';
-      }
-      h += '</table><p class="muted" style="font-size:12px">The residual has fired <b>exactly once</b> ' +
-           'in anger — it caught trial 311 at 2,706 px. Its false-positive rate is <b>unmeasured</b>, ' +
-           'and t33\'s own design treats a lone disagreeing anchor as an outlier to discard. ' +
-           '<b>Go look. It is not a verdict.</b></p>';
+
+    const bad = (on) => on ? ' style="color:var(--bad)"' : '';
+    let h = '<div class="list">';
+    for (const x of withRes) {
+      h += '<div class="item go" data-trial="' + x.t + '">' +
+           '<span class="t">' + x.t + '</span>' +
+           '<span class="n"' + bad(x.res > 20) + '>' + fmt(x.res, 1) + ' px</span>' +
+           '<span class="spacer"></span>' +
+           '<span class="n">ncc ' + fmt(x.ncc, 3) + '</span>' +
+           '<span class="n"' + bad(x.m != null && x.m < THIN_MARGIN) + '>m ' + fmt(x.m, 3) + '</span>' +
+           '</div>';
     }
     if (thin.length) {
-      h += '<h2 style="color:var(--bad)">Thin run margins (&lt; 0.10)</h2><p>' +
-           thin.map((x) => '<b>' + x.t + '</b> (' + fmt(x.m, 3) + ')').join(', ') +
-           '</p><p class="muted" style="font-size:12px">A thin margin is the signature of a surviving ' +
-           'alias. The shipped build\'s worst run margin is 0.081 against a ~0.47 typical — and all ' +
-           'six of those tiles were nonetheless correct. Look; do not assume either way.</p>';
+      h += '<div class="item"><span class="t"' + bad(true) + '>thin</span>' +
+           '<span class="n">' + thin.map((x) => x.t + ' (' + fmt(x.m, 3) + ')').join(', ') + '</span>' +
+           '</div>';
     }
-    h += '<div class="warn loud"><div><b>' + noConf + ' pass-1 tiles have no per-tile confidence at ' +
-         'all.</b> t27\'s info is aggregate-only, so they cannot appear on any worklist — and the ' +
-         'worst tile in the shipped 312/312 build (trial 127, 9.94 px out) is one of them. Sweep them ' +
-         'exactly like the rest.</div></div>';
+    h += '</div>';
+    if (!withRes.length && !thin.length) h = '<div class="muted">Nothing flagged.</div>';
+
+    /* ⚠️ A LIVE WARNING ABOUT THE BUILD IN FRONT OF HIM: N tiles CANNOT appear on this list at all,
+     * so the absence of a warning here is not a clean bill of health. That is a fact about the
+     * current result, not a lecture — it stays. */
+    h += '<div class="warn loud"><div><b>' + noConf + ' pass-1 tiles have no per-tile confidence.</b> ' +
+         'They cannot appear here at all.' +
+         '<span class="help" data-help="t27\'s info is aggregate-only, so no pass-1 tile can be ' +
+         'scored individually — and the WORST tile in the shipped 312/312 build (trial 127, 9.94 px ' +
+         'out) is one of them.&#10;&#10;The absence of a warning is not a clean bill of health. ' +
+         'Sweep them exactly like the rest."></span></div></div>';
+
     el.bresWorklist.innerHTML = h;
-    el.bresWorklist.querySelectorAll('button.go').forEach((b) => {
+    el.bresWorklist.querySelectorAll('.item.go').forEach((b) => {
       b.onclick = () => { setCursor(+b.dataset.trial); show('sweep'); };
     });
+    Help.reindex(el.bresWorklist);
   }
 
   /** "Skip — place from scratch."
@@ -2571,15 +2773,15 @@ window.Sweep = (function () {
   function skipBuild() {
     const seeded = trials().filter((t) => tileOf(t).machine);
     if (doc.build || seeded.length) {
+      // ⚠️ DESTRUCTIVE, and the alternative is laundering a machine build into an "independent"
+      //    ground truth. He must see exactly what he is about to lose.
       const ok = confirm(
-        'This document has already been seeded from a machine build.\n\n' +
-        'Skipping the build does NOT make it independent: ' + seeded.length + ' tile(s) still sit ' +
-        'exactly where t33 put them. A file that claims to be a hand-authored ground truth while ' +
-        'every position started as a solver\'s output would score that solver ~100 % by ' +
-        'construction — this project has already destroyed one benchmark that way.\n\n' +
-        'To place from scratch, EVERY position must go. This will reset all ' + seeded.length +
-        ' seeded tiles to unplaced and discard the build.\n\nDiscard them and start from scratch?');
-      if (!ok) { show('build'); return; }
+        seeded.length + ' tiles still sit where the solver put them.\n\n' +
+        'Placing from scratch means discarding EVERY position and the build. Otherwise this file ' +
+        'would claim to be an independent ground truth while every position came from the solver — ' +
+        'and it would score that solver ~100 % by construction.\n\nDiscard all ' + seeded.length +
+        ' and start from scratch?');
+      if (!ok) { show('place'); return; }
       pushUndo('skip-build');
       for (const t of trials()) {
         const tl = tileOf(t);
@@ -2601,7 +2803,7 @@ window.Sweep = (function () {
     delete doc.provenance.warning;
     refresh();
     autosaveNow();
-    toast('Every position discarded. This document is now an INDEPENDENT truth — place from scratch.', 'ok');
+    toast('All positions discarded. This document is now independent.', 'ok');
     show('sweep');
   }
 
@@ -2631,7 +2833,7 @@ window.Sweep = (function () {
       });
       el.exportProgress.classList.add('hidden');
       if (job.state !== 'done') { toast('Export ' + job.state, 'bad'); return; }
-      el.exportFiles.innerHTML = (job.result.files || [])
+      el.exportFiles.innerHTML = ((job.result && job.result.files) || [])
         .map((f) => '<div><b>' + f.kind + '</b> ' + f.path + '  <span class="muted">' +
                     (f.bytes / 1e6).toFixed(2) + ' MB</span></div>').join('');
       toast('Exported.', 'ok');
@@ -2642,14 +2844,16 @@ window.Sweep = (function () {
   }
 
   async function saveProject() {
+    if (!doc) { toast('Nothing to save.', 'bad'); return; }
+    const dflt = ((session && session.dataset) || 'project') + '.camea.json';
     let path = null;
     try {
       const r = await POST('/api/dialog/save-file', {
-        title: 'Save project as', default_name: session.dataset + '.camea.json',
+        title: 'Save project as', default_name: dflt,
         filters: ['Camea project (*.camea.json)'],
       });
       path = r.path;
-    } catch (e) { path = prompt('Save project to:', session.dataset + '.camea.json'); }
+    } catch (e) { path = prompt('Save project to:', dflt); }
     if (!path) return;
     try {
       const r = await POST('/api/project/save', { path, doc: exportDoc() });
@@ -2657,6 +2861,18 @@ window.Sweep = (function () {
     } catch (e) { toast('Save failed: ' + e.message, 'bad'); }
   }
 
+  /** ⭐⭐ RESUME. THE PROJECT FILE IS THE APP'S ENTIRE MEMORY (his ruling, 2026-07-14): the app
+   *  ships with no knowledge of any dataset and remembers nothing between runs, so this file — its
+   *  exclusions, every placement, what he anchored, the cursor and the build — is the whole of it.
+   *
+   *  🔴 IT IS ALSO REACHABLE FROM A COLD START. `btn-load` now lives on the LOAD screen, so there
+   *  may be **no session at all** when it is pressed — no pixels, no trial list, no tone window.
+   *  `POST /api/project/load` tolerates that (its range guard just goes quiet), and it would hand
+   *  back a document the app cannot draw a single tile of: `trials()` reads `session.run.trials`,
+   *  which does not exist. So when there is no session we bootstrap one FROM THE FILE — it names its
+   *  own `data_dir` — and then re-read the file, now genuinely range-guarded against the session it
+   *  actually belongs to. (Pass 2's autosave once silently overwrote pass 1's GT records. That guard
+   *  is why the second read is not redundant.) */
   async function loadProject() {
     let path = null;
     try {
@@ -2667,27 +2883,56 @@ window.Sweep = (function () {
     } catch (e) { path = prompt('Load project from:'); }
     if (!path) return;
     try {
-      const r = await POST('/api/project/load', { path });
-      pushUndo('load');
-      doc = r.doc;
-      evidence = {};   // a different document = a different anchor field. Nothing here describes it.
-      // `state` wins if present, else derive from `status` (API.md §2 / project_schema.json).
-      const S = { anchor: 'anchored', unverified: 'unverified', unplaced: 'unplaced', excluded: 'excluded' };
-      for (const k of Object.keys(doc.tiles)) {
-        const tl = doc.tiles[k];
-        if (!tl.state) tl.state = S[tl.status] || 'unplaced';
+      let r = await POST('/api/project/load', { path });
+
+      if (!session) {
+        const dir = r.doc && r.doc.data_dir;
+        if (!dir) {
+          toast('This project names no data directory — open the directory first.', 'bad');
+          return;
+        }
+        el.openProgress.classList.remove('hidden');
+        el.openMsg.textContent = 'opening ' + dir + '…';
+        try {
+          const j = await POST('/api/session/open', { data_dir: dir, project_path: path });
+          await pollJob(j.job_id, (job) => {
+            el.openFill.style.width = (job.pct || 0) + '%';
+            el.openMsg.textContent = (job.phase || '') + ' — ' + (job.message || '');
+          });
+          await loadSession({ silent: true });      // pixels + tone + blank scan. Its fresh doc is
+          r = await POST('/api/project/load', { path });   // thrown away by the adopt below.
+        } finally {
+          el.openProgress.classList.add('hidden');
+        }
       }
-      cursor = doc.cursor ?? (trials().length ? trials()[0] : null);
-      seqCounter = 0;
-      for (const t of trials()) if (tileOf(t) && tileOf(t).seq > seqCounter) seqCounter = tileOf(t).seq;
-      if (viewerOk) { Viewer.setTiles(doc.tiles); Viewer.setCursor(cursor); Viewer.fit(); }
-      (r.warnings || []).forEach((w) => toast(w, 'warn'));
-      refresh();
-      toast('Loaded ' + path, 'ok');
+      adoptDoc(r.doc, r.warnings);
     } catch (e) {
-      // The range guard. Pass 2's autosave once silently overwrote pass 1's GT records.
+      // The range guard (409), a bad document (400) — either way, say so and change nothing.
       toast('Load refused: ' + e.message, 'bad');
     }
+  }
+
+  /** Take a loaded document as THE document, and put the user back where he left off. */
+  function adoptDoc(loaded, warnings) {
+    pushUndo('load');
+    doc = loaded;
+    evidence = {};   // a different document = a different anchor field. Nothing here describes it.
+    // `state` wins if present, else derive from `status` (API.md §2 / project_schema.json).
+    const S = { anchor: 'anchored', unverified: 'unverified', unplaced: 'unplaced', excluded: 'excluded' };
+    for (const k of Object.keys(doc.tiles || {})) {
+      const tl = doc.tiles[k];
+      if (!tl.state) tl.state = S[tl.status] || 'unplaced';
+    }
+    cursor = doc.cursor ?? (trials().length ? trials()[0] : null);
+    seqCounter = 0;
+    for (const t of trials()) if (tileOf(t) && tileOf(t).seq > seqCounter) seqCounter = tileOf(t).seq;
+    if (viewerOk) { Viewer.setTiles(doc.tiles); Viewer.setCursor(cursor); Viewer.fit(); }
+    (warnings || []).forEach((w) => toast(w, 'warn'));
+    refresh();
+    const c = counts();
+    toast('Resumed — ' + c.anchored + ' anchored, ' + c.excluded + ' excluded.', 'ok');
+    // He was in the middle of a sweep. Put him back in it, not at the top of the wizard.
+    show(anyPlaced() ? 'sweep' : 'range');
   }
 
   // ---- tone -----------------------------------------------------------------------------
@@ -2702,7 +2947,8 @@ window.Sweep = (function () {
       // ⚠️ On a version change EVERY tile PNG must be re-requested and the baked background rebuilt.
       if (viewerOk) Viewer.setToneVersion(cacheKey);
       renderSheet();
-      toast('Tone window ' + fmt(t.lo, 0) + '–' + fmt(t.hi, 0) + ' — global, and it never touches the matcher.', 'ok');
+      renderBlankScan();      // its thumbnails carry the cache-buster too
+      toast('Tone ' + fmt(t.lo, 0) + '–' + fmt(t.hi, 0) + '. Display only.', 'ok');
     } catch (e) { toast('Tone failed: ' + e.message, 'bad'); }
   }
 
@@ -2727,33 +2973,58 @@ window.Sweep = (function () {
   // =========================================================================================
   // Boot
   // =========================================================================================
+  /* ⚠️ EVERY ID HERE EXISTS IN index.html. index.html is the CONTRACT and it is FINAL — a typo, or
+   * an id that was renamed out from under us, produces a `null` that only explodes at the moment the
+   * user reaches that screen. If you add one, grep the HTML for it first.
+   *
+   * GONE with the 2026-07-14 rulings, and they must not come back:
+   *   `load-result`  — opening a directory NAVIGATES to Range now; there is no reveal-in-place block.
+   *   `run-why` / `split-why`   — the prose moved behind `#help-run` / `#help-split`.
+   *   `run-n-excluded` / `run-n-in-range` — THE APP EXCLUDES NOTHING AT LOAD. There is no
+   *                    "312 usable of 338 (26 thrown out)" line, because there is no ruling.
+   *   `blank-measure` / `blank-thrsrc` / `blank-margin` — folded into `#help-blank`.
+   *   `screen-build` / `screen-export` — renamed `screen-place` / `screen-mosaic`. */
   function cacheDom() {
     const ids = {
       app: 'app', toast: 'toast', banner: 'banner', canvas: 'view', stage: 'stage',
       sheet: 'sheet', stalePanel: 'stale-panel', evNccMeter: 'ev-ncc-meter', cbHint: 'cb-hint',
       hdrDataset: 'hdr-dataset', gpuBadge: 'gpu-badge',
-      nAnchored: 'n-anchored', nUnverified: 'n-unverified', nUnplaced: 'n-unplaced', nExcluded: 'n-excluded',
-      nDiverted: 'n-diverted',
+      nAnchored: 'n-anchored', nUnverified: 'n-unverified', nUnplaced: 'n-unplaced',
+      nExcluded: 'n-excluded', nDiverted: 'n-diverted', divertedBadge: 'diverted-badge',
+
+      // the one help bubble, body-level and position:fixed (style.css owns the look)
+      helpTip: 'help-tip',
+      helpRun: 'help-run', helpSplit: 'help-split', helpGaps: 'help-gaps', helpBlank: 'help-blank',
+
+      // 1 · LOAD — one question: which directory? (+ the resume path)
       inDatadir: 'in-datadir', btnBrowse: 'btn-browse', btnOpen: 'btn-open',
       openProgress: 'open-progress', openFill: 'open-fill', openMsg: 'open-msg',
-      loadResult: 'load-result', runRange: 'run-range', runWhy: 'run-why', runN: 'run-n',
-      runNInRange: 'run-n-in-range', runNExcluded: 'run-n-excluded',
-      splitValue: 'split-value', splitWhy: 'split-why', splitN1: 'split-n1', splitN2: 'split-n2',
-      gapsV: 'gaps-v', inLo: 'in-lo', inHi: 'in-hi', inSplit: 'in-split', btnOverride: 'btn-override',
-      btnToScreen: 'btn-to-screen',
-      blankN: 'blank-n', blankMeasure: 'blank-measure', blankThr: 'blank-thr',
-      blankThrsrc: 'blank-thrsrc', blankMargin: 'blank-margin', blankList: 'blank-list',
+      btnLoad: 'btn-load',
+
+      // 2 · RANGE — the numbers, then: which trials are the mosaic?
+      runRange: 'run-range', runN: 'run-n',
+      splitValue: 'split-value', splitN1: 'split-n1', splitN2: 'split-n2', gapsV: 'gaps-v',
+      inLo: 'in-lo', inHi: 'in-hi', inSplit: 'in-split', btnOverride: 'btn-override',
+      btnBackLoad: 'btn-back-load', btnToScreen: 'btn-to-screen',
+
+      // 3 · SCREEN — the scan recommends; HE ticks.
+      blankN: 'blank-n', blankThr: 'blank-thr', blankList: 'blank-list',
       btnBlankAll: 'btn-blank-all', btnBlankNone: 'btn-blank-none', btnBlankApply: 'btn-blank-apply',
-      btnToBuild: 'btn-to-build',
+      btnBackRange: 'btn-back-range', btnToBuild: 'btn-to-build',
+
+      // 4 · PLACE — one button.
       buildCost: 'build-cost', btnBuild: 'btn-build', btnBuildCancel: 'btn-build-cancel',
       inUsecache: 'in-usecache', btnSkipBuild: 'btn-skip-build',
       buildProgress: 'build-progress', buildFill: 'build-fill', buildPhase: 'build-phase',
       buildMsg: 'build-msg', buildEta: 'build-eta', buildLog: 'build-log',
       buildResult: 'build-result', bresN: 'bres-n', bresUnplaced: 'bres-unplaced', bresS: 'bres-s',
-      bresGpu: 'bres-gpu', bresId: 'bres-id', bresWorklist: 'bres-worklist', btnToSweep: 'btn-to-sweep',
+      bresGpu: 'bres-gpu', bresId: 'bres-id', bresWorklist: 'bres-worklist',
+      btnBackScreen: 'btn-back-screen', btnToSweep: 'btn-to-sweep',
       cfgPassSplit: 'cfg-pass-split', cfgAnchorNcc: 'cfg-anchor-ncc', cfgSplitPx: 'cfg-split-px',
       cfgLook: 'cfg-look', cfgMinSide: 'cfg-min-side', cfgT27Conf: 'cfg-t27-conf',
       cfgT27Runconf: 'cfg-t27-runconf',
+
+      // 5 · SWEEP — the stage itself: the canvas and both rails.
       cbTrial: 'cb-trial', cbState: 'cb-state', cbPass: 'cb-pass', cbPos: 'cb-pos', cbFps: 'cb-fps',
       btnAnchor: 'btn-anchor', btnExclude: 'btn-exclude', btnNext: 'btn-next', btnReplay: 'btn-replay',
       btnDiff: 'btn-diff', btnAlts: 'btn-alts', btnSnap: 'btn-snap', btnFit: 'btn-fit',
@@ -2765,15 +3036,24 @@ window.Sweep = (function () {
       btnToneAuto: 'btn-tone-auto', queue: 'queue', queuePos: 'queue-pos',
       onlyOutstanding: 'in-only-outstanding', rescueList: 'rescue-list', stale: 'stale',
       buildStale: 'build-stale',
-      btnSave: 'btn-save', btnLoad: 'btn-load', autosaveNote: 'autosave-note',
+
+      // 6 · MOSAIC
+      btnSave: 'btn-save', autosaveNote: 'autosave-note',
       inExportdir: 'in-exportdir', btnExportDir: 'btn-export-dir', inBasename: 'in-basename',
       outTiff: 'out-tiff', outPng: 'out-png', outPositions: 'out-positions', outGt: 'out-gt',
       outQc: 'out-qc', inRendermode: 'in-rendermode', inIncludeUnverified: 'in-include-unverified',
       inUmpx: 'in-umpx', btnExport: 'btn-export', exportProgress: 'export-progress',
       exportFill: 'export-fill', exportMsg: 'export-msg', exportFiles: 'export-files',
-      provenance: 'provenance',
+      provenance: 'provenance', btnBackSweep: 'btn-back-sweep',
     };
-    for (const k of Object.keys(ids)) el[k] = $(ids[k]);
+    const missing = [];
+    for (const k of Object.keys(ids)) {
+      el[k] = $(ids[k]);
+      if (!el[k]) missing.push(ids[k]);
+    }
+    // A stale getElementById returning null is the single most likely way this file breaks, and it
+    // breaks LATER, on a screen the user has walked to. Say it at boot, in the console, once.
+    if (missing.length) console.error('sweep.js: these ids are not in index.html:', missing.join(', '));
   }
 
   function bind() {
@@ -2786,11 +3066,18 @@ window.Sweep = (function () {
     };
     el.btnOverride.onclick = overrideRun;
     el.btnToScreen.onclick = () => show('screen');
-    // 🔴 "Next — build →" USED TO WALK STRAIGHT PAST THE REFUSAL LIST. Whatever the user ticked on
-    // this screen never reached the server unless he pressed Apply, so the raw scan governed the
+    // 🔴 "Place the tiles →" USED TO WALK STRAIGHT PAST THE REFUSAL LIST. Whatever the user ticked
+    // on this screen never reached the server unless he pressed Apply, so the raw scan governed the
     // matcher for the whole session. Every path out of the screen now carries the human's decision.
-    el.btnToBuild.onclick  = async () => { await putRefusals(); show('build'); };
+    el.btnToBuild.onclick  = async () => { await putRefusals(); show('place'); };
     el.btnToSweep.onclick  = () => show('sweep');
+
+    // the wizard's back buttons
+    el.btnBackLoad.onclick   = () => show('load');
+    el.btnBackRange.onclick  = () => show('range');
+    el.btnBackScreen.onclick = () => show('screen');
+    el.btnBackSweep.onclick  = () => show('sweep');
+
     el.btnBlankAll.onclick  = () => el.blankList.querySelectorAll('.blank-chk').forEach((c) => c.checked = true);
     el.btnBlankNone.onclick = () => el.blankList.querySelectorAll('.blank-chk').forEach((c) => c.checked = false);
     el.btnBlankApply.onclick = applyBlank;
@@ -2821,8 +3108,11 @@ window.Sweep = (function () {
         if (r.path) el.inExportdir.value = r.path;
       } catch (e) { toast('No native dialog here — type the path.', 'warn'); }
     };
+    /* THE HEADER IS A PROGRESS INDICATOR, NOT A MENU. `show()` refuses a locked step on its own (it
+     * is also the one route a *button* can take you down), and `.step.locked` kills pointer-events
+     * — this is the third belt, and it is the cheap one. */
     document.querySelectorAll('.step').forEach((b) => {
-      b.onclick = () => { if (session || b.dataset.screen === 'load') show(b.dataset.screen); };
+      b.onclick = () => show(b.dataset.screen);
     });
     window.addEventListener('keydown', onKeyDown);
   }
@@ -2846,25 +3136,26 @@ window.Sweep = (function () {
                                                (j.state === 'running' || j.state === 'queued'));
     if (!open) return false;
     el.openProgress.classList.remove('hidden');
-    el.openMsg.textContent = 'opening the directory this app was launched with…';
+    el.openMsg.textContent = 'opening…';
     try {
       await pollJob(open.job_id, (job) => {
         el.openFill.style.width = (job.pct || 0) + '%';
         el.openMsg.textContent = (job.phase || '') + ' — ' + (job.message || '');
       });
-      await loadSession();
+      await loadSession();          // -> Range
       el.openProgress.classList.add('hidden');
       return true;
     } catch (e) {
       el.openProgress.classList.add('hidden');
-      toast('The directory this app was launched with failed to open: ' + e.message, 'bad');
+      toast('The launch directory failed to open: ' + e.message, 'bad');
       return false;
     }
   }
 
-  /** Boot: health -> GPU -> (a directory may be preset by main.py) -> the Load screen. */
+  /** Boot: health -> GPU -> (a directory may be preset by main.py) -> step 1, Load. */
   async function init() {
     cacheDom();
+    Help.init();          // ⭐ before anything renders a `?` — one delegated listener, set up once
     bind();
     show('load');
     try {
@@ -2876,12 +3167,12 @@ window.Sweep = (function () {
     renderGpu();
     if (window.CAMEA_DATA_DIR) el.inDatadir.value = window.CAMEA_DATA_DIR;
     try {
-      // If a session is already open (a reload of the page), pick it straight back up.
+      // A session is already open (a page reload). Pick it straight back up — `loadSession` lands
+      // on Range, which is where a freshly-loaded run belongs: nothing is placed yet.
       await loadSession();
-      show('sweep');
       return;
     } catch (e) { /* 404 no_session — the normal cold start, OR --data-dir is still opening. */ }
-    if (await attachToPendingOpen()) show('sweep');   // --data-dir: ride the open job in flight
+    await attachToPendingOpen();   // --data-dir: ride the open job already in flight -> Range
   }
 
   return {

@@ -10,25 +10,40 @@ The point is the sweep. Everything else is scaffolding around it.
 
 ## What it does
 
-1. **Load** — point it at a vscope acquisition directory. It parses `log.txt`, finds the mosaic run
-   (the longest contiguous block of `Snapshot` trials) and detects the pass boundary from the
-   inter-trial timestamps. Both are proposals you can override.
-2. **Screen** — a scan recommends only the frames it is *genuinely sure* are unusable (blanks).
-   **It never auto-rejects anything.**
-3. **Build** — one button. The solver places every tile.
-4. **Sweep** ⭐ — the heart of it. One tile at a time, in acquisition order:
+Six steps, in order. A step unlocks when the one before it is done.
+
+1. **Load** — point it at a vscope acquisition directory. (Or **Load a project…** to resume an
+   earlier session — see *The project file* below.)
+2. **Range** — the numbers, then one question: which trials are the mosaic? It parses `log.txt`,
+   proposes the run (the longest contiguous block of `Snapshot` trials) and detects the pass
+   boundary from the inter-trial timestamps. Both are proposals you can override.
+3. **Screen** — which frames do you want thrown out? A scan *recommends* only the frames it is
+   genuinely sure are unusable (blanks). Every box starts unticked. **It never auto-rejects
+   anything.**
+4. **Place** — one button. The solver places every tile.
+5. **Sweep** ⭐ — the heart of it. One tile at a time, in acquisition order:
    - **`A`** anchor it (accept as ground truth — it joins the reference field)
    - **`E`** exclude it
    - **`Space`** advance to the next
    Each tile **fades in over a full second** on top of the field you have already certified.
    Watching it materialise is how you see whether it lines up.
-5. **Export** — 16-bit TIFF (+ coverage mask), display PNG, `positions.csv`, ground-truth JSON,
-   and a QC report of what you changed.
+6. **Mosaic** — build the outputs: 16-bit TIFF (+ coverage mask), display PNG, `positions.csv`,
+   ground-truth JSON, and a QC report of what you changed.
 
 Each tile is re-placed against **the anchors you have actually certified**, not against its
 neighbours — so the sweep gets *more* accurate as it goes.
 
-## Two design rules that are not negotiable
+**Save… is in the top bar, on every screen** (`Ctrl+S`). An hour into a sweep is exactly when you
+want it.
+
+## Three design rules that are not negotiable
+
+**The app knows nothing about your data, and the project file is its entire memory.** It ships with
+no exclusion list, no per-dataset special cases, no "have I seen this directory before". The only
+things that ever exclude a frame are *you*, in this session, or a project file you loaded. There is
+no toggle for this. It matters because the exclusions *are* the research: an app that arrives already
+knowing which of your frames are bad has short-circuited the one question it exists to help you
+answer.
 
 **Blur is never auto-rejected.** Across 15 focus measures the best global threshold reaches
 F1 = 0.37, and variance-of-Laplacian — the textbook autofocus metric — performs *worse than chance*
@@ -48,6 +63,17 @@ wrong. Measured over three replayed 311-tile sweeps against a hand-authored grou
 One bad early anchor poisons every tile judged against it. Nothing is ever anchored without you
 pressing `A`.
 
+## The project file
+
+`*.camea.json` — one file, the whole run: the directory, the trial range, every exclusion you made,
+every position, which tiles you anchored, where your cursor was, and the build it came from.
+
+It is the app's **only** persistent memory. Save it and you can close the app mid-sweep and pick up
+on the same tile later. The rolling autosave is a crash net, not a substitute — it is not a file you
+control.
+
+The schema is documented in [`app/project_schema.json`](app/project_schema.json).
+
 ## Install
 
 Python **≥ 3.12** (mandatory — spectralign requires it).
@@ -60,15 +86,12 @@ python app/main.py
 That opens the app. **Pick your acquisition directory on the Load screen** — hit **Browse…** for a
 native folder picker, or paste a path. Nothing else is needed.
 
-If you would rather skip the Load screen, `--data-dir` opens a directory straight away:
-
-```bash
-python app/main.py --data-dir /path/to/acquisition
-```
-
-Optional GPU: `pip install cupy-cuda12x`. A 312-tile build is ~3 min with CUDA, ~8–10 min without.
+Optional GPU: `pip install cupy-cuda12x`. A 338-tile build is ~3 min with CUDA, ~8–10 min without.
 The sweep itself — where you spend the hour — is only ~1.5× slower on CPU, because the inner loop
 runs on the CPU either way. A CPU-only install is genuinely usable, not a consolation prize.
+
+Development flags: `--data-dir DIR` skips straight past step 1, `--no-window` runs the server
+headless, `--port N` pins the port.
 
 ## Data format
 

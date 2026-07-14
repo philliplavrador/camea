@@ -373,9 +373,10 @@ def get_session():
     """GET /api/session -> the full session object (API.md §4.2).
     404 {"error": {"code": "no_session"}} before a successful open.
 
-    ⛔ `run.trials` is ALREADY filtered — `usable_trials(lo, hi)`. The 26 thrown-out snapshots are
-    never in `tiles`, never served as pixels, never matched, never rendered. They appear only as
-    integers in `excluded.trials`, so the UI can explain why 284 is missing.
+    ⛔⛔ `run.trials` is EVERY genuine 512x512 snapshot on disk in range, and `excluded.trials` is
+    **EMPTY**. The app carries no exclusion list and applies none (the user's ruling, 2026-07-14):
+    the only things that may ever exclude a frame are the human, with `E`, and a project file he
+    loaded — and both of those live in the FRONT END's document, not in this session.
     """
     s = _need_session()
     _hoist_build()
@@ -407,10 +408,10 @@ def patch_session_run(body: dict):
 
     A reload. Invalidates the build result, the tone window and the texture scan.
     ⚠️ Any change to the trial selection or the excluded set **MUST recompute `gaps`** before the
-    next build. The serpentine one-step prior does not hold across an exclusion gap (283->297,
-    298->311 on this data) and a build that assumes them away silently places the whole tail wrong.
-    `loader.open_session` recomputes `gaps` from the new trial list — which is exactly why an
-    override is a full RELOAD and not an in-place patch of `run`.
+    next build. The serpentine one-step prior does not hold across an exclusion gap, and a build that
+    assumes it away silently places the whole tail wrong. `loader.open_session` recomputes `gaps`
+    from the new trial list — which is exactly why an override is a full RELOAD and not an in-place
+    patch of `run`.
     """
     s = _need_session()
     _need_no_build()
@@ -448,8 +449,7 @@ def _frame_row(s, trial: int) -> int:
     row = s.row_of.get(trial)
     if row is None:
         raise ApiError(404, "not_found",
-                       f"trial {trial} is not in the run "
-                       f"(it is one of the 26 thrown-out snapshots, or outside {s.run['lo']}-{s.run['hi']})")
+                       f"trial {trial} is not in the run ({s.run['lo']}-{s.run['hi']})")
     return row
 
 
@@ -467,7 +467,7 @@ def get_tile_png(trial: int, v: str | None = None):
     dataset's pixels — and the whole verification loop is "the human looks at the pixels".
     The server still ignores the value; its only job is to be DIFFERENT when the bytes are.
 
-    404 for any trial not in `run.trials` (which includes all 26 excluded)."""
+    404 for any trial not in `run.trials`."""
     s = _need_session()
     row = _frame_row(s, trial)
     key = (trial, s.tone.version)
@@ -598,28 +598,24 @@ def put_scan_blank(body: dict):
         trial  56 ->   2.07 px                       (ncc 0.653, margin 0.162)   NOT BLANK
         trial 127 -> 679.33 px WRONG                 (ncc 0.656, margin 0.129)   genuinely misleads
 
-    Three of the four are ordinary tiles the 100 %-solved pass 1 places correctly, and refusing them
-    cost the user three hand-drags for nothing. The fourth is real. The measure is a CONTINUUM on this
-    data (usable and blank textures interleave below the threshold) — which is exactly why the human
-    decides and the code does not.
+    Three of the four are ordinary tiles that pass 1 places correctly, and refusing them cost the user
+    three hand-drags for nothing. The fourth is real. The measure is a CONTINUUM on this data (good
+    and blank textures interleave below the threshold) — which is exactly why the human decides and
+    the code does not.
 
     Refusing is not excluding: a trial listed here stays in the document and can still be hand-placed.
-    The 26 thrown-out snapshots are not affected either way — they are never loaded.
     """
     s = _need_session()
     if "blank" not in body:
-        raise ApiError(400, "bad_request",
-                       "PUT /api/scan/blank needs a `blank` list of trial numbers.")
+        raise ApiError(400, "bad_request", "needs a `blank` list of trial numbers")
     try:
         want = {int(t) for t in (body["blank"] or [])}
     except (TypeError, ValueError):
-        raise ApiError(400, "bad_request", "`blank` must be a list of integers.")
+        raise ApiError(400, "bad_request", "`blank` must be a list of integers")
 
     unknown = sorted(want - set(s.run["trials"]))
     if unknown:
-        raise ApiError(400, "bad_request",
-                       "Not in the run (or among the 26 thrown out, which are never "
-                       f"loaded): {unknown}")
+        raise ApiError(400, "bad_request", f"not in the run: {unknown}")
 
     with _LOCK:
         s.blank["blank"] = sorted(want)
@@ -825,12 +821,12 @@ def post_build_start(body: dict):
     ⚠️ `pass_split` defaults to the session's **DETECTED** value, not to t33's literal 166.
 
     ⭐ **`trials` IS THE DOCUMENT'S ACTIVE TRIAL LIST, AND IT IS NOT COSMETIC.** It used to be
-    hard-wired to `s.run["trials"]` — the session's full 312 — so a user who pressed `E` on a bad
+    hard-wired to `s.run["trials"]` — the session's whole run — so a user who pressed `E` on a bad
     tile and then re-solved got **a re-solve on the identical input**: the excluded frame went
     straight back into the chain, still voting, still carrying its neighbours. The exclusion the app
     invited him to make never reached the solver. `t33` recomputes its own `breaks()` from whatever
     list it is given, so passing the reduced list is all that is needed — the new gap is then
-    honoured rather than assumed away.
+    honoured rather than assumed away. **This is now the ONLY way a frame ever leaves a build.**
 
     Before spawning: `engine.release_gpu()` — the parent may hold ~2 GB of device memory from
     interactive matching and the child needs ~2 GB more. On a 4 GB card that is the difference
@@ -878,8 +874,7 @@ def _build_trials(s, want, pass_split) -> list[int]:
     """The trial list the solver is actually given. Defaults to the whole run; a subset (the
     document's non-excluded tiles) is honoured, and anything else is a 400.
 
-    ⛔ The 26 thrown-out snapshots can never appear here — they are not in `s.row_of`, so they fail
-    the subset check like any other stranger.
+    ⭐ The subset is the USER's — the app contributes no exclusions of its own.
     """
     run = list(s.run["trials"])
     if want is None:
@@ -892,9 +887,7 @@ def _build_trials(s, want, pass_split) -> list[int]:
         raise ApiError(400, "bad_request", "trials must be integers")
     stray = [t for t in trials if t not in s.row_of]
     if stray:
-        raise ApiError(400, "bad_request",
-                       f"trials not in this run (or among the 26 thrown out, which are never "
-                       f"loaded): {stray[:12]}")
+        raise ApiError(400, "bad_request", f"trials not in this run: {stray[:12]}")
     # t33 places pass 2 AGAINST pass 1 and needs a solvable reference pass; it raises otherwise.
     # Say so here, where the message can reach the user, rather than failing the job 200 s in.
     ps = int(pass_split)
@@ -902,9 +895,8 @@ def _build_trials(s, want, pass_split) -> list[int]:
     n2 = sum(1 for t in trials if t > ps)
     if n1 < 4 or n2 < 2:
         raise ApiError(400, "bad_request",
-                       f"after your exclusions this build would have {n1} pass-1 and {n2} pass-2 "
-                       f"tiles (pass_split={ps}). t33 places pass 2 against pass 1 and needs at "
-                       f"least 4 and 2. Un-exclude some tiles, or move the split.")
+                       f"only {n1} pass-1 and {n2} pass-2 tiles left (need 4 and 2). "
+                       f"Un-exclude some, or move the split.")
     return trials
 
 
@@ -944,9 +936,9 @@ def post_project_save(body: dict):
     p = Path(str(path))
     _refuse_data_dir(p)
     try:
-        # ⭐ SESSION, not the document, decides whether the 26-snapshot ruling applies (project.py ::
-        # stamp_ruling). The front end copies `dataset` — the FOLDER NAME — into the doc, and the
-        # folder name is not the acquisition.
+        # ⭐ THE PROJECT FILE IS THE ONLY MEMORY. Exclusions live in the document the front end posts
+        # here — not in the app, and not in this session. `session` is passed for the run range and
+        # the acquisition's name, nothing more.
         res = project.save(p, doc, session=SESSION, app_version=__version__)
     except project.RangeMismatch as e:
         # ⚠️ NOT a ValueError — project.ProjectError derives from Exception. Catching only

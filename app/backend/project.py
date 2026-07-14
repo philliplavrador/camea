@@ -24,26 +24,35 @@ hard tile must never stall the sweep.
 --------------------------------------------------------------------------------------------------
 IMPLEMENTATION NOTES (agent 7), the three that a reader will otherwise trip on:
 
+0. ⭐ **THE APP KNOWS NOTHING ABOUT ANY DATASET. THE PROJECT FILE IS ITS ONLY MEMORY.** The user,
+   2026-07-14: *"the app itself shouldn't store the exclusions for this experiment"*. Every trial in
+   a new document starts `unplaced`; **nothing** starts `excluded`. The ONLY things that can ever
+   exclude a frame are (a) the human, in this session, or (b) a project file he loaded. There is no
+   built-in list, no ruling, no per-dataset special case — and therefore no guard that can refuse to
+   save his own work. (`analysis/ground_truth/excluded.py` still governs the *analysis* tree; the
+   app just stops consulting it, except for the one pure function `gaps()`.)
+
 1. **ORDER OF OPERATIONS ON SAVE is `structural-validate -> normalise -> stamp -> full-validate ->
    write`, not `validate -> normalise`.** The derived fields (`gaps`, `unusable_tiles`,
    `origin_trial`, `moved_px`, `human_edits`) are *exactly the ones that drift* when the user
    excludes a tile or anchors an earlier one — and `normalise()` is what repairs them. Validating
    them BEFORE normalising would reject a perfectly good document for drift the very next line of
    code fixes. So we validate first only for the things `normalise` cannot fix (state/status
-   disagreement, a position on a thrown-out trial, a placed tile with no position), then normalise,
-   then run the FULL validation as a **post-condition** and refuse to write if it still fails.
+   disagreement, a placed tile with no position), then normalise, then run the FULL validation as a
+   **post-condition** and refuse to write if it still fails.
 
 2. **`normalise()` shifts `machine` (and `last_xy`) by the same translation as `x`/`y`.** A layout
    is defined only up to a global translation, so this loses nothing — and it keeps
    `moved_px = |final - machine|` meaningful, which is the whole basis of the QC report. The
    untouched machine answer is preserved separately in `build.positions`.
 
-3. ⚠️ **EXCLUDING A TILE CHANGES THE INPUT TO THE SOLVER.** It opens a gap in acquisition order
-   (283->297, 298->311 on this data) where the serpentine one-step prior does **not** hold.
-   `normalise()` recomputes `gaps` from `analysis/ground_truth/excluded.py :: gaps()` (never a local
-   reimplementation) and, if the active trial list or the gaps differ from the ones the build was
-   solved on, it marks the build **STALE** (`build.stale`, `build.stale_reason`). The app must offer
-   a re-solve. It must never keep using a stale build as if nothing happened.
+3. ⚠️ **EXCLUDING A TILE CHANGES THE INPUT TO THE SOLVER.** It opens a gap in acquisition order,
+   where the serpentine one-step prior does **not** hold. `normalise()` recomputes `gaps` from
+   `analysis/ground_truth/excluded.py :: gaps()` — a PURE function of a trial list, carrying no
+   dataset knowledge; never a local reimplementation — and, if the active trial list or the gaps
+   differ from the ones the build was solved on, it marks the build **STALE** (`build.stale`,
+   `build.stale_reason`). The app must offer a re-solve. It must never keep using a stale build as
+   if nothing happened.
 """
 from __future__ import annotations
 
@@ -59,13 +68,17 @@ import time as _time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# --- the canonical trial list / gap rule. NEVER reimplemented locally. -----------------------
+# --- the gap rule. NEVER reimplemented locally. -----------------------------------------------
+# ⚠️ `_excluded.gaps(trials)` ONLY. It is a pure function of an arbitrary trial list (which
+# consecutive pairs are not one acquisition step apart) and holds NO dataset knowledge. The app must
+# never touch `_excluded.EXCLUDED` / `BLANK` / `BLURRY` — those are the *analysis* tree's ruling
+# about one acquisition, and the app knows nothing about any acquisition.
 _HERE = Path(__file__).resolve().parent               # app/backend
 _ROOT = _HERE.parent.parent                           # the Camea repo root
 _GT_DIR = _ROOT / "analysis" / "ground_truth"
 if str(_GT_DIR) not in sys.path:
     sys.path.insert(0, str(_GT_DIR))
-import excluded as _excluded                          # noqa: E402  EXCLUDED / BLANK / BLURRY / gaps
+import excluded as _excluded                          # noqa: E402  gaps() ONLY
 
 SCHEMA_VERSION = "camea-project-1.0"
 APP_NAME = "Camea Mosaic Builder"
@@ -94,21 +107,6 @@ PROVENANCE_WARNING = (
     "was confirmed or corrected by a human who could see it. It MUST NEVER be used to score that "
     "method or any method derived from it — the score would be 100 % by construction. This project "
     "has already destroyed one benchmark exactly this way.")
-
-EXCLUDED_RULING = (
-    "THROWN OUT. The user, 2026-07-11: 'i want these tiles to be thrown out and to never be used "
-    "for any purposes whatsoever'. These frames are NOT DATA. Never load them, never feed them to a "
-    "placement method, never let them vote in a solve, never render them, never 'rescue' them with "
-    "a metric.")
-
-_NOTE_BLANK = (
-    "Near-featureless glare. What two blank frames share is fixed-pattern SENSOR structure, which "
-    "does not move with the stage — so they correlate at zero shift no matter where the microscope "
-    "was. The matcher REFUSES it.")
-_NOTE_BLURRY = (
-    "Too out of focus to register (excluded by the user, by eye). Has light and contrast but no "
-    "SHARP detail to lock a match onto. No automatic sharpness measure flags it — which is why the "
-    "human call is the one that counts.")
 
 
 # =============================================================================
@@ -200,120 +198,6 @@ def _state_of(tile: dict) -> str:
     return "unplaced"
 
 
-#: The one acquisition the 26-snapshot ruling was made about. Must match loader.RULING_DATASET.
-RULING_DATASET = "260620d"
-
-
-def doc_ruling_applies(doc: dict) -> bool:
-    """⛔ **Is the 26-snapshot ruling in force for THIS document?**
-
-    The ruling ("284-296, 299, 300-310, 348 are not data") is a statement about **260620d**, made by
-    the user by eye on 260620d's frames. It is a list of trial NUMBERS with no dataset tag — so
-    applying it globally silently deletes 26 perfectly good trials from every *other* acquisition
-    whose range happens to cover them. `loader.detect_ruling()` decides this from the data —
-    **`log.txt`'s `New experiment:` line, which beats the folder name** — and puts the verdict in
-    the session. `EXCLUDED_TRIALS.applies` is that verdict, and it is what this reads.
-
-    🔴 **THE FOLDER NAME IS NOT THE ACQUISITION.** This function used to fall straight through to
-    `doc["dataset"]`, which is `data_dir.name` — so it re-decided, from a label a human typed, a
-    question the loader had already answered from the data, and the two disagree in exactly the case
-    `detect_ruling` exists for. Both directions were driven end-to-end and both broke the app:
-
-      * a directory NAMED `260620d` whose log says otherwise (a renamed copy, a restored backup) —
-        the loader correctly served trials 284-348 as data, then this said the ruling applied, and
-        every autosave 400'd from the first keystroke ("tile 284 must be state 'excluded'"). The
-        project was unsaveable from the moment the session opened.
-      * the real 260620d opened through a junction called anything else — this said the ruling did
-        NOT apply, `doc_excluded()` went empty, and the hard guard below ("a position for one of the
-        26 means a frame was loaded that must never be") went SILENT. A doc with tile 284 anchored
-        at (400, 300) was accepted and written to disk.
-
-    So: the session's verdict wins (`stamp_ruling()` writes it on every save/load, so the document
-    is never the authority); then the document's own `experiment` (the log-derived name); and only
-    then the folder name, for a legacy/bench document that carries neither.
-    """
-    blk = doc.get("EXCLUDED_TRIALS") or {}
-    if "applies" in blk:
-        return bool(blk["applies"])
-    exp = str(doc.get("experiment") or "").strip().lower()
-    if exp:
-        return exp == RULING_DATASET
-    ds = str(doc.get("dataset") or "").strip().lower()
-    return ds == RULING_DATASET if ds else True
-
-
-def doc_excluded(doc: dict) -> set[int]:
-    """The thrown-out trials **for this document** — the ruling's 26 iff the ruling applies here,
-    otherwise the empty set. Every check in this module goes through this, never through
-    `_excluded.EXCLUDED` directly.
-
-    ⚠️ **An explicitly empty `trials: []` is not the same as no `trials` key at all.** This used to
-    read `return listed or set(_excluded.EXCLUDED)`, so a document that said "the 26 are not excluded
-    here" *resurrected all 26* — the very inference `new_doc()`'s docstring says it stopped making,
-    "because an empty list is exactly the non-260620d case". A missing key still falls back to the
-    canonical 26 (the ruling is in force and the file simply did not enumerate it — a narrow run
-    range, or a legacy document); an empty list is believed.
-    """
-    if not doc_ruling_applies(doc):
-        return set()
-    blk = doc.get("EXCLUDED_TRIALS") or {}
-    if "trials" in blk:
-        try:
-            return {int(t) for t in (blk.get("trials") or [])}
-        except (TypeError, ValueError):
-            pass                                   # malformed -> the canonical list, below
-    return set(_excluded.EXCLUDED)
-
-
-def stamp_ruling(doc: dict, session) -> dict:
-    """⭐ **THE SESSION IS THE AUTHORITY on whether the ruling applies — never the document.**
-
-    Called on every save, autosave and load with a session open. The loader decided this from
-    `log.txt`; this copies the verdict into the document so that no later reader has to re-derive it
-    (and so that a hand-edited, stale or bench-written file cannot arm or disarm the guard by
-    accident). Mutates and returns `doc`.
-
-    With no session (a bare `project.save()` in a script), the document is left exactly as it is.
-    """
-    if not isinstance(doc, dict) or session is None:
-        return doc
-    ruling = _get(session, "ruling", None)
-    applies = _get(ruling, "applies", None) if ruling is not None else None
-    if applies is None:
-        applies = _get(_get(session, "excluded", {}) or {}, "applies", None)
-    if applies is None:
-        return doc                                  # a session that cannot say: do not guess
-    applies = bool(applies)
-
-    blk = doc.get("EXCLUDED_TRIALS")
-    if not isinstance(blk, dict):
-        blk = {}
-    blk["applies"] = applies
-    blk.setdefault("ruling_dataset", RULING_DATASET)
-    if not applies:
-        # 🔴 NOT this acquisition's ruling. The numbers mean nothing here; say so, and say it with
-        # an EMPTY list rather than by omission (see `doc_excluded`).
-        blk["trials"] = []
-        blk["n"] = 0
-    else:
-        # ⛔ THE RULING IS IN FORCE — and the LIST comes from the session too, not from the file.
-        # `doc_excluded()` believes an explicitly empty list (it has to: that is how a non-260620d
-        # document says "nothing is excluded here"), so a document carrying `applies:false, trials:[]`
-        # from a stale save would otherwise DISARM the guard on genuine 260620d frames. Driven: such
-        # a document, with tile 284 anchored at (400, 300), was accepted and written. Now it is not.
-        sess_trials = sorted({int(t) for t in (_get(_get(session, "excluded", {}) or {},
-                                                    "trials", []) or [])})
-        if sess_trials:
-            blk["trials"] = sess_trials
-            blk["n"] = len(sess_trials)
-    doc["EXCLUDED_TRIALS"] = blk
-
-    exp = _get(session, "experiment", None)
-    if exp:
-        doc["experiment"] = str(exp)                # the acquisition's own name, from log.txt
-    return doc
-
-
 def active_trials(doc: dict) -> list[int]:
     """The trials that are still INPUT to the solver: everything not `excluded`.
 
@@ -361,21 +245,18 @@ def _median(xs: list[float]) -> float:
 def new_doc(session) -> dict:
     """A fresh project document for an open session (a `GET /api/session` body — dict or object).
 
-    Every usable trial starts `unplaced`. On **260620d** — and ONLY there — every one of the 26
-    thrown-out snapshots also gets a row, `excluded`, with `unusable_reason` already filled in, so
-    the file records *why* trial 284 is missing instead of losing it.
+    ⭐ **EVERY TRIAL IN THE RUN STARTS `unplaced`. NOTHING STARTS `excluded`.** The app has no
+    built-in exclusion list and no per-dataset special case (the user, 2026-07-14: *"the app itself
+    shouldn't store the exclusions for this experiment"*). A frame becomes `excluded` only when the
+    human presses `E`, or when a project file he loaded says so.
 
-    ⛔ **THE RULING IS SCOPED TO ITS DATASET** (the user's ruling #2). It names trial NUMBERS with no
-    dataset tag; on any other acquisition those numbers are ordinary data. `loader.detect_ruling()`
-    decides from the data and reports it in `session["ruling"]["applies"]` — this function does not
-    guess, and it no longer falls back to the global `_excluded.EXCLUDED` when the session hands it
-    an empty list, because an empty list is *exactly* the non-260620d case.
+    The blank scan may still *recommend* tiles (`blank_scan.blank`, and `tile.blank`) — a
+    recommendation, on a tile that is otherwise ordinary `unplaced` data. It excludes nothing.
 
     provenance starts `seeded_from: null` / `independent_of_method: true` — nothing has seeded it.
     """
     run = _get(session, "run", {}) or {}
     split = _get(session, "pass_split", {}) or {}
-    exc = _get(session, "excluded", {}) or {}
     tone = _get(session, "tone", {}) or {}
     blank = _get(session, "blank", {}) or {}
 
@@ -388,26 +269,6 @@ def new_doc(session) -> dict:
     sess_tiles = _get(session, "tiles", {}) or {}
     blank_list = set(int(t) for t in (_get(blank, "blank", []) or []))
     texture = {int(k): v for k, v in (_get(blank, "texture", {}) or {}).items()}
-
-    # ⛔ THE RULING, **scoped to the dataset it was made about** (the user's ruling #2). The loader
-    # decides from the data whether this acquisition IS 260620d and says so in the session; only then
-    # do the 26 get a `status:"excluded"` row (so the file explains why 284 is missing) and only then
-    # are they never loaded, matched, rendered or exported. On ANY OTHER acquisition the list is
-    # EMPTY and every trial on disk is data.
-    ruling = _get(session, "ruling", None)
-    applies = _get(ruling, "applies", None) if ruling is not None else None
-    if applies is None:
-        applies = _get(exc, "applies", None)
-    if applies is None:                         # a session body from before the ruling was scoped
-        applies = str(_get(session, "dataset", "") or "").strip().lower() == RULING_DATASET
-    applies = bool(applies)
-
-    hard_excluded = sorted(t for t in (int(x) for x in (_get(exc, "trials", []) or []))
-                           if lo <= t <= hi)
-    if applies and not hard_excluded:            # ruling in force but the session did not enumerate
-        hard_excluded = sorted(t for t in _excluded.EXCLUDED if lo <= t <= hi)
-    if not applies:
-        hard_excluded = []                       # 🔴 NOT this dataset's ruling. Do not delete them.
 
     tiles: dict[str, dict] = {}
     for t in trials:
@@ -422,28 +283,13 @@ def new_doc(session) -> dict:
             "texture": _get(info, "texture", texture.get(t)),
             "judged_at": None,
         }
-    for t in hard_excluded:                      # empty unless the ruling applies to this dataset
-        is_blank = t in _excluded.BLANK
-        tiles[str(t)] = {
-            "status": "excluded", "state": "excluded", "x": None, "y": None,
-            "r": R_UNPLACED,
-            "pass": _pass_of(t, pass_split),
-            "blank": is_blank,
-            "unusable_reason": "blank" if is_blank else "blurry",
-            "excluded": True,
-            "excluded_reason": "blank" if is_blank else "blurry",
-            "note": _NOTE_BLANK if is_blank else _NOTE_BLURRY,
-            "last_xy": None, "machine": None, "moved_px": None,
-            "judged_at": None,
-        }
 
     doc = {
         "schema_version": SCHEMA_VERSION,
         "app": {"name": APP_NAME, "version": APP_VERSION},
         "dataset": _get(session, "dataset", "") or "",
-        # ⭐ THE ACQUISITION'S OWN NAME (log.txt's `New experiment:`), not the folder's. `dataset` is
-        # a directory label and it can lie about which acquisition this is; `experiment` is what
-        # `detect_ruling()` decided on, and it is what a later reader must key the ruling to.
+        # the acquisition's own name (log.txt's `New experiment:`), not the folder's. Recorded
+        # because a directory label can lie about which acquisition this is; nothing branches on it.
         "experiment": _get(session, "experiment", "") or "",
         "data_dir": _get(session, "data_dir", "") or "",
         "tile_px": TILE_PX,
@@ -455,37 +301,9 @@ def new_doc(session) -> dict:
         "coordinates": COORDINATES,
         "origin_trial": trials[0] if trials else lo,
         "tolerance_px": dict(TOLERANCE_PX),
+        # ⭐ the sweep position. Saved, so `load()` resumes the session where he left it.
         "cursor": None,
         "unusable_tiles": [],                           # filled by normalise()
-        "EXCLUDED_TRIALS": ({
-            "applies": True,
-            "regime": _get(ruling, "regime", "260620d-exclusions") or "260620d-exclusions",
-            "ruling_dataset": RULING_DATASET,
-            "ruling": EXCLUDED_RULING,
-            "trials": sorted(_excluded.EXCLUDED),
-            "n": len(_excluded.EXCLUDED),
-            "blank": {"trials": sorted(_excluded.BLANK), "n": len(_excluded.BLANK),
-                      "how": "MEASURED: band-passed (DoG 3/30) std below the 2nd percentile of "
-                             "pass-1 texture."},
-            "blurry": {"trials": sorted(_excluded.BLURRY), "n": len(_excluded.BLURRY),
-                       "how": "HUMAN-ASSERTED, by eye. NO automatic measure reproduces this call — "
-                              "the best global blur threshold across 15 focus measures reaches "
-                              "F1 = 0.37, and variance-of-Laplacian is WORSE THAN CHANCE. Do not "
-                              "'correct' this list from a metric."},
-        } if applies else {
-            # 🔴 NOT 260620d. The ruling names trial NUMBERS with no dataset tag; applying it here
-            # would delete 26 good trials that were never judged. It does not apply, and the file
-            # says so rather than staying silent.
-            "applies": False,
-            "regime": _get(ruling, "regime", "none") or "none",
-            "ruling_dataset": RULING_DATASET,
-            "ruling": (f"No exclusion ruling applies to this dataset. The 26 thrown-out snapshots "
-                       f"(284-296, 299, 300-310, 348) are {RULING_DATASET}'s blank and blurry "
-                       f"frames — they say nothing about this acquisition's trial numbers."),
-            "trials": [],
-            "n": 0,
-            "why": _get(ruling, "why", "") or "",
-        }),
         "run": {
             "detected": bool(_get(run, "detected", True)),
             "why": _get(run, "why", ""),
@@ -617,10 +435,8 @@ def mark_stale_if_input_changed(doc: dict) -> dict:
 
     if b.get("trials") is None:
         b["stale"] = True
-        b["stale_reason"] = (
-            "this build does not record which trials it was solved on, so it cannot be checked "
-            "against the document's current input. Treat it as stale: RE-SOLVE, or accept that "
-            "nothing here can tell you whether an exclusion has invalidated it.")
+        b["stale_reason"] = ("this build does not record which trials it was solved on, so it "
+                             "cannot be checked against the current input. Re-solve.")
         return doc
 
     was_trials = [int(t) for t in b.get("trials")]
@@ -639,14 +455,11 @@ def mark_stale_if_input_changed(doc: dict) -> dict:
                         + " ".join(map(str, added[:12])) + (" ..." if len(added) > 12 else ""))
         reasons.append("; ".join(bits) or "the trial list changed since the build")
     if now_gaps != was_gaps:
-        reasons.append(f"the acquisition gaps changed since the build ({was_gaps} -> {now_gaps}); "
-                       "the serpentine one-step prior does NOT hold across a gap")
+        reasons.append(f"the gaps changed since the build ({was_gaps} -> {now_gaps})")
 
     if reasons:
         b["stale"] = True
-        b["stale_reason"] = (" | ".join(reasons)
-                             + " — the build was solved on a different input. RE-SOLVE; do not keep "
-                               "using these positions as if nothing had changed.")
+        b["stale_reason"] = " | ".join(reasons) + " — solved on a different input. Re-solve."
     else:
         b.setdefault("stale", False)
         b.setdefault("stale_reason", None)
@@ -740,18 +553,22 @@ def normalise(doc: dict) -> dict:
 
 
 def _human_edits(doc: dict, prov: dict) -> dict:
-    """The honest record of what the human actually did. Recomputed on every normalise/stamp."""
+    """The honest record of what the human actually did. Recomputed on every normalise/stamp.
+
+    ⭐ **EVERY EXCLUSION IS A HUMAN EDIT.** The app seeds none, so an `excluded` tile got there
+    because he pressed `E` (in this session or in the one this file was saved from). There is no
+    longer any such thing as an exclusion the app made on his behalf.
+    """
     tiles = doc.get("tiles", {})
     seeded = machine_evidence(doc) is not None      # ⭐ the history, not the self-declaration
     accepted = moved = rescued = unverified = user_excluded = 0
     moves: list[float] = []
-    ruled_out = doc_excluded(doc)                   # the 26 iff this IS 260620d; else empty
-    for k, tile in tiles.items():
+    for tile in tiles.values():
         st = _state_of(tile)
         if st == "unverified":
             unverified += 1
-        if st == "excluded" and int(k) not in ruled_out:
-            user_excluded += 1                          # the 26 are the RULING, not a human edit
+        if st == "excluded":
+            user_excluded += 1
         if st not in PLACED_STATES:
             continue
         mv = tile.get("moved_px")
@@ -790,12 +607,10 @@ def _human_edits(doc: dict, prov: dict) -> dict:
         "diverted_to_solver": len(diverted),
         "diverted_trials": diverted,
         "diverted_note": (
-            f"These {len(diverted)} tiles sit at the SOLVER's position because the anchor-composite "
-            f"match was NOT CONFIDENT there and disagreed with the solver. The correlator was "
-            f"overruled by the batch solve — NOT by the human. Each tile's `rejected_match` records "
-            f"what the matcher wanted and how far away it was. ⚠️ They are also counted in "
-            f"`accepted_unchanged` (they are at the machine's position): do NOT read that number as "
-            f"independent human agreement for them."
+            f"These {len(diverted)} tiles sit at the SOLVER's position: the anchor-composite match "
+            f"was not confident and was overruled by the batch solve — not by the human. They are "
+            f"also inside `accepted_unchanged`; do not read that number as human agreement for them. "
+            f"(Each tile's `rejected_match` records what the matcher wanted.)"
         ) if diverted else None,
     }
     return prov
@@ -903,7 +718,6 @@ def _problems(doc: dict, session=None) -> list[tuple[str, str]]:
     p: list[tuple[str, str]] = []
     if not isinstance(doc, dict):
         return [("hard", "the document is not a JSON object")]
-    ruled_out = doc_excluded(doc)          # the 26 iff the ruling applies to THIS dataset; else {}
 
     if doc.get("schema_version") != SCHEMA_VERSION:
         p.append(("derived",
@@ -958,16 +772,11 @@ def _problems(doc: dict, session=None) -> list[tuple[str, str]]:
                                   f"got {x!r},{y!r}"))
         elif x is not None or y is not None:
             p.append(("hard", f"tile {t}: state {st!r} must have x = y = null; got {x!r},{y!r}"))
-        # ⛔ THE RULING — **only where it applies** (260620d). A position for one of the 26 there
-        # means a frame was loaded that must never be. On another dataset those trial numbers are
-        # ordinary data and carry positions like anything else.
-        if t in ruled_out:
-            if st != "excluded":
-                p.append(("hard", f"tile {t} is one of the 26 THROWN-OUT snapshots and must be "
-                                  f"state 'excluded', not {st!r} — those frames are not data"))
-            if x is not None or y is not None:
-                p.append(("hard", f"tile {t} is THROWN OUT and carries a position — a position for "
-                                  "one of the 26 means a frame was loaded that must never be"))
+        # ⛔ NO TRIAL NUMBER IS SPECIAL. There is no built-in exclusion list to check a tile against
+        # — the only exclusions are the human's, and a human exclusion is never invalid. The guard
+        # that used to live here ("tile 284 is THROWN OUT and carries a position") made the user's
+        # own test session UNSAVEABLE the moment he anchored 284. It is gone. Do not bring it back:
+        # a dataset ruling belongs in the project file, not in the app.
         if tr and not (tr[0] <= t <= tr[1]):
             p.append(("hard", f"tile {t} is outside trial_range {tr}"))
 
@@ -990,19 +799,16 @@ def _problems(doc: dict, session=None) -> list[tuple[str, str]]:
     want_unusable = sorted(int(k) for k, v in tiles.items()
                            if isinstance(v, dict) and v.get("state") == "excluded")
     if [int(v) for v in (doc.get("unusable_tiles") or [])] != want_unusable:
-        p.append(("derived", "unusable_tiles does not match the tiles whose state is 'excluded' "
-                             f"(got {doc.get('unusable_tiles')!r}, expected {want_unusable!r})"))
+        p.append(("derived", f"unusable_tiles is {doc.get('unusable_tiles')!r}; the excluded tiles "
+                             f"are {want_unusable!r}"))
 
     # ⚠️ THE GAP INVARIANT. NOT COSMETIC — this is an ERROR, and `normalise` is the only thing
-    # allowed to satisfy it. A doc that reaches a SOLVER with stale gaps poisons the whole tail.
+    # allowed to satisfy it. A doc that reaches a SOLVER with stale gaps applies the one-step prior
+    # across a multi-step jump and silently places the whole tail wrong.
     want_gaps = compute_gaps(doc)
     got_gaps = [[int(a), int(b)] for a, b in (doc.get("gaps") or [])]
     if got_gaps != want_gaps:
-        p.append(("derived",
-                  f"gaps is {got_gaps!r} but the excluded set implies {want_gaps!r}. "
-                  "THE SERPENTINE ONE-STEP PRIOR DOES NOT HOLD ACROSS A GAP: if a tile was excluded "
-                  "and `gaps` was not recomputed, the next build applies a one-step prior across a "
-                  "multi-step jump and SILENTLY PLACES THE WHOLE TAIL WRONG."))
+        p.append(("derived", f"gaps is {got_gaps!r}; the excluded tiles imply {want_gaps!r}"))
 
     prov = doc.get("provenance")
     if not isinstance(prov, dict):
@@ -1040,11 +846,10 @@ def _problems(doc: dict, session=None) -> list[tuple[str, str]]:
     if session is not None:
         run = _get(session, "run", {}) or {}
         run_trials = set(int(t) for t in (_get(run, "trials", []) or []))
-        ok = run_trials | ruled_out
-        stray = sorted(int(k) for k in tiles if int(k) not in ok)
-        if stray:
-            p.append(("hard", f"tiles {stray[:12]} are not in the session's run and are not among "
-                              "the 26 excluded"))
+        if run_trials:
+            stray = sorted(int(k) for k in tiles if int(k) not in run_trials)
+            if stray:
+                p.append(("hard", f"tiles {stray[:12]} are not in the session's run"))
         ds = _get(session, "dataset", None)
         if ds and doc.get("dataset") and doc["dataset"] != ds:
             p.append(("hard", f"dataset {doc['dataset']!r} != the open session's {ds!r}"))
@@ -1066,29 +871,28 @@ def validate(doc: dict, session=None) -> list[str]:
 # save / load / autosave
 # =============================================================================
 def _structural_problems(doc: dict) -> list[str]:
-    """The problems `normalise()` + `stamp()` CANNOT fix — a broken state machine, a position on a
-    thrown-out trial, a missing `tolerance_px`.
+    """The problems `normalise()` + `stamp()` CANNOT fix — a broken state machine, a placed tile with
+    no position, a missing `tolerance_px`.
 
     Everything else (`gaps`, `unusable_tiles`, `origin_trial`, `moved_px`, `human_edits`, the
     provenance stamp) is DERIVED, and normalise/stamp recompute it. Rejecting a save for that drift
     would reject a perfectly good document — the drift is *expected*: it is exactly what happens the
     moment the user excludes a tile or anchors an earlier one.
+
+    ⛔ **Nothing here may reject a document for WHICH trials it placed.** A save that refuses the
+    user's own work is a bug, not a guard.
     """
     return [m for kind, m in _problems(doc) if kind == "hard"]
 
 
 def save(path, doc: dict, session=None, app_version: str = APP_VERSION) -> dict:
-    """stamp-the-ruling -> structural-validate -> normalise -> stamp -> full-validate -> write
-    ATOMICALLY.  -> {"path", "bytes", "saved_at"}.   ⛔ `data/` is NEVER written to.
+    """structural-validate -> normalise -> stamp -> full-validate -> write ATOMICALLY.
+    -> {"path", "bytes", "saved_at", "doc"}.   ⛔ `data/` is NEVER written to.
     Raises ValidationError (-> HTTP 400) if the document cannot be made valid.
 
-    ⭐ `session` (optional, but the server always passes it): the OPEN session's ruling verdict is
-    written into the document before anything validates it, so the guard is armed by what the loader
-    decided from `log.txt` — never by the folder name a front end happened to copy in. See
-    `stamp_ruling`.
+    `session` is accepted (the server passes it) and used only by the caller's range guard — the
+    document is the sole authority on what is excluded, and the session never overrides it.
     """
-    doc = stamp_ruling(doc, session)
-
     problems = _structural_problems(doc)
     if problems:
         raise ValidationError(problems)
@@ -1177,6 +981,10 @@ def load(path, session=None) -> tuple[dict, list[str]]:
     """-> (doc, warnings). Migrates an older `schema_version`; derives `state` from `status` for a
     document written by the bench (which never had a `state` field).
 
+    ⭐ **THIS FILE IS THE APP'S ONLY MEMORY OF THE RUN** — its exclusions, placements, cursor, build
+    and tone window. The app itself remembers nothing between sessions, so whatever is `excluded`
+    here is excluded, and nothing else is. `save()` -> quit -> `load()` restores the session whole.
+
     ⚠️ **GUARDS THE RANGE.** If `session` is given and the document's `dataset` / `trial_range` do
     not match it, **raises RangeMismatch** (the caller returns 409). **Pass 2's autosave once
     silently overwrote pass 1's ground-truth records.** Do not re-open that hole.
@@ -1204,10 +1012,6 @@ def load(path, session=None) -> tuple[dict, list[str]]:
             raise RangeMismatch(
                 f"this project is for trials {d_tr[0]}-{d_tr[1]} of {d_ds}; "
                 f"the open session is {lo}-{hi} of {ds}")
-        # ⭐ and the OPEN SESSION's ruling verdict wins over whatever the file says (or omits): the
-        # loader decided it from log.txt. A file written before `applies` existed — or one whose
-        # folder was renamed since — is corrected here, before anything validates against it.
-        doc = stamp_ruling(doc, session)
 
     problems = _structural_problems(doc)
     if problems:
@@ -1253,6 +1057,16 @@ def _migrate(doc: dict) -> tuple[dict, list[str]]:
     doc.setdefault("gaps", [])
     doc.setdefault("pass_split", None)
     doc.setdefault("build", None)
+    # ⭐ THE SESSION-RESUME KEYS. The project file is the app's only memory, so every part of a
+    # session must survive a round-trip: where he was (`cursor`), how the frames were being displayed
+    # (`tone`), and whether he had accepted the blank scan's recommendation (`blank_scan.accepted`).
+    # A document that predates them opens with them empty rather than with them missing.
+    doc.setdefault("cursor", None)
+    doc.setdefault("tone", {})
+    bs = doc.setdefault("blank_scan", {})
+    if isinstance(bs, dict):
+        bs.setdefault("blank", [])
+        bs.setdefault("accepted", False)
 
     # The existing hand-authored ground truths (analysis/ground_truth/*.json) carry no
     # `trial_range` — they predate this schema. Derive it from the tiles they DO carry, so the
@@ -1347,8 +1161,7 @@ def to_positions_csv(doc: dict, include_unverified: bool = True) -> str:
 
     The first three column names are what `benchmark/score.py :: load_positions` reads
     (`csv.DictReader` on `trial`, `x`, `y`). Do not rename them, do not reorder them, do not add a
-    column before them. `excluded` and `unplaced` tiles are omitted — they have no position, and a
-    position for one of the 26 thrown-out trials is a RULE BREAK the scorer shouts about.
+    column before them. `excluded` and `unplaced` tiles are omitted — they have no position.
     """
     doc = normalise(doc)
     rows = ["trial,x,y,state"]
@@ -1360,28 +1173,13 @@ def to_positions_csv(doc: dict, include_unverified: bool = True) -> str:
     return "\n".join(rows) + "\n"
 
 
-def _ruling_trials_in_range(doc: dict) -> list[int]:
-    """The thrown-out snapshots that fall inside this document's trial range.
-
-    Derived from the RULING (`analysis/ground_truth/excluded.py`), never from the document's rows —
-    a document that (correctly) never loaded them has no rows to count. **Empty on any dataset the
-    ruling was not made about** (`doc_excluded`), so the QC report of another acquisition does not
-    claim 26 of its trials were thrown out.
-    """
-    ruled_out = doc_excluded(doc)
-    rng = doc.get("trial_range") or []
-    if len(rng) != 2:
-        return sorted(ruled_out)
-    lo, hi = int(rng[0]), int(rng[1])
-    return sorted(t for t in ruled_out if lo <= t <= hi)
-
-
 def qc_report(doc: dict, app_version: str = APP_VERSION) -> tuple[dict, str]:
     """-> (json_dict, markdown_text). **What the human did vs what the machine said.**
 
     This report *is* the honest record of the anchoring hazard, and it is the thing that makes the
-    output safe to hand to somebody else. Every number states its denominator (156 / 156 / 312 on
-    this data) — a percentage without its denominator is how the 182-vs-156 confusion started.
+    output safe to hand to somebody else. **Every number states its denominator** — a percentage
+    without one is how the 182-vs-156 confusion started. The denominator is the document's own
+    `excluded` set, nothing else: the app has no list of its own.
     """
     doc = to_gt(doc, app_version)
     tiles = doc["tiles"]
@@ -1418,18 +1216,11 @@ def qc_report(doc: dict, app_version: str = APP_VERSION) -> tuple[dict, str]:
         "app": {"name": APP_NAME, "version": app_version},
         "denominator": {
             "trials_in_document": n_total,
-            "usable_trials": n_run,
-            # 🔴 COUNT THE RULING, NOT THE ROWS. The 26 thrown-out snapshots may be represented two
-            # ways: as `excluded` ROWS (project.new_doc writes 338 rows) or as NO ROW AT ALL (the
-            # front end's doc holds only the 312 usable trials — they are never loaded, which is
-            # exactly what the ruling demands). Counting only the rows reported "0 thrown out by the
-            # ruling" for the second shape, which reads as "none were thrown out" — the opposite of
-            # the truth, in the one report whose job is to state the denominator honestly.
-            "thrown_out_by_ruling": len([t for t in _ruling_trials_in_range(doc)]),
-            "thrown_out_present_as_rows": len([t for t in by["excluded"]
-                                               if t in doc_excluded(doc)]),
-            "note": "State the denominator on every number. 156 (pass 1) / 156 (pass 2) / 312 "
-                    "(merged 11-348) on this dataset — never 182 or 338.",
+            "usable_trials": n_run,                     # everything not `excluded`
+            "excluded": len(by["excluded"]),            # excluded by the human / by this file
+            "excluded_trials": by["excluded"],
+            "note": "Every percentage in this report is over the usable trials, never over the "
+                    "document's row count.",
         },
         "states": {s: {"n": len(by[s]), "trials": by[s]} for s in STATES},
         "human_edits": he,
@@ -1437,13 +1228,12 @@ def qc_report(doc: dict, app_version: str = APP_VERSION) -> tuple[dict, str]:
         "rescued": rescued,
         "thin_margin": {
             "trials": thin,
-            "note": "A THIN MARGIN (< 0.10 best-minus-second NCC) IS THE SIGNATURE OF A SURVIVING "
-                    "ALIAS. The shipped build's worst run margin is 0.081 against a ~0.47 typical. "
-                    "Look at these first.",
+            "note": "A thin margin (< 0.10 best-minus-second NCC) is the signature of a surviving "
+                    "alias. Look at these first.",
         },
         "gaps": doc.get("gaps"),
-        "gaps_note": "The serpentine one-axis step prior does NOT hold across these. A build that "
-                     "assumes them away silently places the whole tail wrong.",
+        "gaps_note": "The serpentine one-step prior does NOT hold across these. A build that assumes "
+                     "them away places the whole tail wrong.",
         "build": ({k: v for k, v in (doc.get("build") or {}).items() if k != "positions"}
                   if doc.get("build") else None),
         "build_stale": {"stale": stale, "why": stale_why},
@@ -1475,18 +1265,11 @@ def qc_report(doc: dict, app_version: str = APP_VERSION) -> tuple[dict, str]:
               "> " + str(stale_why),
               ""]
 
-    n_ruling = rep["denominator"]["thrown_out_by_ruling"]
-    n_ruling_rows = rep["denominator"]["thrown_out_present_as_rows"]
+    n_excl = len(by["excluded"])
     L += ["## The denominator",
           "",
-          f"- **{n_run}** usable trials in the run. Every percentage below is over those "
-          f"**{n_run}** — never {n_run + n_ruling}.",
-          f"- The document holds {n_total} tile rows.",
-          (f"- **{n_ruling}** trials in {doc.get('trial_range')} are thrown out by the 2026-07-11 "
-           f"ruling and are NOT data: "
-           + (f"{n_ruling_rows} are carried as `excluded` rows"
-              if n_ruling_rows else "they were never loaded, so they have no rows at all")
-           + ". They are never matched, never rendered and never exported."),
+          f"- **{n_run}** usable trials. Every percentage below is over those {n_run}.",
+          f"- {n_total} tile rows in the document; **{n_excl}** excluded.",
           "",
           "## What the human did",
           "",
@@ -1495,8 +1278,7 @@ def qc_report(doc: dict, app_version: str = APP_VERSION) -> tuple[dict, str]:
           f"| **anchored** (`A` — ground truth) | {len(by['anchored'])} | {pct(len(by['anchored']))} |",
           f"| **unverified** (`Space`, no decision) | {len(by['unverified'])} | {pct(len(by['unverified']))} |",
           f"| **unplaced** (never placed) | {len(by['unplaced'])} | {pct(len(by['unplaced']))} |",
-          f"| **excluded** (`E`, by the user) | {he['excluded']} | {pct(he['excluded'])} |",
-          f"| thrown out by the 2026-07-11 ruling (not data) | {n_ruling} | — |",
+          f"| **excluded** (`E`) | {n_excl} | — |",
           "",
           "## Human vs machine",
           ""]
@@ -1538,8 +1320,6 @@ def qc_report(doc: dict, app_version: str = APP_VERSION) -> tuple[dict, str]:
         L += ["### ⚠️ Thin margins (< 0.10) — the signature of a surviving alias",
               "",
               "- " + " ".join(str(t) for t in thin),
-              "- The shipped build's worst run margin is 0.081 against a ~0.47 typical. "
-              "Look at these first.",
               ""]
     if by["unplaced"]:
         L += ["### Still unplaced", "", "- " + " ".join(str(t) for t in by["unplaced"]), ""]
@@ -1552,15 +1332,8 @@ def qc_report(doc: dict, app_version: str = APP_VERSION) -> tuple[dict, str]:
           "",
           "## Scale",
           "",
-          "- **PIXELS ONLY, unless you typed a µm/px in.** ⚠️ The old warning here — *'a 2.5 % "
-          "magnification difference between the passes'* — was **WRONG, and it is settled** "
-          "(`app/SCALE.md`): the electrode-grid pitch tracks **FOCUS**, not magnification (it swings "
-          "3.5 % across five frames taken on a *stationary* stage), and the cross-pass tissue scale "
-          "is **1.0000 ± 0.0002**. There is **no magnification difference**, so **one scale spanning "
-          "both passes is safe** — if you have an honest number for it.",
-          "- This app does **not** measure µm/px. 1.237 µm/px (pass 1) came from the broken "
-          "inference and must never be used; 1.268 µm/px (pass 2) is *provisional, ±3 %*. Calibrate "
+          "- **Pixels only, unless you typed a µm/px in.** This app does not measure it. Calibrate "
           "from the **stage** (commanded µm per trial vs measured pixel displacement), not from the "
-          "grid.",
+          "electrode grid — the grid pitch tracks focus, not magnification (`app/SCALE.md`).",
           ""]
     return rep, "\n".join(L)
