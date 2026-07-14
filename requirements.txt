@@ -24,3 +24,11 @@ spectralign>=0.4.2
 # sweep — where you actually spend the hour — is only 1.46x slower on CPU, because
 # exact_ncc runs on the CPU either way. CPU-only is genuinely shippable.
 #   pip install cupy-cuda12x
+
+# --- deliberately NOT required ---
+# pandas — only `mosaic.run` / `mosaic.match` / `mosaic.quality` use it (the notebook
+#   pipeline). The app never calls them, and `mosaic/__init__.py` imports lazily so
+#   they are not pulled in. Install it only if you want `mosaic.build(...)`.
+# vscope — the app reads .dat with numpy instead. Every vscope import in the tree is
+#   lazy and the app never triggers one. ⚠️ It CANNOT be pip-installed anyway: it
+#   declares `Requires-Dist: cairo`, and no package named `cairo` exists on PyPI.
