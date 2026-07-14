@@ -57,15 +57,18 @@ pip install -r requirements.txt
 python app/main.py
 ```
 
-Optional GPU: `pip install cupy-cuda12x`. A 312-tile build is ~3 min with CUDA, ~8–10 min without.
-The sweep itself — where you spend the hour — is only ~1.5× slower on CPU, so a CPU-only install is
-genuinely usable.
+That opens the app. **Pick your acquisition directory on the Load screen** — hit **Browse…** for a
+native folder picker, or paste a path. Nothing else is needed.
 
-Point it at a directory with `--data-dir`, or use the Load screen:
+If you would rather skip the Load screen, `--data-dir` opens a directory straight away:
 
 ```bash
 python app/main.py --data-dir /path/to/acquisition
 ```
+
+Optional GPU: `pip install cupy-cuda12x`. A 312-tile build is ~3 min with CUDA, ~8–10 min without.
+The sweep itself — where you spend the hour — is only ~1.5× slower on CPU, because the inner loop
+runs on the CPU either way. A CPU-only install is genuinely usable, not a consolation prize.
 
 ## Data format
 
