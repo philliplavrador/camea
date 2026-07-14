@@ -2092,6 +2092,19 @@ window.Sweep = (function () {
       if (viewerOk) Viewer.resize();
       refresh();
     }
+    /* 🔴 THE SCREEN CARDS MUST RE-DERIVE FROM LIVE STATE EVERY TIME HE ARRIVES, or the three-way
+     * control LIES about the frame it describes.
+     *
+     * `choiceOf()` reads the tile's real state, but nothing re-rendered the list on navigation — so
+     * pressing `E` on a scanned frame IN THE SWEEP (trial 289, say) left its card still showing
+     * "Hand place" for a frame that was, by then, excluded. Measured exactly that: tile 289
+     * `status: "excluded"`, card `checked: "hand"`. Undo and resume had the same hole.
+     *
+     * This is WORSE than the old checkboxes were: a checkbox only ever claimed to be a *request*,
+     * but this control claims to be **the frame's state**. A control that misreports state is not a
+     * cosmetic bug — he would re-exclude a frame he had already excluded, or trust a card that is
+     * telling him the opposite of the truth. Re-render on arrival; it is cheap (15 cards). */
+    if (name === 'screen' && session && session.blank) renderBlankScan();
     if (name === 'mosaic') renderProvenance();
   }
 
@@ -2336,27 +2349,118 @@ window.Sweep = (function () {
     }
     for (const t of scan) {
       const tex = b.texture ? b.texture[K(t)] : null;
+      const cur = choiceOf(t);
       const d = document.createElement('div');
       d.className = 'fact';
-      /* 🔴 NOT `checked`. See the note in index.html: a pre-ticked box under a primary button
-       * reading "Exclude the ticked" IS an auto-exclude, and on this dataset it threw away four
-       * tiles the user himself hand-anchored into the ground truth. THE SCAN RECOMMENDS. HE TICKS. */
       d.innerHTML =
         '<div class="k">trial ' + t + '<span class="spacer"></span></div>' +
         '<img src="' + API() + '/api/tile/' + t + '.png?v=' + cacheKey + '" alt="trial ' + t + '" ' +
         'style="width:100%;aspect-ratio:1;object-fit:cover;image-rendering:pixelated;' +
         'border-radius:4px;margin:4px 0">' +
         '<div class="muted mono" style="font-size:11px">texture ' + fmt(tex, 1) + '</div>' +
-        '<label style="display:flex;gap:5px;align-items:center;cursor:pointer;font-size:12px;' +
-        'margin-top:4px"><input type="checkbox" class="blank-chk" data-trial="' + t + '">exclude</label>' +
-        '<label style="display:flex;gap:5px;align-items:center;cursor:pointer;font-size:12px" ' +
-        'title="Lift the matcher&#39;s refusal on this frame. Only if you can see real tissue.">' +
-        '<input type="checkbox" class="blank-score" data-trial="' + t + '">score it</label>';
+        '<div class="choice" role="radiogroup" aria-label="trial ' + t + '">' +
+          seg(t, CHOICE.KEEP,    'Keep',       cur) +
+          seg(t, CHOICE.HAND,    'Hand place', cur) +
+          seg(t, CHOICE.EXCLUDE, 'Exclude',    cur) +
+        '</div>';
       el.blankList.appendChild(d);
     }
-    // The refusal override is a decision, so it reaches the server the moment it is made — not only
-    // if the user happens to press Apply. See `putRefusals`.
-    el.blankList.querySelectorAll('.blank-score').forEach((c) => { c.onchange = putRefusals; });
+    /* The choice is a DECISION, so it reaches the server the moment it is made — it never waits for
+     * an Apply button, because there is no longer an Apply button. See `putRefusals`. */
+    el.blankList.querySelectorAll('.blank-choice').forEach((c) => {
+      c.onchange = () => { if (c.checked) setFrameChoice(+c.dataset.trial, c.value); };
+    });
+  }
+
+  /* =========================================================================================
+   *  ⭐⭐ THE SCREEN STEP'S THREE CHOICES — his ruling, 2026-07-14:
+   *      "I want a keep button, an exclude button, and a hand place button."
+   *
+   *  This replaced TWO CHECKBOXES (`exclude` + `score it`), and it is not cosmetic. Two checkboxes
+   *  offered FOUR states but only THREE are real — `exclude`+`score it` was a silent no-op, because
+   *  an excluded frame has nothing to score. And the DEFAULT state was INVISIBLE: "refused" was the
+   *  *absence of two ticks*, with no label anywhere on the page. The user asked, in as many words,
+   *  "what does `score it` mean?" — which is the bug. A control that cannot be understood from the
+   *  page has failed, and ruling 3 says the CONTROL carries the meaning, not the hover text.
+   *
+   *  The names are HIS, and they are named after what HE wants to do — not after what the matcher
+   *  does internally. "Refuse" is engine vocabulary (`engine._refusal`) and it has left the UI.
+   *
+   *      KEEP       in the mosaic · the matcher places it        (was: `score it` ticked)
+   *      HAND PLACE in the mosaic · HE places it, in the sweep   (was: neither ticked — the default)
+   *      EXCLUDE    out of the mosaic entirely                   (was: `exclude` ticked)
+   *
+   *  ⚠️ THE TWO MECHANISMS STAY SEPARATE. `HAND PLACE` vs `KEEP` drives the REFUSAL LIST
+   *  (`putRefusals` -> `PUT /api/scan/blank`). `EXCLUDE` drives the TILE'S STATE. They are different
+   *  things and conflating them once lifted the refusal on trial 127 — the one frame in the list that
+   *  genuinely misleads the matcher, by 679 px at NCC 0.66. One control now drives both, but it still
+   *  drives them as two.
+   * ========================================================================================= */
+  const CHOICE = { KEEP: 'keep', HAND: 'hand', EXCLUDE: 'exclude' };
+
+  /** What is this frame's choice RIGHT NOW? Derived from live state, never from a variable we keep
+   *  in step — so it survives a resume, an undo, and an `E` pressed in the sweep. */
+  function choiceOf(t) {
+    const tile = tileOf(t);
+    if (tile && tile.state === 'excluded') return CHOICE.EXCLUDE;
+    const ov = (doc && doc.blank_scan && doc.blank_scan.overruled_by_user) || [];
+    return ov.includes(t) ? CHOICE.KEEP : CHOICE.HAND;      // 🔴 HAND is the default. Deliberate.
+  }
+
+  /** One segment of the three-way control. */
+  function seg(t, value, label, cur) {
+    return '<label class="seg' + (cur === value ? ' on' : '') + '">' +
+      '<input type="radio" class="blank-choice" name="choice-' + t + '" value="' + value + '" ' +
+      'data-trial="' + t + '"' + (cur === value ? ' checked' : '') + '>' +
+      '<span>' + label + '</span></label>';
+  }
+
+  /** ⭐ THE FRAME'S FATE, SET BY HIM, ONE FRAME AT A TIME. Applies immediately — there is no Apply. */
+  async function setFrameChoice(t, v) {
+    const tile = tileOf(t);
+    if (!tile) return;
+    const was = tile.state === 'excluded';
+    const want = v === CHOICE.EXCLUDE;
+    pushUndo('screen:' + t + ':' + v);
+
+    let nStale = 0;
+    if (want && !was) {
+      // --- into the bin. Same rules as `exclude()` in the sweep: an excluded ANCHOR takes its
+      //     pixels out of the composite, so everything judged against it is now stale.
+      const wasAnchored = tile.state === 'anchored';
+      const oldSeq = tile.seq;
+      if (tile.x !== null) tile.last_xy = [tile.x, tile.y];
+      setState(t, 'excluded');
+      tile.excluded = true;
+      tile.unusable_reason = 'blank';
+      tile.excluded_reason = 'measured blank — recommended by the scan, excluded by the user';
+      tile.judged_at = iso();
+      nStale = (wasAnchored && oldSeq !== undefined) ? markStaleAfter(oldSeq, t, false) : 0;
+    } else if (!want && was) {
+      // --- back out of the bin. ⚠️ `last_xy` MUST be read BEFORE `setState`, which deletes it the
+      //     moment the tile stops claiming it was thrown out.
+      const back = tile.last_xy;
+      if (back) setState(t, 'unverified', back[0], back[1]);
+      else setState(t, 'unplaced');
+    }
+
+    const g = recomputeGaps();
+    doc.unusable_tiles = trials().filter((x) => tileOf(x).state === 'excluded');
+    if (doc.blank_scan) doc.blank_scan.accepted = true;
+    if (cursor !== null && tileOf(cursor).state === 'excluded') setCursor(nextTrial(cursor));
+
+    await putRefusals();          // KEEP vs HAND/EXCLUDE — the refusal list, on every path out.
+    renderBlankScan();            // re-derive every card from live state (undo, resume, E in sweep)
+    refresh(); autosaveNow();
+
+    const note = v === CHOICE.EXCLUDE
+      ? 'Excluded ' + t + '. Gaps: ' + (g.length ? g.map((p) => p[0] + '→' + p[1]).join(', ') : 'none') + '.'
+      : v === CHOICE.KEEP
+        ? 'Trial ' + t + ': the matcher will place it.'
+        : 'Trial ' + t + ': you place it, in the sweep.';
+    // ⚠️ A LIVE WARNING, not an explanation — it changes what he does next. It stays on the page.
+    toast(note + (nStale ? ' <b>' + t + ' was an anchor</b> — ' + nStale + ' stale.' : ''),
+          nStale ? 'warn' : 'ok');
   }
 
   /** ⭐ THE MATCHER'S REFUSAL LIST — the human's, not the measure's.
@@ -2375,9 +2479,12 @@ window.Sweep = (function () {
   async function putRefusals() {
     if (!session || !session.blank) return;
     const scan = scannedBlanks();
+    /* ⭐ ONLY `KEEP` LIFTS THE REFUSAL. `HAND PLACE` (the default) and `EXCLUDE` both leave the frame
+     * refused — the matcher does not get to position it either way. On EXCLUDE that is moot (an
+     * excluded frame is never matched at all), and harmlessly so. */
     const overruled = [];
-    (el.blankList ? el.blankList.querySelectorAll('.blank-score') : []).forEach((c) => {
-      if (c.checked) overruled.push(+c.dataset.trial);
+    (el.blankList ? el.blankList.querySelectorAll('.blank-choice:checked') : []).forEach((c) => {
+      if (c.value === CHOICE.KEEP) overruled.push(+c.dataset.trial);
     });
     const refuse = scan.filter((t) => !overruled.includes(t));
     try {
@@ -2388,7 +2495,8 @@ window.Sweep = (function () {
         doc.blank_scan.scanned = scan;                   // what the MEASURE said (never rewritten)
         doc.blank_scan.overruled_by_user = overruled;    // and what the human overruled, on the record
       }
-      if (overruled.length) toast('The matcher will now score ' + overruled.join(', ') + '.', 'ok');
+      // 🔇 No toast here. `setFrameChoice` says what happened, once, in the user's own words — this
+      //    fires on every path out of the screen and would otherwise natter on each one.
     } catch (e) {
       toast('Refusal list failed: ' + e.message, 'bad');
     }
@@ -2418,49 +2526,20 @@ window.Sweep = (function () {
       el.sheet.appendChild(frag);
     } catch (e) { el.sheet.innerHTML = '<div class="muted">no contact sheet: ' + e.message + '</div>'; }
   }
-  /** "Exclude the ticked frames." ⚠️ THE TICK IS THE ONLY THING THAT EXCLUDES. Nothing here reads a
-   *  measure and decides for the user — and the boxes start EMPTY, so pressing this with nothing
-   *  ticked excludes nothing, which is exactly what it should do.
+  /* ⛔ `applyBlank()` IS GONE, and with it `Tick all` / `Tick none` / `Exclude the ticked`.
+   *    His ruling, 2026-07-14: the bulk buttons go.
    *
-   *  It no longer touches the refusal list: that is `putRefusals`' job, driven by its own
-   *  per-frame tick. Conflating the two meant "I don't want to exclude these" was silently read as
-   *  "…and score all of them", which would have lifted the refusal on trial 127 — the one frame in
-   *  the list that genuinely misleads the matcher, by 679 px at NCC 0.66. */
-  async function applyBlank() {
-    const chks = el.blankList.querySelectorAll('.blank-chk');
-    pushUndo('blank-apply');
-    let n = 0;
-    let minSeq = Infinity, wasAnchor = null;
-    chks.forEach((c) => {
-      if (!c.checked) return;
-      const t = +c.dataset.trial;
-      const tl = tileOf(t);
-      if (!tl || tl.state === 'excluded') return;
-      // Excluding an ANCHOR removes its pixels from the composite — every tile judged after it was
-      // matched against a field that contained them. Same rule as `exclude()`.
-      if (tl.state === 'anchored' && tl.seq !== undefined && tl.seq < minSeq) {
-        minSeq = tl.seq; wasAnchor = t;
-      }
-      if (tl.x !== null) tl.last_xy = [tl.x, tl.y];
-      setState(t, 'excluded');
-      tl.excluded = true;
-      tl.unusable_reason = 'blank';
-      tl.excluded_reason = 'measured blank — recommended by the scan and ticked by the user';
-      n++;
-    });
-    const nStale = isFinite(minSeq) ? markStaleAfter(minSeq, wasAnchor, false) : 0;
-
-    await putRefusals();     // the refusal list follows its OWN ticks, on every path out of here
-
-    const g = recomputeGaps();
-    doc.unusable_tiles = trials().filter((t) => tileOf(t).state === 'excluded');
-    if (doc.blank_scan) doc.blank_scan.accepted = true;
-    if (cursor !== null && tileOf(cursor).state === 'excluded') setCursor(nextTrial(cursor));
-    refresh(); autosaveNow();
-    toast('Excluded ' + n + '. Gaps: ' +
-          (g.length ? g.map((p) => p[0] + '→' + p[1]).join(', ') : 'none') + '.' +
-          (nStale ? ' ' + nStale + ' stale.' : ''), 'ok');
-  }
+   *    They only ever drove the `exclude` checkbox, they have no meaning for a three-way choice, and
+   *    **every screened frame is meant to be LOOKED AT before it is judged** — which is the entire
+   *    point of this step. 15 cards is few enough to decide one at a time.
+   *
+   *    Its per-tile work now lives in `setFrameChoice`, which applies the moment he chooses. There is
+   *    no Apply button and nothing to forget to press.
+   *
+   *    🔴 Do not bring back a bulk exclude. A pre-ticked box under a primary button reading "Exclude
+   *    the ticked" IS an auto-exclude: on this dataset the scan names 34, 55, 56 and 127, and all
+   *    four are ANCHORS in the hand-authored ground truth of the 100 %-solved pass 1. One click once
+   *    threw away four tiles of real tissue. THE SCAN RECOMMENDS. HE DECIDES. */
 
   // ---- 3 · BUILD ------------------------------------------------------------------------
   function advancedConfig() {
@@ -2548,24 +2627,106 @@ window.Sweep = (function () {
       el.buildProgress.classList.remove('hidden');
       el.btnBuild.disabled = true;
       el.btnBuildCancel.classList.remove('hidden');
+      etaStart();
       const job = await pollJob(j.job_id, (job) => {
         el.buildFill.style.width = (job.pct || 0) + '%';
         el.buildPhase.textContent = job.phase || '';
         el.buildMsg.textContent = job.message || '';
-        el.buildEta.textContent = job.eta_s ? ('~' + Math.round(job.eta_s) + ' s left') : '';
+        etaSync(job.eta_s);                     // ⭐ re-sync; the 1 Hz ticker does the counting down
         el.buildLog.textContent = (job.log_tail || []).slice(-8).join('\n');
       });
+      etaStop();
       buildJobId = null;
       el.btnBuild.disabled = false;
       el.btnBuildCancel.classList.add('hidden');
       if (job.state !== 'done') { toast('Build ' + job.state + '.', 'bad'); return; }
       await loadBuildResult();
     } catch (e) {
+      etaStop();
       buildJobId = null;
       el.btnBuild.disabled = false;
       el.btnBuildCancel.classList.add('hidden');
       toast('Build failed: ' + e.message, 'bad');
     }
+  }
+
+  /* =========================================================================================
+   *  ⏱️ THE ETA TICKS DOWN EVERY SECOND — his ruling, 2026-07-14:
+   *     "upgrade the progress bar. make it constantly update the time remaining."
+   *
+   *  🔴 THE BAR WAS NOT SLOW. IT WAS FROZEN. The front end already polls every 500 ms and dutifully
+   *  re-rendered `job.eta_s` — but **`eta_s` is only RECOMPUTED when the child process prints a
+   *  recognised stdout line** (`engine.py`, `_ProgressSink._progress`, called only from the parser).
+   *  Between two narration lines the server's number is CONSTANT, so the UI redrew the identical
+   *  "~901 s left" twice a second, for minutes.
+   *
+   *  His own CPU build is the proof: `[swim] 12,090 pairs in 205.9s (CPU)` is ONE line, emitted after
+   *  205.9 s of total silence. Nothing on screen could move during it.
+   *
+   *  So the countdown is now LOCAL: take the server's last estimate, subtract the wall time since it
+   *  arrived, render at 1 Hz. Re-sync on every fresh server value.
+   *
+   *  ⚠️ AN UPWARD JUMP IS HONEST AND IS ALLOWED. When a long-silent phase finally reports, the true
+   *  estimate may be *worse* than what we have been counting down to. We take the server's number.
+   *  A smooth lie is worse than a visible correction.
+   *
+   *  ⚠️ WHY NOT FIX IT IN THE BACKEND (a heartbeat)? Because with the CURRENT formula it would make
+   *  things worse, not better: `eta = elapsed * (100 - pct) / pct`. During a silent phase `pct` is
+   *  pinned, so a heartbeat re-emitting it with a growing `elapsed` makes the ETA COUNT UP. A
+   *  heartbeat is only safe once that global linear extrapolation is replaced by a phase-weighted
+   *  one — which needs re-driving on the ~10-minute CPU path. Logged; not done here.
+   * ========================================================================================= */
+  let etaTimer = null;      // the 1 Hz ticker
+  let etaSecs  = null;      // the server's last estimate, in seconds
+  let etaAt    = 0;         // when that estimate arrived (ms) — the anchor we count down from
+
+  function etaStart() {
+    etaStop();
+    etaSecs = null;
+    etaTimer = setInterval(etaPaint, 1000);
+    etaPaint();
+  }
+
+  function etaStop() {
+    if (etaTimer) clearInterval(etaTimer);
+    etaTimer = null;
+    etaSecs = null;
+    if (el.buildEta) el.buildEta.textContent = '';
+  }
+
+  /** A fresh estimate from the server. `null` early in a build simply means "not yet knowable".
+   *
+   *  🔴 ONLY RE-ANCHOR WHEN THE VALUE ACTUALLY CHANGED, and this is the whole trick. `pollJob` calls
+   *  us every 500 ms with the job object, which always carries the LAST `eta_s` — the same number,
+   *  over and over, until the child next prints. Re-anchoring on every tick reset `etaAt` to now, so
+   *  `left` recomputed to the same value forever and THE COUNTDOWN NEVER MOVED. Measured: the text
+   *  froze for **9 seconds at a stretch** — the very bug this was written to fix, faithfully
+   *  reproduced one layer up. Compare against the raw server number, not against what we render. */
+  function etaSync(s) {
+    if (s === null || s === undefined) return;
+    if (etaSecs !== null && +s === etaSecs) return;   // unchanged — keep counting down from the old anchor
+    etaSecs = +s;
+    etaAt = Date.now();
+    etaPaint();
+  }
+
+  function etaPaint() {
+    if (!el.buildEta) return;
+    if (etaSecs === null) { el.buildEta.textContent = 'estimating…'; return; }
+    const left = etaSecs - (Date.now() - etaAt) / 1000;
+    // 🔴 CLAMP AT ZERO. Never show "-437 s left" — that reads as a hang, which is the exact failure
+    //    this whole mechanism exists to prevent.
+    if (left <= 1) { el.buildEta.textContent = 'almost there…'; return; }
+    el.buildEta.textContent = '~' + fmtDuration(left) + ' left';
+  }
+
+  /** 901 -> "15m 01s", 47 -> "47 s". Minutes matter on the CPU path; seconds matter on the GPU. */
+  function fmtDuration(s) {
+    s = Math.round(s);
+    if (s < 90) return s + ' s';
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return m + 'm ' + String(r).padStart(2, '0') + 's';
   }
 
   async function cancelBuild() {
@@ -3009,7 +3170,6 @@ window.Sweep = (function () {
 
       // 3 · SCREEN — the scan recommends; HE ticks.
       blankN: 'blank-n', blankThr: 'blank-thr', blankList: 'blank-list',
-      btnBlankAll: 'btn-blank-all', btnBlankNone: 'btn-blank-none', btnBlankApply: 'btn-blank-apply',
       btnBackRange: 'btn-back-range', btnToBuild: 'btn-to-build',
 
       // 4 · PLACE — one button.
@@ -3078,9 +3238,6 @@ window.Sweep = (function () {
     el.btnBackScreen.onclick = () => show('screen');
     el.btnBackSweep.onclick  = () => show('sweep');
 
-    el.btnBlankAll.onclick  = () => el.blankList.querySelectorAll('.blank-chk').forEach((c) => c.checked = true);
-    el.btnBlankNone.onclick = () => el.blankList.querySelectorAll('.blank-chk').forEach((c) => c.checked = false);
-    el.btnBlankApply.onclick = applyBlank;
     el.btnBuild.onclick = startBuild;
     el.btnBuildCancel.onclick = cancelBuild;
     el.btnSkipBuild.onclick = skipBuild;
@@ -3180,7 +3337,7 @@ window.Sweep = (function () {
     showAlternatives, rescue, scoreAt, pushUndo, undo, redo, autosave, onKeyDown,
     // for the integration tests / the dev console:
     setCursor, show, exportDoc, recomputeGaps, nextTrial, prevTrial,
-    loadBuildResult, applyBlank, putRefusals, pickAlternative,
+    loadBuildResult, setFrameChoice, choiceOf, CHOICE, putRefusals, pickAlternative,
     evidenceOf: (t) => evidence[K(t)], fieldSig, evidenceIsCurrent,
     get advancing() { return advancing; },
     get doc() { return doc; },

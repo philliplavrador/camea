@@ -159,7 +159,9 @@
           <div class="field" style="flex:1"><label>lo</label><input type="number" id="tone-lo"></div>
           <div class="field" style="flex:1"><label>hi</label><input type="number" id="tone-hi"></div>
           <button class="btn sm" id="btn-tone">Apply</button>
-          <button class="btn sm ghost" id="btn-tone-auto">Auto</button>
+          <button class="btn sm ghost" id="btn-tone-auto">Auto
+            <span class="help" data-help="Pick the lo/hi window from the pixels themselves (a percentile stretch across the loaded frames), instead of you typing numbers.&#10;&#10;Display only. A reload invalidates the window and it is recomputed."></span>
+          </button>
         </div>
       </div>
     </section>
@@ -194,14 +196,31 @@
       <div class="warn info hidden" id="banner" style="margin:0;max-width:60vw"></div>
     </div>
 
+    <!-- ⭐ RULING 3 APPLIES HERE MOST OF ALL. These 7 buttons are the app, and all 7 shipped BARE —
+         no `?`, no text — on the one screen the user spends the hour in. `Difference`, `Alternatives`
+         and `Snap` are the least guessable controls in the app. He had to ASK. -->
     <div class="overlay bl" id="sweep-actions">
-      <button class="btn primary" id="btn-anchor">Anchor <kbd class="kbd">A</kbd></button>
-      <button class="btn danger"  id="btn-exclude">Exclude <kbd class="kbd">E</kbd></button>
-      <button class="btn"         id="btn-next">Next <kbd class="kbd wide">Space</kbd></button>
-      <button class="btn"         id="btn-replay">Replay <kbd class="kbd">R</kbd></button>
-      <button class="chip"        id="btn-diff">Difference <kbd class="kbd">D</kbd></button>
-      <button class="chip"        id="btn-alts">Alternatives <kbd class="kbd">V</kbd></button>
-      <button class="btn"         id="btn-snap">Snap <kbd class="kbd">S</kbd></button>
+      <button class="btn primary" id="btn-anchor">Anchor <kbd class="kbd">A</kbd>
+        <span class="help" data-help="Accept this tile's position as TRUE. It joins the reference field, and every tile after it is matched against it.&#10;&#10;This is the only thing that ever certifies a position. Nothing is anchored without you pressing A — because one bad early anchor poisons every tile judged against it."></span>
+      </button>
+      <button class="btn danger"  id="btn-exclude">Exclude <kbd class="kbd">E</kbd>
+        <span class="help" data-help="Throw this frame out of the mosaic. Not drawn, not matched, not exported.&#10;&#10;This is how you remove a blurry frame — blur is never auto-detected, because no measure reproduces the call (the textbook metric scores worse than chance). It is your eye, here.&#10;&#10;Excluding opens an acquisition gap. Excluding an ANCHOR removes its pixels from the composite, so every tile judged against it is flagged stale."></span>
+      </button>
+      <button class="btn"         id="btn-next">Next <kbd class="kbd wide">Space</kbd>
+        <span class="help" data-help="Place this tile and move to the next one.&#10;&#10;Space ALWAYS places it. If the matcher is confident, it lands on the matcher's answer; if it is not, it is rescued to the SOLVER's position rather than left where a bad match put it. It is placed but UNVERIFIED — it is not in the reference field until you press A."></span>
+      </button>
+      <button class="btn"         id="btn-replay">Replay <kbd class="kbd">R</kbd>
+        <span class="help" data-help="Play the 1 second fade again, on the same tile.&#10;&#10;The fade is the whole point: the tile materialises on top of the field you have already certified, and watching it appear is how you see whether it lines up. Replay it as often as you like — it changes nothing."></span>
+      </button>
+      <button class="chip"        id="btn-diff">Difference <kbd class="kbd">D</kbd>
+        <span class="help" data-help="Show the tile MINUS the field underneath it, instead of on top of it.&#10;&#10;Where the two agree, the difference is flat grey. Where they disagree, structure appears — doubled edges, ghosted cells. A misalignment that your eye forgives in the fade is obvious here."></span>
+      </button>
+      <button class="chip"        id="btn-alts"><span class="lbl">Alternatives</span> <kbd class="kbd">V</kbd>
+        <span class="help" data-help="Show the matcher's OTHER candidate positions — the runners-up it did not pick.&#10;&#10;The matcher returns a ranked list of distinct peaks. When the margin between the best and the second is thin, the runner-up is often the correct one: that is the signature of an alias, where the tissue's repeating pattern matches at a WRONG offset just as well as at the right one.&#10;&#10;Click a ghost to place the tile there instead."></span>
+      </button>
+      <button class="btn"         id="btn-snap">Snap <kbd class="kbd">S</kbd>
+        <span class="help" data-help="Re-run the matcher on this tile, right now, against the anchors you have certified SO FAR.&#10;&#10;Use it after you have dragged a tile roughly into place, or after anchoring its neighbours — the field it is matched against has improved, so the answer can improve too.&#10;&#10;It takes ~1 s: this is a real correlation on 16-bit pixels, not a cheap guess. Correct beats fast. A BLANK frame refuses to snap."></span>
+      </button>
     </div>
 
     <div class="overlay tr">
@@ -306,7 +325,7 @@
         <h1>Screen
           <span class="help" data-help="The scan recommends only what the code is genuinely sure of: BLANK frames (near-featureless glare).&#10;&#10;Blur is not judged here and never will be. Across 15 focus measures the best global blur threshold reaches F1 = 0.37, and the textbook metric (variance of Laplacian) scores WORSE THAN CHANCE — it is dominated by sensor noise, which is identical in sharp and blurry frames. Catching all 15 blurry frames in this dataset would also throw away 62 good ones.&#10;&#10;So blur is your call, by eye, in the sweep — press E. Nothing is auto-excluded, ever."></span>
         </h1>
-        <p class="lede">Tick what you want thrown out. Nothing is ticked for you.</p>
+        <p class="lede">Look at each frame. Nothing is decided for you.</p>
 
         <div class="facts">
           <div class="fact">
@@ -318,19 +337,11 @@
             <div class="v sm" id="blank-thr">—</div>
           </div>
           <div class="fact wide">
-            <div class="k">Let the matcher score it
-              <span class="help" data-help="Two different questions.&#10;&#10;EXCLUDE throws the frame out of the mosaic entirely — that is the tick on the left.&#10;&#10;LET THE MATCHER SCORE IT lifts the correlator's refusal. By default a frame the measure calls blank is refused, not scored: two blank frames 136 trials apart correlate +0.43 at ZERO SHIFT, because what they share is fixed-pattern SENSOR structure, which does not move with the stage. They register confidently and wrongly.&#10;&#10;But the measure has no margin at the boundary — usable and blank frames interleave below it. On this dataset three of the four land sub-pixel on the truth once scored, and the fourth is 679 px wrong at NCC 0.66. Look at the thumbnail and decide per frame. A refused frame is not lost: you can always drop it in by hand in the sweep."></span>
+            <div class="k">Your call, per frame
+              <span class="help" data-help="KEEP — the frame is in the mosaic and the matcher places it.&#10;&#10;HAND PLACE — the frame is in the mosaic, but the matcher will NOT position it. You do, in the sweep. This is the default on a scanned frame, and it is the app saying it does not trust itself here: a blank frame does not align on tissue, it aligns on SENSOR pattern. Two blank frames 136 trials apart correlate +0.43 at ZERO SHIFT, because fixed-pattern sensor structure does not move with the stage — so they register confidently and WRONGLY.&#10;&#10;EXCLUDE — the frame is thrown out of the mosaic entirely. Not drawn, not matched, not exported. It opens an acquisition gap and marks any existing build stale.&#10;&#10;Why you are asked at all: the measure has no margin at the boundary — usable and blank frames interleave below it. On this dataset it names 34, 55, 56 and 127, and three of those are ordinary, correctly-placed tiles. Look at the thumbnail and decide."></span>
             </div>
-            <div class="v sm muted">per frame, below</div>
+            <div class="v sm muted">keep · hand place · exclude</div>
           </div>
-        </div>
-
-        <div class="row">
-          <button class="btn sm" id="btn-blank-all">Tick all</button>
-          <button class="btn sm" id="btn-blank-none">Tick none</button>
-          <button class="btn" id="btn-blank-apply">Exclude the ticked
-            <span class="help" data-help="Excluding a frame opens an acquisition gap and changes the solver's input. If a build already exists it is marked stale — re-run it."></span>
-          </button>
         </div>
 
         <div class="facts" id="blank-list"></div>
@@ -357,7 +368,9 @@
           <button class="btn primary big" id="btn-build">Run</button>
           <button class="btn danger hidden" id="btn-build-cancel">Cancel</button>
           <label class="chip"><input type="checkbox" id="in-usecache" checked
-                 style="width:12px;height:12px"> use cache</label>
+                 style="width:12px;height:12px"> use cache
+            <span class="help" data-help="A SPEED switch, not a correctness one. Leave it on.&#10;&#10;The solver caches its expensive intermediate work (the SWIM backbone and the per-tile anchor matches). Warm: ~25 s. Cold: ~3 min on the GPU, ~8-10 min on the CPU.&#10;&#10;It cannot serve you a stale answer. The cache filename carries a hash of the TRIAL LIST and the CONFIG, and a mismatch is refused, not repaired — so the moment you exclude a frame the key changes and it recomputes from scratch.&#10;&#10;Untick it only to force a genuine cold rebuild."></span>
+          </label>
           <span class="spacer"></span>
           <button class="btn ghost" id="btn-skip-build">Skip — place by hand
             <span class="help" data-help="Shows you NO machine answer at all. Every tile starts unplaced and you place it yourself.&#10;&#10;Slower, but the document it produces is an INDEPENDENT ground truth. A document seeded from a build is honestly stamped as one — and must never be used to score the solver that produced it, because it would score ~100 % by construction."></span>
@@ -410,13 +423,27 @@
             <span class="help" data-help="Off the validated path. The shipped 312/312 build used the defaults — every one of them."></span>
           </summary>
           <div class="grid2" style="margin-top:10px">
-            <div class="field"><label>pass_split</label><input type="number" id="cfg-pass-split"></div>
-            <div class="field"><label>anchor_ncc</label><input type="number" step="0.01" id="cfg-anchor-ncc" placeholder="0.30"></div>
-            <div class="field"><label>split_px</label><input type="number" step="0.5" id="cfg-split-px" placeholder="12.0"></div>
-            <div class="field"><label>look</label><input type="number" id="cfg-look" placeholder="3"></div>
-            <div class="field"><label>min_side</label><input type="number" id="cfg-min-side" placeholder="2"></div>
-            <div class="field"><label>t27.conf</label><input type="number" step="0.01" id="cfg-t27-conf" placeholder="0.62"></div>
-            <div class="field"><label>t27.run_conf</label><input type="number" step="0.01" id="cfg-t27-runconf" placeholder="0.55"></div>
+            <div class="field"><label>pass_split
+              <span class="help" data-help="The LAST TRIAL OF PASS 1. The solver hard-partitions the run here: pass 1 is solved alone and frozen, then pass 2 is matched against it.&#10;&#10;Defaults to the split DETECTED from the inter-trial timestamps on the Range screen — not to a literal number. Get this wrong and the two scans are solved against the wrong reference."></span></label>
+              <input type="number" id="cfg-pass-split"></div>
+            <div class="field"><label>anchor_ncc
+              <span class="help" data-help="The correlation a tile must reach before the solver will trust it as an anchor.&#10;&#10;Raise it and fewer tiles are trusted, but each is safer. Lower it and more tiles anchor, including bad ones — and a bad anchor poisons everything matched against it. Default 0.30."></span></label>
+              <input type="number" step="0.01" id="cfg-anchor-ncc" placeholder="0.30"></div>
+            <div class="field"><label>split_px
+              <span class="help" data-help="How far apart (in pixels) two candidate positions must be before they count as genuinely DIFFERENT answers rather than the same peak.&#10;&#10;This is the de-aliasing knob: it is what stops a repeating tissue pattern's near-duplicate peaks being read as agreement. Default 12.0 px."></span></label>
+              <input type="number" step="0.5" id="cfg-split-px" placeholder="12.0"></div>
+            <div class="field"><label>look
+              <span class="help" data-help="How many neighbours back along the acquisition order the solver looks when placing a tile.&#10;&#10;Bigger = more evidence per tile and more robustness to one bad neighbour, but quadratically more matching, so a slower build. Default 3."></span></label>
+              <input type="number" id="cfg-look" placeholder="3"></div>
+            <div class="field"><label>min_side
+              <span class="help" data-help="The minimum number of independent neighbours that must agree before a tile's position is accepted.&#10;&#10;This is the quorum: it is what stops a single confident-but-wrong match from placing a tile on its own. Default 2."></span></label>
+              <input type="number" id="cfg-min-side" placeholder="2"></div>
+            <div class="field"><label>t27.conf
+              <span class="help" data-help="t27 is the single-pass serpentine solver that places pass 1. `conf` is the correlation a single PAIR of frames must reach before that pair's measured shift is believed. Default 0.62."></span></label>
+              <input type="number" step="0.01" id="cfg-t27-conf" placeholder="0.62"></div>
+            <div class="field"><label>t27.run_conf
+              <span class="help" data-help="The same threshold, but for a whole RUN (a straight line of the serpentine scan) rather than one pair. It is lower than `conf` because a run pools evidence across many frames and can afford to. Default 0.55."></span></label>
+              <input type="number" step="0.01" id="cfg-t27-runconf" placeholder="0.55"></div>
           </div>
         </details>
       </div>

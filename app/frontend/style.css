@@ -495,6 +495,33 @@ input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px;
 }
 .stepnav .spacer { flex: 1; }
 
+/* ------------------------------------------------------------------------------------------
+   THE SCREEN STEP'S THREE-WAY CHOICE  —  Keep · Hand place · Exclude   (his ruling, 2026-07-14)
+
+   Replaced two checkboxes. They offered four states but only three were real, and the DEFAULT
+   ("the matcher will not place this") was the *absence of two ticks* — it had no name anywhere on
+   the page, which is why he had to ask what the control did. One radio group, always exactly one
+   selected, so the default is visible and a contradictory state cannot be expressed.
+   ------------------------------------------------------------------------------------------ */
+.choice { display: flex; margin-top: 6px; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.choice .seg { flex: 1; cursor: pointer; }
+.choice .seg + .seg { border-left: 1px solid var(--line); }
+.choice .seg input { position: absolute; opacity: 0; pointer-events: none; }   /* the radio itself is never drawn */
+.choice .seg > span {
+  display: block; padding: 5px 2px; text-align: center;
+  font-size: 11px; line-height: 1.2; color: var(--ink-dim);
+  background: var(--surface-2); user-select: none; transition: background .12s, color .12s;
+}
+.choice .seg:hover > span { background: var(--line); color: var(--ink); }
+/* the selected one. `.on` is set at render; `:checked` keeps it right between renders. */
+.choice .seg.on > span,
+.choice .seg input:checked + span { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+/* EXCLUDE is destructive and must never be mistaken for the safe default. */
+.choice .seg:last-child.on > span,
+.choice .seg:last-child input:checked + span { background: var(--bad); color: var(--accent-ink); }
+/* keyboard focus must be visible — the radio itself is not drawn */
+.choice .seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 .progress { height: 7px; border-radius: 4px; background: var(--line); overflow: hidden; }
 .progress > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
 .progress.indeterminate > i {
