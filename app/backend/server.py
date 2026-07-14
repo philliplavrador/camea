@@ -288,6 +288,25 @@ def get_index():
         html = html[: i + 6] + "\n" + inject + html[i + 6:]
     else:
         html = inject + html
+
+    # 🔴 CACHE-BUST THE SCRIPTS, OR AN UPDATE SHIPS A HALF-OLD APP.
+    #
+    # `index.html` is `no-store`, but `<script src="/viewer.js">` carried NO version — and the JS is
+    # served by StaticFiles, which lets a browser reuse a cached copy. So a NEW index.html could load
+    # an OLD viewer.js. Hit exactly that while driving: the fresh sweep.js called
+    # `Viewer.setShowUnverified()`, the stale viewer.js had never heard of it, and the mount died with
+    # "Viewer.setShowUnverified is not a function" — a BLANK CANVAS and a dead sweep, from a pure
+    # cache artefact. WebView2 caches too; this would have shipped.
+    #
+    # The stamp is each file's own mtime, so it changes exactly when the file does — and never
+    # otherwise (a constant would defeat caching entirely, and `time.time()` would re-download the JS
+    # on every page load).
+    for name in ("viewer.js", "sweep.js", "style.css"):
+        f = FRONTEND_DIR / name
+        if not f.exists():
+            continue
+        v = int(f.stat().st_mtime)
+        html = html.replace(f'"/{name}"', f'"/{name}?v={v}"')
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 

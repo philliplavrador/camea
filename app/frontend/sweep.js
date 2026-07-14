@@ -205,7 +205,9 @@ window.Sweep = (function () {
    * the `?` on the Tone panel's business, not a paragraph over the canvas. */
   const DIFF_MSG = 'Difference: |tile − background|. <b>Misalignment shows as bright doubling.</b>';
 
-  const MAX_CANDIDATES  = 8;
+  // ⭐ 9, not 8: his ruling binds `1`-`9` to the ranked peaks, so key `9` needs a 9th to jump to.
+  //    The server clamps to min(16, …) (`server.py:693`), so this needs no backend change.
+  const MAX_CANDIDATES  = 9;
   const UNDO_DEPTH      = 100;
   const FOLD_MS         = 700;     // tagged folding, as in the bench (template.html:1649)
   const AUTOSAVE_MS     = 2000;    // debounce; plus UNCONDITIONALLY on every A and E
@@ -876,6 +878,41 @@ window.Sweep = (function () {
   /** `A` — anchor the cursor tile. It joins the anchor field: everything after it is judged
    *  against it. If it has no position yet, match it first and take candidates[0]. If NO tile
    *  anywhere has a position, this tile IS the origin: [0, 0]. */
+  /** ⭐⭐ `A` ON AN ALREADY-ANCHORED TILE UN-ANCHORS IT (his ruling, 2026-07-14). `A` is a TOGGLE.
+   *
+   *  It used to be a silent no-op: `A` on an anchored tile re-ran `setState(t,'anchored',x,y)` — same
+   *  state, same position, nothing visible. There was NO way to take an anchor back except `Ctrl+Z`,
+   *  and only if it was the last thing he did.
+   *
+   *  🔴 IT TOGGLES CERTIFICATION, NOT POSITION. The tile becomes `unverified` and KEEPS ITS PLACE.
+   *  Un-certifying must never throw away a position.
+   *
+   *  🔴 AND IT MUST MARK THE DOWNSTREAM TILES STALE. Every tile judged AFTER this one was matched
+   *  against a composite that CONTAINED it — pulling it out of the anchor field is exactly the change
+   *  `exclude()` already guards, and `move()` on an anchor already guards. Self-limiting in the common
+   *  case: un-anchoring the tile he JUST anchored has the highest `seq`, so nothing is flagged. The
+   *  cascade fires only when he reaches back to an EARLY anchor — which is precisely when he must be
+   *  told.
+   *
+   *  ⚠️ `doc.origin_trial` STAYS. (0,0) was a FRAME, never a claim about that tile, and every tile
+   *  already carries world coordinates. Un-anchoring the origin moves NOTHING. */
+  async function unanchor(t) {
+    const tile = tileOf(t);
+    pushUndo('unanchor:' + t);
+    const oldSeq = tile.seq;                       // ⚠️ BEFORE setState — it bumps seq on `unverified`
+    setState(t, 'unverified', tile.x, tile.y);
+    tile.source = (tile.source ? tile.source + ', ' : '') + 'un-anchored by the user';
+    tile.judged_at = iso();
+    const nStale = (oldSeq !== undefined) ? markStaleAfter(oldSeq, t, false) : 0;
+    const left = anchored().length;
+    afterJudge(t, 'Un-anchored ' + t + '. It keeps its position.' +
+      (nStale ? ' <b>' + nStale + ' tile' + (nStale === 1 ? '' : 's') + ' flagged stale</b> — they were' +
+                ' matched against a field that contained it.' : '') +
+      // ⚠️ A LIVE WARNING: with no anchors the matcher has nothing to match against. Say so, here.
+      (left ? '' : ' <b>No anchors left</b> — press A on a placed tile to certify one.'),
+      (nStale || !left) ? 'warn' : 'ok');
+  }
+
   async function anchor() {
     if (busyPlacing('anchor')) return;
     const t = cursor;
@@ -883,6 +920,9 @@ window.Sweep = (function () {
     const tile = tileOf(t);
     let msg = null;                 // `afterJudge` owns the banner; a divert notice rides through it
     let refusedNote = null;         // a blank tile anchored at the solver's answer must still shout
+
+    // ⭐ THE TOGGLE. Anchored already? Then `A` takes it back.
+    if (tile.state === 'anchored') { await unanchor(t); return; }
 
     if (tile.x === null) {
       if (!anyPlaced()) {
@@ -906,7 +946,15 @@ window.Sweep = (function () {
       const res = await foregroundMatch(t, 'global', null);
       const dec = decidePlacement(t, res);
       if (!dec.xy) {
-        toast('Trial ' + t + ': no match, no solver answer. Drag it into place, then A.', 'bad');
+        /* ⚠️ THE ORIGIN TRAP, and it is REACHABLE now that `A` is a toggle. If he un-anchors his way
+         * down to ZERO anchors in a hand-placed session, this tile has no position, there is nothing
+         * to match against, and there is no solver answer either. The old message ("Drag it into
+         * place, then A") was true but hid the cheaper way out: the tiles he un-anchored are still
+         * sitting there, placed, one `A` from being a reference field again. Say BOTH. */
+        toast('Trial ' + t + ': nothing to match against' +
+              (anchored().length ? '' : ' — no anchors yet') +
+              '. Press A on a tile that already has a position to certify it, or drag this one into ' +
+              'place, then A.', 'bad');
         return;
       }
       pushUndo('anchor:' + t);
@@ -1601,6 +1649,15 @@ window.Sweep = (function () {
       case 's': case 'S': e.preventDefault(); snap(); return;
       default: break;
     }
+
+    /* ⭐ `1`-`9` — JUMP TO THE Nth-BEST COMPUTED POSITION (his ruling, 2026-07-14). `1` is the BEST
+     * peak, `2` the runner-up, and so on for as many as the matcher actually found.
+     * ⚠️ `0` is NOT ours — it is the viewer's 1:1 zoom, and it stays that way. Digits only, 1-9. */
+    if (e.key >= '1' && e.key <= '9') {
+      e.preventDefault();
+      jumpToCandidate(+e.key);
+      return;
+    }
     if (!viewerOk) return;
     const handled = Viewer.handleKey(e);          // F · 0 · D · G · Esc · arrows (nudge) · +/-
     if (handled) syncViewerUI();
@@ -1835,16 +1892,29 @@ window.Sweep = (function () {
     // this tile was corrected by hand, and hiding it would hide the alias.
     const ev = evidence[K(t)];
     if (ev) { ev.best = c; ev.picked_rank = c.rank; }
+    /* ⚠️ WRITE BOTH CONVENTIONS. The UI counts from 1 (the key he pressed); `alt_rank` is stored
+     * 0-indexed because that is what the QC report and the exported record already carry. A reader
+     * must never have to GUESS which convention a bare number is in — so spell out both. */
     if (c.rank !== 0) {
       tl.source = (tl.machine ? 't33 build, ' : '') +
-        'moved by hand to alternative #' + c.rank + ' of the anchor-composite search' +
-        ' (rank 0 was a thin-margin alias)';
+        'moved by hand to alternative ' + altKey(c) + ' of the anchor-composite search' +
+        ' (rank ' + c.rank + '; rank 0 was a thin-margin alias)';
     }
     showEvidence(t);
-    banner('Moved to alternative #' + c.rank + ' (NCC ' + fmt(c.ncc, 4) + '). ' +
+    banner('Moved to alternative <kbd class="kbd">' + altKey(c) + '</kbd> (NCC ' + fmt(c.ncc, 4) + '). ' +
            '<kbd class="kbd">S</kbd> to snap.', 'ok');
     if (viewerOk) Viewer.fadeIn(t, c.x, c.y);
   }
+
+  /** 🔴 THE RAIL IS NUMBERED FROM 1, AND IT MUST BE. `rank` is 0-indexed internally (`rank 0` is the
+   *  best peak) and this list used to PRINT `#0, #1, #2` — while his ruling binds `1` to the best. So
+   *  the number he READ and the number he PRESSED differed by one, on the exact screen where he is
+   *  choosing between near-tied aliases. That is how you take the wrong peak.
+   *
+   *  Display = `rank + 1`. Storage stays 0-indexed (`alt_rank` is in the QC report and the exported
+   *  record; do not churn the format) — see `pickAlternative`, which writes BOTH conventions into the
+   *  human-readable `source` string so a reader never has to guess which one a number is in. */
+  const altKey = (c) => c.rank + 1;               // the KEY he presses, and the LABEL he reads
 
   function renderAlts(cands) {
     if (!cands || !cands.length) {
@@ -1853,17 +1923,68 @@ window.Sweep = (function () {
     }
     el.altsList.innerHTML = '';
     cands.forEach((c) => {
+      const k = altKey(c);
       const d = document.createElement('div');
       d.className = 'item alt' + (c.rank === 0 ? ' on' : '');
-      d.innerHTML = '<span class="t">#' + c.rank + '</span>' +
+      d.innerHTML = '<span class="t">' + (k <= 9 ? '<kbd class="kbd">' + k + '</kbd>' : '#' + k) + '</span>' +
                     '<span class="n">' + fmt(c.ncc, 4) + '</span>' +
                     '<span class="spacer"></span>' +
                     '<span class="n">' + fmt(c.x, 1) + ', ' + fmt(c.y, 1) + '</span>' +
                     '<span class="n">' + (c.npix / 1e3).toFixed(0) + ' k</span>';
-      d.title = c.rank === 0 ? 'the placement' : 'a runner-up peak — click to move the tile here';
+      d.title = (c.rank === 0 ? 'the placement' : 'a runner-up peak')
+                + (k <= 9 ? ' — press ' + k + ', or click, to move the tile here' : ' — click to move the tile here');
       d.onclick = () => pickAlternative(cursor, c);
       el.altsList.appendChild(d);
     });
+  }
+
+  /** ⭐ `1`-`9` — JUMP THE TILE TO THE Nth-BEST COMPUTED POSITION (his ruling, 2026-07-14):
+   *  "clicking 1 places the snapshot at its best computer position, pressing 2 places the snapshot at
+   *   its 2nd best computed position and so on until 9… or until 5 if only 1-5 are available".
+   *
+   *  So the LIVE keys are exactly the candidates that exist. Press 6 on a tile with 5 peaks and
+   *  nothing happens (a quiet toast, not a beep).
+   *
+   *  ⚠️ Reads the candidates from `evidence[K(t)]` — keyed BY TILE — not from the single global
+   *  `lastCandidates`, which is one slot for the whole app and would happily serve another tile's list.
+   *
+   *  ⚠️ If nothing has been matched yet, MATCH FIRST, then jump (~1 s) — same as `V` does. He should
+   *  never have to press `V` before a number.
+   *
+   *  This is a MOVE, not a certification: it routes through `pickAlternative` -> `move()`, so it is
+   *  flagged `human`, `Ctrl+Z` undoes it, and he still presses `A`. */
+  async function jumpToCandidate(n) {
+    const t = cursor;
+    if (t === null || !tileOf(t)) return;
+    if (busyPlacing('jump')) return;
+
+    /* 🔴 NEVER JUMP TO A CANDIDATE MEASURED AGAINST A FIELD THAT NO LONGER EXISTS. `evidenceIsCurrent`
+     * compares the stashed `_field` signature to the anchor field the app has NOW. This is not
+     * paranoia: `A` is a toggle as of today, so the field changes under him constantly, and a cached
+     * peak list is a set of world coordinates computed against a *different* reference. Jumping to a
+     * stale one would move the tile to a position nothing now supports — and stamp it as chosen. `V`
+     * already refuses to serve a stale list; so does this. Re-match (~1 s) and use the fresh peaks. */
+    const ev = evidence[K(t)];
+    let cands = (ev && evidenceIsCurrent(t)) ? ev.candidates : null;
+    if (!cands || !cands.length) {
+      const res = await foregroundMatch(t, 'global', null);
+      if (!res || !res.candidates || !res.candidates.length) {
+        toast('Trial ' + t + ': no candidate positions to jump to.', 'bad');
+        return;
+      }
+      stashEvidence(t, res);              // stamps `_field`, so the next digit is served from cache
+      tileOf(t).stale = false;
+      cands = res.candidates;
+      if (viewerOk) Viewer.showAlternatives(t, cands);
+      renderAlts(cands);
+    }
+    const c = cands.find((x) => altKey(x) === n);
+    if (!c) {
+      toast('Trial ' + t + ': only ' + cands.length + ' candidate' +
+            (cands.length === 1 ? '' : 's') + '. Press 1–' + cands.length + '.', 'bad');
+      return;
+    }
+    pickAlternative(t, c);
   }
 
   function renderQueue() {
@@ -2163,10 +2284,33 @@ window.Sweep = (function () {
         onFadeEnd: () => {},
         onError: (t, err) => toast('Tile ' + t + ': ' + err, 'bad'),
       });
-      viewerOk = true;
+      /* 🔴 `viewerOk` IS SET LAST, AND THAT MATTERS. It used to be set the instant `mount()` returned —
+       * so if ANY line below it threw, the catch fired, but the app was already flagged as "viewer is
+       * fine". `setTiles` never ran, `mountViewer` never retried (it early-returns on `viewerOk`), and
+       * the sweep sat on a BLANK CANVAS with a toast that scrolled away.
+       * Measured exactly that: a stale cached `viewer.js` had no `setShowUnverified`, the mount threw,
+       * and the viewer reported `tiles: 0` while the document held 337 placed tiles. Set the flag only
+       * when the whole setup has actually succeeded; a failure then leaves it false and it retries. */
+
+      /* ⭐⭐ THE CANVAS SHOWS ONLY WHAT HE HAS CERTIFIED (his ruling, 2026-07-14). The sweep starts on
+       * an EMPTY canvas and grows one anchor at a time — "0 tiles placed, then I add tile 11 and
+       * anchor it, then I move onto 12".
+       *
+       * 🔴 THE OLD VIEW WAS LYING. The matcher matches against ANCHORS ONLY, so with 0 anchored the
+       * reference field is EMPTY — yet the canvas painted all 338 machine-placed tiles at 55 % with a
+       * dashed outline each. He saw a full mosaic while the algorithm saw nothing, and the app's whole
+       * claim ("each tile fades in ON TOP OF THE FIELD YOU HAVE ALREADY CERTIFIED") was invisible
+       * underneath 338 tiles he had never judged.
+       *
+       * This also takes the yellow cage with it — those outlines mark `unverified` tiles and nothing
+       * else. One flag, both complaints. */
+      Viewer.setShowUnverified(false);
+      if (el.floatAlpha) Viewer.setFloatAlpha((+el.floatAlpha.value || 100) / 100);
+
       Viewer.setTiles(doc.tiles);
       Viewer.setCursor(cursor);
       Viewer.fit();
+      viewerOk = true;                 // ⬅ only now. See the note above.
       setInterval(() => {
         if (screen !== 'sweep' || !viewerOk) return;
         try {
@@ -3194,6 +3338,7 @@ window.Sweep = (function () {
       evThin: 'ev-thin', evAperture: 'ev-aperture', evMachine: 'ev-machine',
       altsList: 'alts-list', toneLo: 'tone-lo', toneHi: 'tone-hi', btnTone: 'btn-tone',
       btnToneAuto: 'btn-tone-auto', queue: 'queue', queuePos: 'queue-pos',
+      floatAlpha: 'float-alpha', floatAlphaV: 'float-alpha-v',
       onlyOutstanding: 'in-only-outstanding', rescueList: 'rescue-list', stale: 'stale',
       buildStale: 'build-stale',
 
@@ -3256,6 +3401,20 @@ window.Sweep = (function () {
     el.onlyOutstanding.onchange = renderQueue;
     el.btnTone.onclick     = () => applyTone(false);
     el.btnToneAuto.onclick = () => applyTone(true);
+
+    /* ⭐ THE OPACITY SLIDER (his ruling). A SESSION display preference:
+     *  ⚠️ it must NOT reset on every `Space`, or it is useless — so it lives here, on the viewer, and
+     *     nothing in the per-tile flow touches it.
+     *  ⚠️ and it must NOT go into the project file. `.camea.json` records the MOSAIC, not how he
+     *     happened to be looking at it. (Tone IS in the doc — it is global and reproducible. An
+     *     opacity he nudges while dragging is not a fact about the data.) */
+    if (el.floatAlpha) {
+      el.floatAlpha.oninput = () => {
+        const pct = +el.floatAlpha.value;
+        el.floatAlphaV.textContent = pct + '%';
+        if (viewerOk) Viewer.setFloatAlpha(pct / 100);
+      };
+    }
     el.btnSave.onclick = saveProject;
     el.btnLoad.onclick = loadProject;
     el.btnExport.onclick = doExport;

@@ -151,6 +151,20 @@
       <div class="panel-body"><div class="list" id="rescue-list"><div class="muted">None.</div></div></div>
     </section>
 
+    <!-- ⭐ OPACITY OF THE TILE UNDER JUDGEMENT (his ruling, 2026-07-14): "when im hand placing a
+         snapshot its a bit hard to see if it lines up so add an opacity slider." It was drawn at
+         alpha 1.0 — an OPAQUE rectangle over the very field he is lining it up against. -->
+    <section class="panel">
+      <h3>Opacity <span class="spacer"></span>
+        <span class="help" data-help="How see-through the tile you are judging is. Drag it down and you can see the certified field THROUGH the tile while you position it by hand.&#10;&#10;Display only — it never touches the matcher, and it never changes a position.&#10;&#10;100% is the default and is what ships. The 1-second fade still runs; it just fades in to this level.&#10;&#10;Difference mode (D) ignores this on purpose: dimming the tile there would weaken the bright doubling that IS the misalignment signal."></span></h3>
+      <div class="panel-body">
+        <div class="inline">
+          <input type="range" id="float-alpha" min="15" max="100" step="5" value="100" style="flex:1">
+          <span class="mono" id="float-alpha-v" style="min-width:42px;text-align:right">100%</span>
+        </div>
+      </div>
+    </section>
+
     <section class="panel">
       <h3>Tone <span class="spacer"></span>
         <span class="help" data-help="Display brightness only — it never touches the matcher.&#10;&#10;One GLOBAL window across every frame. A per-tile stretch would make overlapping tiles disagree in brightness and destroy the Difference check (D), which is how you see a misalignment."></span></h3>
@@ -170,9 +184,11 @@
       <h3>Keys</h3>
       <div class="panel-body">
         <div class="keys">
-          <kbd class="kbd">A</kbd><span>anchor</span>
+          <kbd class="kbd">A</kbd><span>anchor / un-anchor</span>
           <kbd class="kbd">E</kbd><span>exclude</span>
           <kbd class="kbd wide">Space</kbd><span>next</span>
+          <kbd class="kbd">1</kbd><span>best computed position</span>
+          <kbd class="kbd">2</kbd><span>2nd best … up to <kbd class="kbd">9</kbd></span>
           <kbd class="kbd">R</kbd><span>replay the fade</span>
           <kbd class="kbd">D</kbd><span>difference</span>
           <kbd class="kbd">V</kbd><span>alternatives</span>
@@ -201,7 +217,7 @@
          and `Snap` are the least guessable controls in the app. He had to ASK. -->
     <div class="overlay bl" id="sweep-actions">
       <button class="btn primary" id="btn-anchor">Anchor <kbd class="kbd">A</kbd>
-        <span class="help" data-help="Accept this tile's position as TRUE. It joins the reference field, and every tile after it is matched against it.&#10;&#10;This is the only thing that ever certifies a position. Nothing is anchored without you pressing A — because one bad early anchor poisons every tile judged against it."></span>
+        <span class="help" data-help="Accept this tile's position as TRUE. It joins the reference field, and every tile after it is matched against it. It is also the only thing DRAWN on the canvas — the mosaic you see is the mosaic you have certified.&#10;&#10;This is the only thing that ever certifies a position. Nothing is anchored without you pressing A — because one bad early anchor poisons every tile judged against it.&#10;&#10;A IS A TOGGLE: press it on a tile that is already anchored and it is UN-anchored. It keeps its position; it just stops being a reference. Any tile you judged against it is then flagged stale."></span>
       </button>
       <button class="btn danger"  id="btn-exclude">Exclude <kbd class="kbd">E</kbd>
         <span class="help" data-help="Throw this frame out of the mosaic. Not drawn, not matched, not exported.&#10;&#10;This is how you remove a blurry frame — blur is never auto-detected, because no measure reproduces the call (the textbook metric scores worse than chance). It is your eye, here.&#10;&#10;Excluding opens an acquisition gap. Excluding an ANCHOR removes its pixels from the composite, so every tile judged against it is flagged stale."></span>

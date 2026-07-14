@@ -87,6 +87,287 @@ The front end delivers what he asked for ("constantly update the time remaining"
 
 ---
 
+## ✅ 9 · 9b · 10 · 11 · 12 · 13 SHIPPED — 2026-07-14 (his third "update app")
+
+**Driven in a real browser against the real backend.** `test_mosaic_312.py` re-run (`server.py`
+changed): **PASSES** (`1 passed in 200.01s`).
+
+| what | result |
+|---|---|
+| **9** · canvas starts EMPTY | 0 anchored → **nothing drawn** but the one floating tile. **No yellow cage.** |
+| **9** · the field grows | `A` → tile bakes into the anchor layer; `Space` → next tile fades in **on top of it**. 10 anchors → `anchorLayerDrawn: 10`. |
+| **10** · anchors blend | the certified field renders as a **continuous strip** — no hard rectangular seams. The floating tile stays **crisp**. |
+| **11** · `A` un-anchors | 16: `anchor` → `unverified`, **position kept** (1, 733). 10 → 9 anchored. Banner: *"Un-anchored 16. It keeps its position. **5 tiles flagged stale** — they were matched against a field that contained it."* |
+| **12** · `1`–`9` | pressed `2` with **no prior `V`** → matched first, moved trial 19 (1,1210) → (−268,432) = the 2nd peak. `1` restored it. `9` reached the 9th. Rail renumbered **`1`–`9`**; record reads *"alternative 2 … (rank 1)"*. |
+| **13** · opacity | tile-centre brightness **59.4 → 33.4 → 27.9** at 100/30/15 %, and back. **Difference mode ignores it: 42.5 at both 15 % and 100 %.** |
+
+**🔴 TWO REAL BUGS FOUND WHILE DRIVING — and the second would have shipped:**
+1. **`viewerOk` was set BEFORE the setup that can throw.** So when any line after `mount()` failed, the
+   catch fired but the app was already flagged "viewer fine": `setTiles` never ran, `mountViewer` never
+   retried (it early-returns on `viewerOk`), and the sweep sat on a **blank canvas** while the document
+   held 337 placed tiles. Now set **last**.
+2. ⭐ **THE SCRIPTS WERE NEVER CACHE-BUSTED — AN UPDATE COULD SHIP A HALF-OLD APP.** `index.html` is
+   `no-store`, but `<script src="/viewer.js">` carried **no version**, and the JS is served by
+   `StaticFiles`. So a **new `index.html` can load an OLD `viewer.js`.** Hit exactly that: the fresh
+   `sweep.js` called `Viewer.setShowUnverified()`, the cached `viewer.js` had never heard of it, and the
+   mount died — *"Viewer.setShowUnverified is not a function"* — a dead sweep from a pure cache artefact.
+   **WebView2 caches too. This would have hit him on the next update.** `server.py` now stamps each
+   asset with its own **mtime** (`?v=…`), so the URL changes exactly when the file does.
+
+⚠️ **NOT reproducible on this dataset: his "or until 5 if only 1-5 are available" case.** Every tile
+here returns the full **9** candidates, so the out-of-range branch never fired in anger. Keys 1, 2 and 9
+each resolved correctly; the guard is a `find()` miss that toasts and returns.
+
+⚠️ **The blend is honest about GEOMETRY, not PHOTOMETRY** — as designed. Alpha compounds where tiles
+pile up (mean depth 10.89), so there is faint banding between tile bands and a soft dark rim where a
+tile has nothing under it. **Judge alignment in the sweep; judge tone on the Mosaic step.**
+
+---
+
+## Shipped (detail, third pass)
+
+### [x] 9. ⭐ THE SWEEP DRAWS ONLY WHAT HE HAS CERTIFIED. The canvas starts EMPTY.
+**His ruling, 2026-07-14:** *"the yellow boxes make it really hard to see anything… when i begin
+placing tiles i want none of the tiles placed and only tiles that i anchor get placed so it should
+start with 0 tiles placed then i add tile 11 and anchor it, then i move onto 12 and if its good i
+anchor it."*
+
+**🔴 THIS IS NOT A DECLUTTER. THE DISPLAY IS LYING ABOUT WHAT THE SWEEP IS DOING.**
+
+The matcher matches against **anchors only** — `matchAnchor` sends `anchors: anchored()`
+(`sweep.js:636`), and with nothing anchored it returns
+`refused: {reason: 'no_anchors', message: 'No anchors yet. Press A on this tile to make it the origin.'}`.
+His header read **`0 anchored · 338 unverified`**. So the reference field was **EMPTY** while the
+canvas showed him **338 tiles**. The picture and the algorithm were telling him different stories, and
+the picture was the confident one.
+
+The app's whole claim — *"each tile fades in on top of the field you have already certified, and
+watching it materialise is how you see whether it lines up"* — is **impossible to see** when 338
+unjudged tiles are already painted underneath.
+
+**AND THE TWO COMPLAINTS ARE ONE COMPLAINT.** The yellow dashed boxes **ARE** the unverified tiles —
+`drawChrome` outlines *only* `unverified` ones (`viewer.js:608`). Draw only what he certified and the
+cage disappears on its own. `viewer.js:591` already confesses the problem: *"right after a build there
+are 312 unverified tiles, and at fit zoom 312 dashed boxes is a cage of noise that hides the very
+mosaic you are checking."*
+
+**⭐ THE APP ALREADY BELIEVES HIS RULE — IN DIFFERENCE MODE.** `viewer.js:539`: *"the destination MUST
+be the ANCHOR FIELD ALONE… an `unverified` tile is by definition not one, and blending it in at 55 %
+would muddy the very pixels the user is judging… if nothing around the cursor is anchored yet, the tile
+differences against black and simply looks like itself. That is the honest answer — you have nothing
+certified to check it against."* **That is his ruling, already written down.** The normal view simply
+does not follow it.
+
+**THE MODEL (his words, made exact):**
+```
+canvas = [ the anchors he has certified ]  +  [ the ONE tile under judgement ]
+
+  start      : EMPTY. 0 tiles drawn.
+  trial 11   : fades in over nothing. A  -> field = {11}
+  trial 12   : fades in ON TOP OF {11}.  A  -> field = {11,12}
+  trial 13   : Space (unsure)            -> 13 is NOT drawn. It keeps its machine position.
+  trial 14   : fades in on top of {11,12}
+```
+
+**THE FIX IS SMALL, BECAUSE THE ARCHITECTURE ALREADY SUPPORTS IT.** The tile under judgement is a
+**FLOATING** tile, deliberately kept OUT of both baked layers (`viewer.js:39`) so it can fade, be
+dragged and be differenced. So "anchors + cursor only" is *literally*: **do not draw `L_unver`.**
+* `viewer.js:544` — `if (!diff) drawLayer(L_unver, STYLE.unverified.alpha);` → gate on a new
+  `showUnverified` flag. Expose `Viewer.setShowUnverified(on)` beside the existing
+  `Viewer.setOutlines(on)` (`viewer.js:1189`, already there and already unwired).
+* `sweep.js` — set it **false** for the sweep. **Default OFF. No toggle unless he asks.**
+* The dashed outlines need **no change** — they only ever drew on `unverified` tiles, so they go.
+* ⚠️ **The fade must keep working.** The cursor is a float, not a layer member, so it is untouched —
+  but *drive it and confirm*, because the fade is the heart of the app.
+* ⚠️ **`bakeBackground` / the incremental add-remove path must not break.** `L_unver` still exists and
+  is still maintained (a tile can become anchored later); it is only **not drawn**.
+
+**[x] 9b. Space still records the machine's position.** *His ruling, same breath (asked and confirmed).*
+Deferring keeps the solver's answer and the tile stays `unverified` — it is simply **not in the
+reference field and not drawn**. This preserves his 2026-07-12 ruling (*"Space ALWAYS places it"*) and
+means nothing is lost if he never returns: the Mosaic step's **`include unverified`** checkbox can still
+put those tiles in the final image. Deferring must never destroy tissue.
+
+### [x] 10. ⭐ THE ANCHORS BLEND INTO EACH OTHER. The field he builds should LOOK like the mosaic.
+**His ruling, 2026-07-14:** *"as i confirm anchor i want anchors to blend together."*
+Follows straight from [#9](#9): once the canvas shows **only** what he has certified, that canvas
+**is** his mosaic-in-progress — so it should look like one, not like a stack of pasted rectangles.
+
+**Today it is a hard paste-over.** `addToLayer` (`viewer.js:208-210`):
+```js
+L.g.globalAlpha = 1;
+L.g.globalCompositeOperation = 'source-over';
+L.g.drawImage(bmp, t.x - L.ox, t.y - L.oy, TILE, TILE);
+```
+Each anchored tile paints **opaquely** over whatever was under it. **Last tile wins; every seam is a
+visible rectangle.** Meanwhile the EXPORT has feathered all along (`analysis/mosaic/render.py`: *"each
+tile weighted by a separable triangular feather (peaks at its centre), so overlaps cross-fade
+smoothly"*). **The mosaic he ships is seamless; the one he is building is not.**
+
+**THE FIX — pre-feather each tile's ALPHA once, keep the bake a single `drawImage`.**
+Bake a triangular/cosine alpha ramp into the tile's `ImageBitmap` at load (offscreen canvas +
+`globalCompositeOperation = 'destination-in'` with a gradient), then `addToLayer` draws it exactly as
+it does now. Cost is **one-time per tile**, not per frame.
+
+🔴 **DO NOT ACCUMULATE A WEIGHT BUFFER PER FRAME.** The whole two-layer architecture exists to hold the
+1-second fade at 60 fps — `viewer.js:24` records the naive path at **89.5 ms/frame = 10 fps**, *"the
+1-second fade would be a SLIDESHOW."* A true normalised weighted mean (`Σ w·I / Σ w`) needs a second
+accumulation buffer and a per-frame divide, and it **will** break that budget. The frame must stay
+`fill + drawImage(L_anchor) + one floating tile + chrome`.
+
+⚠️ **CAVEAT, AND IT CHANGES WHAT HE SHOULD TRUST.** Pre-multiplied alpha edges under `source-over` are
+**not** the export's normalised feather: where many tiles overlap, alpha compounds and brightness will
+drift slightly from the final render. **The live view becomes a faithful guide to GEOMETRY, but not to
+photometry.** Say so, and do not let him judge tone or exposure from it — the Mosaic step is the truth.
+(260620d has **mean depth 10.89, max 31** overlapping tiles, so this is not hypothetical.)
+
+⚠️ **DO NOT FEATHER THE TILE UNDER JUDGEMENT.** It floats above both layers at full opacity, sharp, and
+it must stay that way: softening the very tile he is inspecting would blur the misalignment he is
+looking for. **Feather the CERTIFIED FIELD; leave the candidate crisp.** The point of the change is
+that he judges *tissue continuity* against a seamless field, instead of hunting a tile edge in a grid
+of rectangles.
+
+⚠️ `bakeBackground` and the incremental **remove** path (`viewer.js:232-239`, a clip-and-redraw local
+repair) both re-`drawImage` from the same bitmaps — so they inherit the feather for free. Verify undo
+and un-anchor still repair cleanly, with no bright halo at the repaired rect.
+
+### [x] 11. `A` ON AN ALREADY-ANCHORED TILE UN-ANCHORS IT. (A toggle.)
+**His ruling, 2026-07-14:** *"if i click a on a snapshot that is already anchored i want it to unanchor
+it."*
+
+**Today it is a silent no-op.** `A` on an anchored tile falls into `sweep.js:923-927` and re-runs
+`setState(t, 'anchored', tile.x, tile.y)` — same state, same position. It re-stamps `judged_at`, clears
+`stale`, and bumps `seq`. Nothing visible happens. There is currently **NO way to take an anchor back**
+except `Ctrl+Z`, which only works if it was the last thing he did.
+
+**The model.** `A` toggles CERTIFICATION, not position:
+```
+unverified --A--> anchored     certify it, at the position it is at
+anchored   --A--> unverified   un-certify it. IT KEEPS ITS POSITION.
+```
+It becomes **`unverified`**, NOT `unplaced` — un-certifying must never throw away a position. (With
+[#9](#9) shipped this is also good feedback: the tile **vanishes from the canvas**, because the canvas
+draws only the certified field.)
+
+**🔴 THREE CONSEQUENCES. THE FIRST TWO ARE TRAPS.**
+
+**1. UN-ANCHORING MUST MARK DOWNSTREAM TILES STALE — same rule as excluding an anchor.** Every tile
+judged *after* this one was matched against a composite that **contained** it. Pulling it out of the
+anchor field is exactly the change `exclude()` already guards (`sweep.js:969` →
+`markStaleAfter(oldSeq, t, false)`) and that `move()` on an anchor already guards. Un-anchor is the
+same class of change and must do the same, or he keeps positions derived from a reference field he has
+just withdrawn.
+*Self-limiting in the common case:* un-anchoring the tile he **just** anchored has the highest `seq`, so
+`markStaleAfter` flags **nothing**. The cascade only fires when he reaches back to an EARLY anchor —
+which is precisely when he needs to be told.
+
+**2. ⚠️ THE ORIGIN TRAP — DO NOT LET HIM STRAND HIMSELF.** If he un-anchors his way down to **zero
+anchors** in a hand-placed session, `A` on a tile with **no position** dead-ends:
+`anchor()` takes the `!anyPlaced()` branch **only if nothing is placed at all** — but the un-anchored
+tile still holds its position, so `anyPlaced()` is `true`, the code falls through to `foregroundMatch`,
+gets `refused: no_anchors`, and lands on *"no match, no solver answer. Drag it into place, then A."*
+**There is then no way to re-establish an origin.** Fix: when the anchor set is empty, `A` on a
+positionless tile must be able to **re-origin** (the `!anyPlaced()` branch's behaviour), or the toggle
+must refuse to remove the last anchor and say why. **Drive this case; it is not hypothetical once `A` is
+a toggle.**
+
+**3. `doc.origin_trial` STAYS.** Un-anchoring the origin does **not** move anything — every tile already
+carries world coordinates, and (0,0) was only ever a *frame*, not a claim about that tile. `origin_trial`
+is the historical record of which tile defined the frame. **Un-anchoring changes CERTIFICATION, not
+COORDINATES.** Do not clear it, do not re-base the field, do not shift a single tile.
+
+**Also:** the tile must move `L_anchor` → `L_unver` in the viewer. That is the existing incremental
+**remove** path (`viewer.js:232-239`, clip-and-redraw local repair) — verify it repairs cleanly with no
+halo, especially once [#10](#10)'s feathered edges are in play.
+
+### [x] 12. `1`–`9` JUMP THE TILE TO THE Nth-BEST COMPUTED POSITION.
+**His ruling, 2026-07-14:** *"when i click any of the numbers 1-9 itll place the snapshot at the best
+position. clicking 1 places the snapshot at its best computer position, pressing 2 places the snapshot
+at its 2nd best computed position and so on until 9… or until 5 if only 1-5 are available but if 1-9
+are available do 1-9."*
+
+**The machinery is already there.** `pickAlternative(t, c)` (`sweep.js:1826`) already moves the tile to
+a candidate, stamps `alt_rank`, re-points the evidence rail, keeps `margin` honest (deliberately still
+best-minus-second, so the near-tie that caused the correction stays visible), and fades it in. This is a
+**key binding onto an existing function** — `V` already shows these very candidates as ghosts and a
+click already picks one. `1`–`9` is the keyboard path to the same thing.
+
+**Live keys = candidates actually returned, and no more.** The matcher returns a *ranked list of
+distinct peaks* (>24 px apart), and how many exist varies per tile. If a tile has 5, then `1`–`5` work
+and `6`–`9` do nothing (a quiet toast, not a beep). Exactly as he said.
+
+**🔴 THE OFF-BY-ONE, AND IT MUST BE FIXED IN THE SAME PASS.** `rank` is **0-indexed** internally —
+`c.rank === 0` is the best peak — and **the Alternatives rail literally prints `#0`, `#1`, `#2`**
+(`renderAlts`, `sweep.js:1857`). He wants to press **`1`** for the best. So the number he READS and the
+number he PRESSES would differ by one, on the exact screen where he is choosing between near-tied
+aliases. That is a recipe for taking the wrong peak.
+* **The rail must renumber to `#1`–`#9`** (display = `rank + 1`). The KEY and the LABEL must agree.
+* **Storage stays 0-indexed.** `alt_rank` is in the QC report and the exported record; do not churn the
+  format. Instead make the human-readable `source` string unambiguous — say
+  `"moved by hand to alternative 2 of 7 (rank 1)"`, carrying both. A reader must never have to guess
+  which convention a number is in.
+
+**Other notes:**
+* `MAX_CANDIDATES = 8` (`sweep.js:208`) → **9**, or key `9` can never fire. The server already clamps to
+  `min(16, …)` (`server.py:693`), so 9 needs no backend change.
+* `0` is **taken** — it is the viewer's 1:1 zoom. His `1`–`9` scheme avoids it. Do not add `0`.
+* `onKeyDown` already returns early inside `INPUT|TEXTAREA|SELECT` (`sweep.js:1579`), so the tone and
+  range fields will not swallow the digits. Nothing to do.
+* **If no candidates are loaded yet, MATCH FIRST, then jump** — same as `V` does (`sweep.js:1389`:
+  `if (!res || !res.candidates) res = await foregroundMatch(...)`). ~1 s. Do not make him press `V`
+  first.
+* ⚠️ **Read the candidates from `evidence[K(t)]`, not from the single global `lastCandidates`**
+  (`sweep.js:1254`). `lastCandidates` is one slot for the whole app; keyed-by-tile is the correct source
+  and it already exists.
+* A jump is a **human move**: `pickAlternative` routes through `move()`, which pushes the undo entry and
+  flags the placement `human`. `Ctrl+Z` therefore works for free. It does **not** anchor — he still
+  presses `A`.
+
+### [x] 13. AN OPACITY SLIDER FOR THE TILE UNDER JUDGEMENT.
+**His ruling, 2026-07-14:** *"when im hand placing a snapshot its a bit hard to see if it lines up so
+add an opacity slider."*
+
+**He is right, and the code says so out loud.** `viewer.js:554`:
+```js
+let a = 1;                       // the tile under judgement is always full strength
+```
+Once the 1-second fade ends, the floating tile is drawn at **alpha 1.0** — it **completely hides the
+field beneath it**. So while he is dragging a tile into place he is positioning an **opaque rectangle
+over the very thing he is trying to line it up with.** The fade shows him the moment of arrival; after
+that, nothing.
+
+**The fix.** A slider on the sweep's LEFT rail, next to **TONE** (both are display controls; neither
+touches the data). Range ~**15 %–100 %**, default **100 %** (today's behaviour, unchanged unless he
+moves it).
+
+**Where it applies — ONLY the floating tile.** `viewer.js:548-570`, the `floats()` loop. Not the anchor
+field, not the chrome.
+
+**⚠️ IT MUST NOT FIGHT THE FADE — the fade is the heart of the app.** The fade ramps `0 → 1` over
+`FADE_MS`. With a user opacity it must ramp **`0 → userAlpha`**:
+```js
+let a = userAlpha;
+if (isFading) a = fa * userAlpha;
+```
+At `userAlpha = 1` this is **bit-identical to today**. Do not shorten or skip the fade to make room for
+this (`FADE_MS = 1000`, `viewer.js:73`: *"Do not shorten it 'to feel snappier'."*).
+
+**⚠️ DIFFERENCE MODE (`D`) MUST IGNORE IT.** In diff mode the composite op is `'difference'`; scaling
+the tile's alpha would drag the result toward the background and **weaken the very doubling that is the
+signal** (measured: aligned → blobs and the electrode grid cancel; 40 px off → every blob grows a
+bright/dark echo). Force `a = 1` when `diff` is on. `D` is the rigorous check; the slider is the
+intuitive one. They are complementary — **do not let one degrade the other.**
+
+**⚠️ IT MUST SURVIVE `Space`.** It is a *session* display preference, not a fact about a tile — so it
+must NOT reset on every advance, or it is useless. Equally: **do NOT write it into the project file.**
+The `.camea.json` records the mosaic, not the operator's viewing preferences. (Tone IS in the doc
+because it is global and reproducible; an opacity he nudges per tile is not.)
+
+**Nice-to-have, only if free:** `[` / `]` to step it. ⚠️ `+`/`-` are the viewer's **zoom** and `0` is
+1:1 — do not take those.
+
+---
+
 ## Shipped (detail, second pass)
 
 ### [x] 6. The Screen step's two tickboxes should be ONE control with three buttons

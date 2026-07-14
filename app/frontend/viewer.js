@@ -121,6 +121,33 @@ window.Viewer = (function () {
   let showGrid = false, showLabels = false, showOutlines = true;
   let mounted = false;
 
+  /* ⭐⭐ THE CANVAS SHOWS ONLY WHAT HE HAS CERTIFIED (his ruling, 2026-07-14):
+   *   "i want none of the tiles placed and only tiles that i anchor get placed so it should start
+   *    with 0 tiles placed then i add tile 11 and anchor it, then i move onto 12…"
+   *
+   * 🔴 THIS IS NOT A DECLUTTER — THE DISPLAY WAS LYING ABOUT WHAT THE SWEEP DOES. The matcher matches
+   * against ANCHORS ONLY (`sweep.js`: `anchors: anchored()`), so with nothing anchored the reference
+   * field is EMPTY — yet the canvas painted all 338 machine-placed tiles. The picture and the
+   * algorithm told him different stories, and the picture was the confident one.
+   *
+   * Difference mode ALREADY did the right thing (see `draw()`: "the destination MUST be the ANCHOR
+   * FIELD ALONE"). This makes the NORMAL view obey the same rule.
+   *
+   * The yellow dashed cage dies with it: `drawChrome` outlines ONLY `unverified` tiles, so hiding
+   * them takes the outlines too. (This file already confessed the problem: "at fit zoom 312 dashed
+   * boxes is a cage of noise that hides the very mosaic you are checking.")
+   *
+   * ⚠️ `L_unver` is still MAINTAINED — a tile can be anchored later, and un-anchoring puts one back.
+   * It is only NOT DRAWN. */
+  let showUnverified = true;
+
+  /* ⭐ OPACITY OF THE TILE UNDER JUDGEMENT (his ruling, 2026-07-14): "when im hand placing a snapshot
+   * its a bit hard to see if it lines up so add an opacity slider."
+   *
+   * It was hard because the floating tile is drawn at alpha 1.0 — an OPAQUE rectangle over the very
+   * field he is trying to line it up against. 1.0 = today's behaviour, exactly. */
+  let floatAlpha = 1;
+
   // ---------------------------------------------------------------------------------------
   // theme tokens — the canvas is painted imperatively so it cannot inherit a CSS theme flip
   // ---------------------------------------------------------------------------------------
@@ -169,6 +196,80 @@ window.Viewer = (function () {
 
   const layerFor = (state) => (state === 'anchored' ? L_anchor : state === 'unverified' ? L_unver : null);
 
+  /* =========================================================================================
+   *  ⭐⭐ THE ANCHORS BLEND INTO EACH OTHER (his ruling, 2026-07-14):
+   *      "as i confirm anchor i want anchors to blend together."
+   *
+   *  Every tile used to be pasted into its layer OPAQUELY (`globalAlpha = 1`, `source-over`), so the
+   *  last tile won outright and every seam was a visible rectangle. Meanwhile the EXPORT has feathered
+   *  all along (`analysis/mosaic/render.py`: a separable triangular weight peaking at each tile's
+   *  centre). The mosaic he SHIPPED was seamless; the one he was BUILDING was not.
+   *
+   *  So: ramp each tile's ALPHA to zero over its outer `FEATHER_PX`, and let `source-over` cross-fade
+   *  the overlaps. The ramp is baked into a REUSED scratch canvas, so a layer bake is still exactly
+   *  ONE `drawImage` per tile and the render loop is untouched.
+   *
+   *  🔴 NO PER-FRAME WEIGHT BUFFER. A true normalised mean (Σw·I / Σw) needs a second accumulation
+   *  buffer and a per-frame divide. This file exists because the naive path measured 89.5 ms/frame —
+   *  "the 1-second fade would be a SLIDESHOW". The frame stays: fill + 1 drawImage per layer + the
+   *  floating tile + chrome.
+   *
+   *  ⚠️ SO THIS IS HONEST ABOUT GEOMETRY, NOT PHOTOMETRY. Alpha compounds where tiles pile up (260620d
+   *  averages 10.89 deep, max 31), so brightness drifts slightly from the final render, and a tile with
+   *  NOTHING under it keeps a soft dark rim (only 4.8 % of the canvas is depth-1). Judge ALIGNMENT
+   *  here; judge TONE on the Mosaic step. The rim is also why the ramp is narrow: 40 px of 512.
+   *
+   *  ⚠️ THE FLOATING TILE IS NEVER FEATHERED. It draws straight from `bitmaps`, crisp — softening the
+   *  very tile he is inspecting would blur the misalignment he is looking for. Layers feather; floats
+   *  do not. That is the whole rule.
+   * ========================================================================================= */
+  const FEATHER_PX = 40;
+
+  /** The alpha ramp, built once: opaque core, cosine falloff over the outer FEATHER_PX. Separable —
+   *  a horizontal ramp times a vertical one — which is the same shape `render.py` uses. */
+  const featherMask = (() => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = TILE;
+    const g = cv.getContext('2d');
+    const ramp = new Float32Array(TILE);
+    for (let i = 0; i < TILE; i++) {
+      const d = Math.min(i, TILE - 1 - i);                 // distance to the nearest edge
+      ramp[i] = d >= FEATHER_PX ? 1 : 0.5 - 0.5 * Math.cos((d / FEATHER_PX) * Math.PI);
+    }
+    const img = g.createImageData(TILE, TILE);
+    const px = img.data;
+    for (let y = 0; y < TILE; y++) {
+      const ry = ramp[y];
+      for (let x = 0; x < TILE; x++) {
+        const o = (y * TILE + x) * 4;
+        px[o] = px[o + 1] = px[o + 2] = 255;
+        px[o + 3] = Math.round(255 * ramp[x] * ry);
+      }
+    }
+    g.putImageData(img, 0, 0);
+    return cv;
+  })();
+
+  /** ONE scratch canvas, reused. Returns the tile's pixels with the feather ramp multiplied into
+   *  their alpha. Valid only until the next call — draw it immediately. */
+  const _stamp = (() => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = TILE;
+    return { cv, g: cv.getContext('2d') };
+  })();
+
+  function feathered(bmp) {
+    const g = _stamp.g;
+    g.globalCompositeOperation = 'source-over';
+    g.globalAlpha = 1;
+    g.clearRect(0, 0, TILE, TILE);
+    g.drawImage(bmp, 0, 0, TILE, TILE);
+    g.globalCompositeOperation = 'destination-in';       // keep the tile only where the mask is opaque
+    g.drawImage(featherMask, 0, 0);
+    g.globalCompositeOperation = 'source-over';
+    return _stamp.cv;
+  }
+
   /** A tile is FLOATING (kept out of every layer, drawn individually on top) when it is the
    *  cursor, the tile being dragged, or the tile currently fading in. */
   const isFloat = (t) => t === cursor || t === dragTrial || (fade !== null && fade.trial === t);
@@ -207,7 +308,9 @@ window.Viewer = (function () {
     if (!layerGrow(L, t.x, t.y)) return;
     L.g.globalAlpha = 1;
     L.g.globalCompositeOperation = 'source-over';
-    L.g.drawImage(bmp, t.x - L.ox, t.y - L.oy, TILE, TILE);
+    // ⭐ FEATHERED (his ruling): the alpha ramp cross-fades the seam into whatever is already there.
+    //    Still exactly ONE drawImage into the layer.
+    L.g.drawImage(feathered(bmp), t.x - L.ox, t.y - L.oy, TILE, TILE);
     L.drawn.add(trial);
   }
 
@@ -236,7 +339,9 @@ window.Viewer = (function () {
       if (!isPlaced(ot)) continue;
       if (ot.x + TILE <= t.x || ot.x >= t.x + TILE || ot.y + TILE <= t.y || ot.y >= t.y + TILE) continue;
       const bmp = bitmaps.get(o);
-      if (bmp) g.drawImage(bmp, ot.x - L.ox, ot.y - L.oy, TILE, TILE);
+      // ⚠️ The repair MUST feather too, or the patched rect comes back with hard edges while the rest
+      //    of the field is blended — a visible bright seam exactly where a tile was just removed.
+      if (bmp) g.drawImage(feathered(bmp), ot.x - L.ox, ot.y - L.oy, TILE, TILE);
     }
     g.restore();
   }
@@ -541,7 +646,9 @@ window.Viewer = (function () {
     // layer is not drawn in Difference mode — which also means: if nothing around the cursor is
     // anchored yet, the tile differences against black and simply looks like itself. That is the
     // honest answer — you have nothing certified to check it against.
-    if (!diff) drawLayer(L_unver, STYLE.unverified.alpha);
+    // ⭐ …and with `showUnverified = false` (the sweep's default, his ruling) the NORMAL view now obeys
+    //    that same rule: the canvas is the certified field and nothing else. See the flag's note.
+    if (!diff && showUnverified) drawLayer(L_unver, STYLE.unverified.alpha);
 
     // ---- the floating tile(s): the cursor and/or the one fading in ----------------------
     const fa = fadeAlpha(ts);
@@ -551,8 +658,16 @@ window.Viewer = (function () {
       const bmp = bitmaps.get(trial);
       if (!bmp) continue;
       const isFading = fade && fade.trial === trial;
-      let a = 1;                                   // the tile under judgement is always full strength
-      if (isFading) a = fa;
+      /* ⭐ THE OPACITY SLIDER (his ruling). The fade ramps 0 -> floatAlpha, so at floatAlpha = 1 this is
+       * bit-identical to what shipped. It lets him SEE THROUGH the tile he is hand-placing, onto the
+       * field he is lining it up with.
+       *
+       * 🔴 DIFFERENCE MODE IGNORES IT. `D` composites with 'difference'; dimming the tile would drag
+       * the result toward the background and WEAKEN THE DOUBLING THAT IS THE SIGNAL (aligned: the
+       * blobs and the electrode grid cancel; 40 px off: every blob grows an echo). `D` is the rigorous
+       * check, the slider is the intuitive one — neither may degrade the other. */
+      let a = diff ? 1 : floatAlpha;
+      if (isFading) a *= fa;
       const [sx, sy] = worldToScreen(t.x, t.y);
       // ⭐ Difference mode: |tile - background| in the overlap. FREE — one composite op, +0.6 ms.
       // MEASURED on 312 real tiles (trial 91 against the full anchored field): aligned, the blobs
@@ -599,7 +714,11 @@ window.Viewer = (function () {
     // solver — was being drawn IDENTICALLY to a confidently-matched one. In the defer flow that is
     // almost every tile on the canvas sitting on a position the matcher never agreed with, and the
     // only way to find out was to put the cursor on it. Two Path2Ds, two strokes, same single pass.
-    const oAlpha = showOutlines ? Math.max(0, Math.min(1, (s - 64) / 160)) * 0.8 : 0;
+    // ⭐ THE YELLOW CAGE DIES WITH THE TILES. These outlines mark ONLY `unverified` tiles — so when
+    //    the unverified layer is not drawn, outlining it would leave dashed rectangles floating over
+    //    NOTHING: the cage, minus the mosaic. `showUnverified` gates both, or neither.
+    const oAlpha = (showOutlines && showUnverified)
+      ? Math.max(0, Math.min(1, (s - 64) / 160)) * 0.8 : 0;
     if (oAlpha > 0.02) {
       const p = new Path2D();
       const pd = new Path2D();            // the diverted ones
@@ -1187,6 +1306,16 @@ window.Viewer = (function () {
     setGrid: (on) => { showGrid = !!on; draw(); },
     setLabels: (on) => { showLabels = !!on; draw(); },
     setOutlines: (on) => { showOutlines = !!on; draw(); },
+
+    /** ⭐ Draw the unverified tiles at all? The SWEEP sets this FALSE (his ruling): the canvas shows
+     *  only the certified field plus the one tile under judgement. Takes the yellow outlines with it. */
+    setShowUnverified: (on) => { showUnverified = !!on; draw(); },
+
+    /** ⭐ Opacity of the TILE UNDER JUDGEMENT, 0..1. The fade ramps 0 -> this. `D` ignores it. */
+    setFloatAlpha: (a) => {
+      floatAlpha = Math.max(0, Math.min(1, +a));
+      draw();
+    },
     redraw: draw,
     get view() { return { scale: view.scale, tx: view.tx, ty: view.ty }; },
     TILE, HALF, FADE_MS, STYLE,
