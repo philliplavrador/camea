@@ -1,0 +1,45 @@
+.help {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  margin-left: 5px;
+  padding: 0;
+  vertical-align: 1px;
+  border: 1px solid var(--text-faint);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+.help::before {
+  content: '?';
+}
+.help:hover,
+.help:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+/* The bubble: body-level, fixed, so no overflow:auto ancestor can clip it (R3.4). */
+.tip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  max-width: 340px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap; /* \n in a measured `why` string is a real line break (R3.7) */
+}

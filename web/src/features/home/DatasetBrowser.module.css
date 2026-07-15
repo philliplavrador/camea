@@ -1,0 +1,298 @@
+.page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 24px 64px;
+}
+
+.header {
+  margin-bottom: 22px;
+}
+
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.title {
+  font-size: 20px;
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.filter {
+  margin-left: auto;
+  width: 180px;
+  padding: 5px 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--data);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.filter:focus-visible {
+  border-color: var(--border-focus);
+  outline: none;
+}
+.filter::placeholder {
+  color: var(--text-faint);
+}
+
+/* ── The toolbar: DATA ROOT + WORKSPACE ─────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  padding: 12px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.toolGroup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+/* Micro-cap label — the dim, tracked "ground" against which the mono value is the figure (brief §2). */
+.toolLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-dim);
+}
+
+.toolValue {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.toolEmpty {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.rootList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.rootChip {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--data);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px 8px;
+}
+
+.wsValue {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--data);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wsWarn {
+  color: var(--warn);
+  font-size: 11px;
+}
+.wsCount {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+/* ── The grid ───────────────────────────────────────────────────────────────── */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  text-decoration: none;
+  color: var(--text);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+.card:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+.card:focus-visible {
+  border-color: var(--border-focus);
+  outline: none;
+}
+
+.thumb {
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  object-fit: cover;
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--border);
+  display: block;
+}
+.thumbPlaceholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.body {
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.name {
+  font-size: 15px;
+  font-weight: 600;
+  word-break: break-word;
+}
+.experiment {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: -4px;
+}
+
+/* The facts strip — every number here is a measurement, monospaced and tabular. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--data);
+}
+.fact {
+  display: inline-flex;
+  gap: 5px;
+  align-items: baseline;
+}
+.factLabel {
+  color: var(--text-faint);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Existing analyses — "you already have work here". */
+.analyses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
+}
+.analysisChip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 2px 9px;
+  background: var(--bg-inset);
+}
+.analysisFeature {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--accent);
+}
+.analysisStats {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.warnings {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.warning {
+  font-size: 11.5px;
+  color: var(--warn);
+  line-height: 1.35;
+}
+
+/* ── states ─────────────────────────────────────────────────────────────────── */
+.state {
+  padding: 48px 8px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.stateError {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.empty {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--text-dim);
+}
+.emptyHint {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.emptyAction {
+  margin-top: 16px;
+}
+.skipped {
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}

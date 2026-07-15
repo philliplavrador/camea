@@ -1,0 +1,60 @@
+/* Range — gaps readout + the contact sheet. Common tokens only. */
+
+.gaps {
+  font-size: 15px;
+}
+
+.applyHelp {
+  display: inline-flex;
+  align-items: center;
+  padding-bottom: 8px;
+}
+
+.sheetWrap {
+  max-height: 460px;
+  overflow: auto;
+  padding: 8px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.sheet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+/* One cell = one region of the sprite sheet. Never scaled — the sheet is 1:1. */
+.cell {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background-repeat: no-repeat;
+  background-color: var(--bg);
+  image-rendering: pixelated;
+  cursor: pointer;
+  overflow: hidden;
+}
+.cell:hover {
+  border-color: var(--accent);
+}
+.cell:focus-visible {
+  border-color: var(--border-focus);
+  outline: none;
+}
+
+.cellT {
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  padding: 0 3px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--data);
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 2px;
+}

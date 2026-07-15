@@ -1,0 +1,18 @@
+/* The canvas IS the hero (docs/DESIGN_BRIEF §0). It fills its container and sits on the true-black
+ * stage; the engine paints it imperatively, so this file only sizes it and stops the browser's own
+ * touch/select gestures from fighting the viewer's pan/zoom and marquee. */
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* --canvas is the stage colour (true black in dark; a light grey on the bright bench). The engine
+     clears every frame, so this only shows for the split second before the first paint. */
+  background: var(--canvas, #000);
+  /* The viewer owns wheel + pointer gestures; the browser must not pan/zoom or select over it. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  /* No blue tap-flash on the instrument. */
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}

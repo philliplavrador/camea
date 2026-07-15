@@ -1,0 +1,11 @@
+/*
+ * The design system's single CSS entry: tokens + the base layer. Import this once to make the full
+ * Camea palette, type and motion contract available app-wide.
+ *
+ *   import '@/design/index.css';   // or a relative path
+ *
+ * Primitive component styles are CSS Modules colocated with each component and are pulled in by the
+ * component itself — they are not part of this global entry.
+ */
+@import './tokens.css';
+@import './base.css';

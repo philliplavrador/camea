@@ -1,0 +1,267 @@
+.cost {
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  color: var(--data);
+  margin: 6px 0 0;
+}
+
+.gpu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-body);
+  margin-top: 8px;
+}
+
+.noGpu {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.cacheRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.block {
+  margin-bottom: 12px;
+}
+
+/* ── progress ─────────────────────────────────────────────────────────── */
+.progress {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  margin-bottom: 18px;
+}
+
+.barWell {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.bar {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  /* R8.5 — the bar GLIDES; it does not step. */
+  transition: width var(--dur) var(--ease);
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.phase {
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  text-transform: lowercase;
+}
+
+.eta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout-lg);
+  font-weight: 600;
+  color: var(--data);
+  font-variant-numeric: tabular-nums;
+}
+
+.msg {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+.log {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: var(--bg-inset);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  max-height: 140px;
+  overflow: auto;
+}
+
+/* ── worklist ─────────────────────────────────────────────────────────── */
+.worklist {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  margin-bottom: 18px;
+}
+
+.summary {
+  display: flex;
+  gap: 18px;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.summary b {
+  color: var(--data);
+}
+
+.buildId {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+.wlList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.wlEmpty {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  padding: 6px 2px;
+}
+
+.wlItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  text-align: left;
+}
+
+.wlItem:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-card-hover);
+}
+
+.wlItem:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.wlTrial {
+  color: var(--data);
+  font-weight: 600;
+  min-width: 3.5em;
+}
+
+.wlNum {
+  color: var(--text-dim);
+}
+
+.wlThin {
+  color: var(--thin-margin);
+}
+
+.wlPass {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+}
+
+/* ── advanced ─────────────────────────────────────────────────────────── */
+.advanced {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  padding: 4px 12px;
+}
+
+.advSummary {
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 8px 0;
+}
+
+.advBody {
+  padding: 4px 0 12px;
+}
+
+.advNote {
+  margin: 0 0 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--unverified);
+}
+
+.knobs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.knob {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.knobLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
+.knobInput {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--data);
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  padding: 5px 8px;
+}
+
+.knobInput:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}

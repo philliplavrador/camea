@@ -1,0 +1,63 @@
+/* The toast stack — bottom-centre, above everything (z-toast). Fixed, so its tree position is moot. */
+.region {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none; /* the region never eats clicks; each toast re-enables its own */
+  max-width: min(560px, calc(100vw - 32px));
+}
+
+.toast {
+  pointer-events: auto;
+  display: block;
+  max-width: 100%;
+  text-align: left;
+  padding: 9px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  border-left-width: 3px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  box-shadow: var(--shadow-pop);
+  cursor: pointer;
+  animation: toast-in var(--dur) var(--ease);
+}
+
+.default {
+  border-left-color: var(--accent);
+}
+.good {
+  border-left-color: var(--good);
+}
+/* A danger toast is louder — the autosave-failed nudge (W4) rides in as one. */
+.danger {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}

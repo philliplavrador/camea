@@ -1,0 +1,16 @@
+06/20/26 15:46:58 New experiment: synthetic
+         15:47:05 Settings loaded: synth
+         15:47:10 Trial 001: E'phys. + VSD
+         15:47:20 Trial 002: E'phys. + VSD
+         15:47:35 Trial 005: Snapshot
+         15:47:45 Trial 009: Snapshot
+         15:48:00 Trial 011: Snapshot
+         15:48:02 Trial 012: Snapshot
+         15:48:04 Trial 013: Snapshot
+         15:48:06 Trial 014: Snapshot
+         15:48:08 Trial 015: Snapshot
+         15:48:10 Trial 016: Snapshot
+         15:48:50 Trial 017: Snapshot
+         15:48:52 Trial 018: Snapshot
+         15:48:54 Trial 019: Snapshot
+         15:48:56 Trial 020: Snapshot

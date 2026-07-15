@@ -1,0 +1,44 @@
+/*
+ * ⭐ PROSE. `display: block`, never flex. Flex made every inline child — including bare text nodes
+ * between <b> tags — its own flex item with a gutter, so a one-sentence banner rendered as disjoint
+ * columns (BEHAVIOUR R1). If one ever needs an icon, wrap the text in a span and make THAT the flex
+ * pair — do not put flex on this container.
+ */
+.warn {
+  display: block;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.warn b,
+.warn strong {
+  font-weight: 700;
+}
+
+/* LOUD — a thin margin (best − second < 0.10): the signature of a surviving grid alias (W2). */
+.loud {
+  border-left-color: var(--thin-margin);
+  background: color-mix(in srgb, var(--thin-margin) 14%, transparent);
+  font-weight: 600;
+  animation: pulse 1.1s var(--ease) 3;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--thin-margin) 14%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, var(--thin-margin) 30%, transparent);
+  }
+}
+
+.info {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}

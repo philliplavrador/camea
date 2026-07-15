@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<vsdscope>
+  <info type="snapshot" trial="018" date="260620" time="154700"/>
+  <ccd>
+    <camera frames="1" serpix="512" parpix="512" typebytes="2" type="uint16">
+      <transform ax="-1" ay="-1"/>
+    </camera>
+  </ccd>
+</vsdscope>

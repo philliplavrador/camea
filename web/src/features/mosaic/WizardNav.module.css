@@ -1,0 +1,92 @@
+/* The wizard step header. Visual language mirrors the design-system Stepper (tokens only), so the
+   feature header reads as part of the same instrument while carrying the specs' selector contract. */
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.item {
+  display: flex;
+}
+
+.step {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.step:hover {
+  background: var(--bg-card);
+  color: var(--text);
+}
+
+.n {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.done .n {
+  background: var(--anchored);
+  color: #06211a;
+}
+
+.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+}
+.on .n {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.on::before,
+.on::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid var(--accent);
+  pointer-events: none;
+}
+.on::before {
+  left: 3px;
+  border-left: 1.5px solid var(--accent);
+}
+.on::after {
+  right: 3px;
+  border-right: 1.5px solid var(--accent);
+}
+
+.locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.locked:hover {
+  background: transparent;
+  color: var(--text-dim);
+}

@@ -1,0 +1,189 @@
+/*
+ * Camea design tokens — THE instrument palette. See docs/DESIGN_BRIEF.md.
+ *
+ * Camea is a precision instrument for hand-verifying microscopy mosaics (a radiologist's reading
+ * room), not a dashboard. The chrome recedes; the tissue and the tiles are the only bright things.
+ * Every bright colour here is a MEASUREMENT the user acts on (a tile state), never a brand choice —
+ * the accent itself is spent only on focus / the active step / the cursor. Components reference
+ * these tokens; they never write a hex value.
+ *
+ * TWO BLACKS. The stage (--canvas) is TRUE black (#000): Difference mode clears to black (a ruling —
+ * BEHAVIOUR §3.5), and a true-black stage keeps the tissue the only lit thing and does not shift when
+ * he toggles D. The chrome (--bg-raised) is a distinguishable graphite-blue step above it.
+ *
+ * TYPE is an instrument readout: mono DATA is the bright figure, humanist-sans LABELS are the dim
+ * ground (§2 of the brief). tabular-nums everywhere a number can change.
+ *
+ * THEMING. Dark is the default working theme. The light theme answers `data-theme="light"` on the
+ * root (the viewer's toggle stamps it) OR the OS preference when no attribute is set. The [data-theme]
+ * blocks are written as bare attribute selectors (not only `:root[...]`) so a NESTED element can
+ * re-theme its subtree — the /design gallery shows both themes at once that way.
+ */
+
+/* ── DARK (default) ─────────────────────────────────────────────────────────────────────────── */
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* the two blacks */
+  --canvas: #000000; /* THE STAGE — true black. Read by the viewer via getComputedStyle. */
+  --canvas-diff: #000000; /* Difference-mode clear. Black in BOTH themes (ruling is theme-sensitive). */
+  --bg: #07090b; /* the void behind panels */
+  --bg-raised: #0e1319; /* top bar, rails — near-black chrome, faint graphite-blue cast */
+  --bg-card: #131a22; /* a card, a pane, a fact */
+  --bg-card-hover: #18212b;
+  --bg-inset: #05070a; /* wells: thumbnails, log tail, readouts (darker than chrome, not #000) */
+  --grid: #1a2029; /* the optional 512-px world grid */
+
+  /* hairlines */
+  --border: #1c2530;
+  --border-strong: #2b3742;
+  --border-focus: #4aa3ff;
+
+  /* ink */
+  --text: #e6edf3; /* primary label */
+  --text-dim: #94a1ad; /* secondary label */
+  --text-faint: #5a6672; /* units, hints, tile outlines, disabled ink */
+  --data: #d7e7f5; /* mono MEASUREMENT ink — brighter than the label; the number is the figure */
+
+  /* the accent — quiet on purpose: focus, the active step, the cursor, a link. Nothing decorative. */
+  --accent: #4aa3ff;
+  --accent-dim: #2c6bb0;
+  --accent-ink: #04121f; /* text on an accent fill */
+
+  /* the DATA palette — each hue is a tile state the user acts on (BEHAVIOUR §4, §5) */
+  --anchored: #5ad48a; /* certified by the human — the anchor field */
+  --unverified: #e0a53a; /* outstanding work — it should nag */
+  --thin-margin: #ff6b6b; /* best − second < 0.10 — a surviving grid alias. LOUD. */
+  --cursor: #4aa3ff; /* the tile under judgement (same blue as the accent, deliberately) */
+  --alt: #a78bfa; /* a ranked alternative candidate */
+  --diverted: #e879f9; /* on the SOLVER's position, not the matcher's */
+  --excluded: #6b7280; /* thrown out */
+
+  /* semantic aliases (the data hues, by intent — existing components use these names) */
+  --good: var(--anchored);
+  --warn: var(--unverified);
+  --danger: var(--thin-margin);
+
+  /* tile alphas — API.md §2. In the sweep the unverified layer is NOT drawn (R9); this is its alpha
+     if it ever is. */
+  --tile-anchored-alpha: 1;
+  --tile-unverified-alpha: 0.55;
+
+  /* type */
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, Roboto, Helvetica,
+    Arial, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', Menlo,
+    Consolas, monospace;
+  --fs-readout-lg: 19px; /* a headline stat number */
+  --fs-readout: 13px; /* inline data */
+  --fs-body: 14px;
+  --fs-label: 11px; /* uppercase micro-cap */
+  --fs-micro: 10px;
+  --tracking-label: 0.08em;
+
+  /* motion — the 1-second fade is the app's core CHECK, not decoration. Never shorten it. */
+  --fade-ms: 1000ms;
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* geometry */
+  --radius: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+  --step: 8px;
+  --topbar-h: 52px;
+  --statusbar-h: 28px;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 20px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 6px 24px rgba(0, 0, 0, 0.55);
+
+  /* z-index scale — the overlays (4) sit ABOVE the panes (3); a pane must hide them (R4.8). */
+  --z-pane: 3;
+  --z-overlay: 4;
+  --z-toast: 40;
+  --z-tooltip: 60;
+}
+
+/* ── LIGHT — "bright bench" ─────────────────────────────────────────────────────────────────── */
+[data-theme='light'] {
+  color-scheme: light;
+
+  --canvas: #dfe4ea; /* a light stage is easier under room light … */
+  --canvas-diff: #000000; /* … but Difference mode STILL clears to black (the canvas is luma 223). */
+  --bg: #e9edf1;
+  --bg-raised: #f5f7f9;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f4f7;
+  --bg-inset: #e4e9ee;
+  --grid: #c9d1d9;
+
+  --border: #d3dae1;
+  --border-strong: #b8c2cb;
+  --border-focus: #1f6fc4;
+
+  --text: #0f151b;
+  --text-dim: #47535e;
+  --text-faint: #75828d;
+  --data: #123049;
+
+  --accent: #1f6fc4;
+  --accent-dim: #4a90d9;
+  --accent-ink: #ffffff;
+
+  --anchored: #1f9d5f;
+  --unverified: #a9730a;
+  --thin-margin: #c0392b;
+  --cursor: #1f6fc4;
+  --alt: #7c5cd6;
+  --diverted: #b32fb8;
+  --excluded: #7b8794;
+
+  --good: var(--anchored);
+  --warn: var(--unverified);
+  --danger: var(--thin-margin);
+
+  --shadow-card: 0 1px 2px rgba(16, 22, 28, 0.08), 0 6px 18px rgba(16, 22, 28, 0.08);
+  --shadow-pop: 0 8px 26px rgba(16, 22, 28, 0.16);
+}
+
+/* Follow the OS when the root carries no explicit theme. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+
+    --canvas: #dfe4ea;
+    --canvas-diff: #000000;
+    --bg: #e9edf1;
+    --bg-raised: #f5f7f9;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f1f4f7;
+    --bg-inset: #e4e9ee;
+    --grid: #c9d1d9;
+
+    --border: #d3dae1;
+    --border-strong: #b8c2cb;
+    --border-focus: #1f6fc4;
+
+    --text: #0f151b;
+    --text-dim: #47535e;
+    --text-faint: #75828d;
+    --data: #123049;
+
+    --accent: #1f6fc4;
+    --accent-dim: #4a90d9;
+    --accent-ink: #ffffff;
+
+    --anchored: #1f9d5f;
+    --unverified: #a9730a;
+    --thin-margin: #c0392b;
+    --cursor: #1f6fc4;
+    --alt: #7c5cd6;
+    --diverted: #b32fb8;
+    --excluded: #7b8794;
+
+    --shadow-card: 0 1px 2px rgba(16, 22, 28, 0.08), 0 6px 18px rgba(16, 22, 28, 0.08);
+    --shadow-pop: 0 8px 26px rgba(16, 22, 28, 0.16);
+  }
+}

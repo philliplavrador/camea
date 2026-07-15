@@ -1,0 +1,14 @@
+# web/ — the frontend build tree
+node_modules/
+dist/
+*.local
+
+# test + tooling output
+playwright-report/
+test-results/
+.playwright-state/
+coverage/
+
+# editor / OS
+.DS_Store
+Thumbs.db

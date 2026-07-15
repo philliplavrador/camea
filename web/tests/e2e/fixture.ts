@@ -1,0 +1,64 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// FIXTURE FACTS — the committed synthetic dataset (tests/fixtures/synthetic/).
+//
+// These numbers are TEST FIXTURE knowledge, which HARD RULE 3 explicitly permits
+// ("Numbers in tests/fixtures are fine; in app code they are a violation"). They
+// describe the synthetic acquisition the backend serves under `tests/fixtures`,
+// NOT the user's real 260620d dataset — the app must never know anything about
+// either one.
+//
+// Source of truth: tests/fixtures/make_synthetic.py + tests/fixtures/synthetic/log.txt,
+// and docs/FRONTEND.md §"The committed synthetic fixture".
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const FIXTURE = {
+  /** The dataset name as it appears on the home card and in the URL slug (`synthetic-…`). */
+  name: 'synthetic',
+
+  /** Snapshot trials named in log.txt: 5, 9, 11..20 = 12 snapshots. (Smoke asserts 12.) */
+  snapshots: 12,
+
+  /** The mosaic RUN = the longest contiguous 512×512 block = trials 11..20 (10 tiles). */
+  runLo: 11,
+  runHi: 20,
+  runCount: 10,
+
+  /**
+   * The pass split, detected from the timestamps alone: a planted 40 s stage-return
+   * pause sits between 16 (15:48:10) and 17 (15:48:50), so the split is 16.
+   */
+  passSplit: 16,
+
+  /** A second, one-tile block outside the run — trial 5. (Present, not excluded, on a fresh open.) */
+  strayTrial: 5,
+
+  /** An off-shape frame (512×128) the mosaic shape-gate refuses BY SHAPE, not by number — trial 9. */
+  offShapeTrial: 9,
+
+  /** Every tile is 512 px square (BEHAVIOUR §7 TILE = 512). */
+  tile: 512,
+
+  /** On a fresh open the app excludes NOTHING (R2.1). This is the only "count" the app owns: zero. */
+  excludedOnFreshOpen: 0,
+} as const;
+
+/**
+ * DATASET-KNOWLEDGE POISON — phrases and numbers that belong to the user's real 260620d dataset and
+ * must NEVER appear as an app default (HARD RULE 3, BEHAVIOUR I1/R2/§6.1). These are asserted ABSENT.
+ *
+ * We test PHRASES, not bare digits: a bare "26" could legitimately be a coordinate or a millisecond
+ * reading, but "26 thrown out" / "312 usable of 338" / "EXCLUDED_TRIALS" / "260620d" can only be the
+ * app having smuggled the user's answer back in. (R7.5 warns that a loose scan gives false passes.)
+ */
+export const FORBIDDEN_KNOWLEDGE: RegExp[] = [
+  /260620/i, //                    the dataset id must never be recognised
+  /EXCLUDED_TRIALS/, //            the deleted project-file block (R2.4, §6.1)
+  /\bthrown out\b/i, //            "26 thrown out" (R2.2)
+  /\busable of\b/i, //             "312 usable of 338" (R2.2)
+  /312\s*\/\s*338/, //             the challenge ratio as a default
+  /26\s+(?:frames|tiles|snapshots)?\s*(?:thrown|excluded|removed)/i,
+  /hard[-\s]?coded ruling/i, //    the removed provenance source (§6.1)
+];
+
+/** A short wait for elements the test EXPECTS to be missing (keeps the red run snappy pre-UI). */
+export const SHORT = 4_000;

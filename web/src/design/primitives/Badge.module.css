@@ -1,0 +1,61 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.anchored {
+  color: var(--anchored);
+  background: color-mix(in srgb, var(--anchored) 14%, transparent);
+  border-color: color-mix(in srgb, var(--anchored) 34%, transparent);
+}
+.unverified {
+  color: var(--unverified);
+  background: color-mix(in srgb, var(--unverified) 14%, transparent);
+  border-color: color-mix(in srgb, var(--unverified) 34%, transparent);
+}
+.excluded {
+  color: var(--excluded);
+  background: color-mix(in srgb, var(--excluded) 16%, transparent);
+  border-color: color-mix(in srgb, var(--excluded) 34%, transparent);
+}
+.unplaced {
+  color: var(--text-faint);
+  background: color-mix(in srgb, var(--text-faint) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text-faint) 30%, transparent);
+}
+.blank {
+  color: var(--thin-margin);
+  background: color-mix(in srgb, var(--thin-margin) 14%, transparent);
+  border-color: color-mix(in srgb, var(--thin-margin) 36%, transparent);
+}
+.diverted {
+  color: var(--diverted);
+  background: color-mix(in srgb, var(--diverted) 14%, transparent);
+  border-color: color-mix(in srgb, var(--diverted) 40%, transparent);
+}
+.cursor {
+  color: var(--cursor);
+  background: color-mix(in srgb, var(--cursor) 14%, transparent);
+  border-color: color-mix(in srgb, var(--cursor) 34%, transparent);
+}
+.gpu {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+}

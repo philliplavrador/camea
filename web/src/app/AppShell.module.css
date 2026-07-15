@@ -1,0 +1,61 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--topbar-h);
+  flex: 0 0 var(--topbar-h);
+  padding: 0 16px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  text-decoration: none;
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  margin-left: -6px;
+}
+.brand:hover .tagline {
+  color: var(--text-dim);
+}
+
+.wordmark {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.22em;
+  padding-left: 0.22em; /* balance the tracking */
+}
+
+.tagline {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* A feature-agnostic action slot — the shell hosts Mosaic today, another feature tomorrow. */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}

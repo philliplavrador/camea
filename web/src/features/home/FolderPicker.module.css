@@ -1,0 +1,178 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-toast);
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.dialog {
+  width: min(560px, 100%);
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  outline: none;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.title {
+  flex: 1 1 auto;
+  font-size: 14px;
+  font-weight: 600;
+}
+.close {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+}
+.close:hover {
+  color: var(--text);
+  background: var(--bg-card-hover);
+}
+
+.pathbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+.up {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text-dim);
+  cursor: pointer;
+  line-height: 1;
+}
+.up:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.up:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--data);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* keep the tail (the folder name) visible when the path overflows */
+  text-align: left;
+}
+
+.list {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 6px;
+  min-height: 120px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  cursor: pointer;
+}
+.row:hover {
+  background: var(--bg-card-hover);
+}
+.folderIcon {
+  flex: 0 0 auto;
+  width: 14px;
+  color: var(--text-faint);
+  text-align: center;
+}
+.row[data-dataset='true'] .folderIcon {
+  color: var(--accent);
+}
+.rowName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.datasetTag {
+  flex: 0 0 auto;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+}
+.childCount {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.state {
+  padding: 24px 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+.error {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.footHint {
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.footActions {
+  display: flex;
+  gap: 8px;
+}

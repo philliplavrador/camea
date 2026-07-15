@@ -1,0 +1,162 @@
+.rail {
+  grid-area: right;
+  overflow: auto;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.panel {
+  border-bottom: 1px solid var(--border);
+}
+
+.refused {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--thin-margin);
+  background: color-mix(in srgb, var(--thin-margin) 12%, transparent);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-readout);
+}
+
+.evRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.evLabel {
+  font-family: var(--font-sans);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.evVal {
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  font-weight: 600;
+  color: var(--data);
+  font-variant-numeric: tabular-nums;
+}
+
+.meter {
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  overflow: hidden;
+  margin: 3px 0 8px;
+}
+
+.meterFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--anchored);
+  transition: width var(--dur-fast) var(--ease);
+}
+
+.evTook {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.machineNote {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* ── alternatives ─────────────────────────────────────────────────────── */
+.alts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.altItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--alt) 40%, var(--border));
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  cursor: pointer;
+  text-align: left;
+}
+
+.altItem:hover {
+  border-color: var(--alt);
+}
+
+.altRank {
+  color: var(--alt);
+  font-weight: 600;
+  min-width: 2.5em;
+}
+
+.altNcc {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── staleness ────────────────────────────────────────────────────────── */
+.staleLead {
+  margin: 0 0 8px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-readout);
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.staleLead strong {
+  color: var(--unverified);
+}
+
+.smallBtn {
+  padding: 3px 8px;
+  margin: 0 4px 4px 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.smallBtn:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.smallBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.staleList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}

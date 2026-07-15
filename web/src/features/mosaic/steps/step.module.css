@@ -1,0 +1,110 @@
+/* Shared chrome for the wizard's pane-steps (Load · Range · Screen). A pane covers the stage and reads
+   as one calm document; the canvas is the hero elsewhere, so these screens stay quiet.
+   Common design tokens only (see Fact.module.css). */
+
+.pane {
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 28px 24px 72px;
+}
+
+.head {
+  margin-bottom: 18px;
+}
+
+.h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.lede {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 13.5px;
+}
+
+.h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 22px 0 10px;
+}
+
+/* An inline row of fields + buttons. */
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.input {
+  padding: 7px 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--data);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.input:focus-visible {
+  border-color: var(--border-focus);
+  outline: none;
+}
+.input::placeholder {
+  color: var(--text-faint);
+}
+
+.num {
+  width: 96px;
+}
+
+.grow {
+  flex: 1 1 420px;
+}
+
+/* The bottom step navigation (back · spacer · forward). */
+.stepnav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.muted {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}

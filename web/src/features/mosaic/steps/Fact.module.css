@@ -1,0 +1,57 @@
+/* The numeric facts strip (Range · Screen). Common design tokens only, so it renders correctly under
+   whichever token file the shell has wired (styles/tokens.css or design/tokens.css). */
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 4px 0 18px;
+}
+
+.fact {
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+/* LABEL — the dim, tracked micro-cap ground (DESIGN_BRIEF §2). */
+.k {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+/* VALUE — the bright mono figure. tabular-nums so a changing digit never reflows. */
+.v {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--data);
+  word-break: break-word;
+}
+
+.v.warn {
+  color: var(--warn);
+}
+
+.sub {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
