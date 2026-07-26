@@ -1,7 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { Home, Sweep, Wizard, TID, byId, answerNextPrompt, ROUTES } from './pages';
+import { Home, Sweep, Wizard, TID, byId } from './pages';
 import { FIXTURE, SHORT } from './fixture';
 
 /**
@@ -85,9 +83,9 @@ test('§8 smoke: open → screen → sweep → esc → toggle → jump → opaci
   await sweep.setOpacity(15);
   expect(await sweep.floatAlpha()).toBeCloseTo(0.15, 2);
 
-  // 11 — Ctrl+S: the file has an integer cursor and NO EXCLUDED_TRIALS block (R2.4, R14).
+  // 11 — Ctrl+S forces the durable save (a PUT now — auto-save is the save). The saved doc has an
+  //      integer cursor and NO EXCLUDED_TRIALS block (R2.4, R14).
   const saved = captureSaveDoc(page);
-  answerNextPrompt(page, join(tmpdir(), `camea-smoke-${Date.now()}.camea.json`));
   await page.keyboard.press('Control+s');
   const doc = await saved;
   expect(typeof doc.cursor).toBe('number');
@@ -95,8 +93,9 @@ test('§8 smoke: open → screen → sweep → esc → toggle → jump → opaci
 });
 
 function captureSaveDoc(page: Page): Promise<{ cursor?: unknown; [k: string]: unknown }> {
+  // The durable save is `PUT /api/analyses/{id}/document` (auto-save's own path); its body is {doc}.
   return page
-    .waitForRequest((r) => r.url().includes(ROUTES.saveAs) && r.method() === 'POST', {
+    .waitForRequest((r) => r.url().includes('/document') && r.method() === 'PUT', {
       timeout: SHORT,
     })
     .then((r) => (r.postDataJSON() as { doc: { cursor?: unknown } }).doc);

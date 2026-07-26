@@ -79,6 +79,15 @@ itself shouldn't store the exclusions for this experiment."*
   exclusions, every placement, which tiles were anchored, the cursor, and the build. Verified cold:
   toast reads *"Resumed — 1 anchored, 1 excluded."* and the cursor lands back on the trial he was on.
   *(FIXES.md:42; sweep.js:3181-3241.)*
+- R2.7 ⭐ **The contact sheet frames — in red — every loaded snapshot that is NOT a tile of this
+  mosaic** (his ask, 2026-07-24), and the framing is **live against the `lo`/`hi` he is typing**, not
+  against the range he last applied. Two causes, told apart on hover: *outside the range* he set, or
+  *not a tile at all* (the frame is off-shape, or there is no readable single-frame snapshot on disk).
+  A framed cell is not a way into the sweep. **Red is not `excluded`** — a snapshot that was never part
+  of this mosaic does not enter `unusable_tiles`, does not count as a human edit, and `0 excluded`
+  stays `0` (R2.1/R2.2). The membership is **measured by the backend** from `log.txt` + the per-trial
+  XML shape (`POST /api/mosaic/run`); the browser holds no second opinion about it.
+  *(`web/tests/e2e/range-scope.spec.ts`; `web/src/features/mosaic/steps/Range/contact-sheet.test.tsx`.)*
 
 **What broke.** The app hard-coded *his* answer to the exact question it exists to help him answer.
 Opening his one dataset removed 26 frames before he had seen one, so the Screen step and `E` — the
@@ -140,10 +149,12 @@ build the mosaic."*
   Screen box" or "did he run the solver" — *not* ticking and *not* solving are both legitimate
   answers, and `Skip — place by hand` goes straight to a hand-placed sweep. A wizard that locks a step
   he is entitled to reach is worse than one that locks nothing. *(sweep.js:2152-2156.)*
-- R4.5 Opening a directory **navigates to Range**. It does not reveal a result block in place. There
-  is no `#load-result`. *(sweep.js:2403-2406, 3287.)*
-- R4.6 The numeric summary is a facts strip: **Trials · Range · Pass split · Gaps**. Numbers only;
-  every explanation behind its `?`. *(index.html:290-310.)*
+- R4.5 Opening a **project** (2026-07-24: was "a directory") **navigates to Range**. It does not reveal
+  a result block in place. There is no `#load-result`. *(sweep.js:2403-2406, 3287.)*
+- R4.6 The numeric summary is a facts strip: **Trials · Range · Gaps** (2026-07-24: the **Pass split**
+  fact + its override input are removed — the split is an internal build detail now; a pause is not a
+  pass, and the human + Recompute is the correction). Numbers only; every explanation behind its `?`.
+  *(index.html:290-310.)*
 - R4.7 The sweep is **not a pane** — it IS the stage (the canvas plus both rails). The other five
   screens are panes that cover the stage and hide the rails. *(sweep.js:2189-2215.)*
 - R4.8 When a pane is showing, the stage's **overlays** (banner, the A/E/Space cluster, the camera and
@@ -170,6 +181,16 @@ later."*
 **Why it matters more than it looks.** Since R2 the project file is the app's *only* memory. Burying
 it behind the last step meant the one artefact that makes a session resumable was the one thing he
 could not reach mid-session.
+
+> ⭐ **SUPERSEDED 2026-07-24 by the project-manager reframe.** Auto-save is now the *durable* save:
+> every change writes the analysis document (`PUT`) and clears dirty (see R29). So **there is no Save
+> button** — R5.1 is replaced by a quiet **"Saved / Saving… / Couldn't save"** indicator (`app/
+> SaveIndicator`) shown whenever a project is open. **R5.2** survives in spirit: `Ctrl+S` still works
+> from any screen, but it now *forces the durable save now* (a flush), not a save-as. **R5.3** ("Load a
+> project…") is superseded — a project is opened from the **project manager**, not a file dialog;
+> file-based portability is Export/Import (Export ships; Import deferred). **R5.4** collapses: auto-save
+> *is* the save now, so the "separate crash-net" framing no longer applies. The **failure-is-loud** half
+> is kept and elevated (W4) — a project that cannot save must never look saved.
 
 ---
 
@@ -721,10 +742,17 @@ and the human deferred to it. It was only caught because pass 2 was later author
   *(sweep.js:1589-1609.)*
 
 ### R29 — Autosave is a server file, and a failure is LOUD
-Autosave is `POST /api/project/autosave` — **not `localStorage`**, which in the artifact sandbox failed
-**silently** and nearly cost him a day's work. Debounced **2 s**, plus **unconditionally on every `A`
-and `E`**. **Never swallow a failure**: it toasts `AUTOSAVE FAILED: … — save by hand.` *and* the Mosaic
-note reads `autosave: FAILED`. *(sweep.js:1508-1528.)*
+Autosave is a **server file — not `localStorage`**, which in the artifact sandbox failed **silently**
+and nearly cost him a day's work. Debounced **2 s**, plus **unconditionally on every `A` and `E`**.
+**Never swallow a failure**: it is recorded loudly (`autosave.state === 'failed'` with a message the UI
+surfaces). *(sweep.js:1508-1528.)*
+
+> ⭐ **AMENDED 2026-07-24 by the project-manager reframe.** Auto-save is now the **durable save**, not a
+> separate crash-net sidecar: `documentStore.autosaveNow` writes the analysis document via `PUT /api/
+> analyses/{id}/document` and **clears `dirty`**. Projects "save themselves"; there is no manual save
+> (see the R5 note). The **failure-is-loud** rule is unchanged and elevated (W4) — it is now the failure
+> mode of the *only* save. (The `POST .../autosave` sidecar endpoint still exists on the backend for
+> recovery, but the normal flow no longer writes it.)
 
 ### R30 — 📏 PIXELS ONLY. No scale bar by default.
 `um_per_px` is `null` by default and the exporter writes **pixels only**: no scale bar, no OME-TIFF
@@ -831,6 +859,41 @@ export were verified. **Keep a headless-answerable path for both dialogs.**
 
 ---
 
+### R40 — Recompute re-places the rest against the FROZEN anchors *(added 2026-07-24)*
+**His ask:** *"say the user placed a ton of anchors — a recompute button that uses the already-placed
+correct anchors as ground truth to place the rest of the snapshots around them."* The mosaic builder is
+**acceleration of human verification, not automation** (`utils/knowledge/mosaic-builder-direction.md`).
+
+**Statements that can fail:**
+- R40.1 A prominent **Recompute** control is in the sweep. It is disabled when nothing is anchored, with
+  a hint to anchor a tile first. *(`RecomputePanel.tsx`.)*
+- R40.2 Pressing it re-places **every non-anchored tile** against the composite of the **anchored** tiles
+  (`POST /api/mosaic/recompute`, a 202 job — `recheck`'s per-target `match_anchor` loop, but it WRITES).
+- R40.3 It **never moves an `anchored`, `human`, or `excluded` tile** — those are the frozen reference
+  and the human's own work (the re-solve-wipes-the-sweep bug `seed` also guards). A target with no
+  measurable overlap is **left where it was**.
+- R40.4 **Nothing is auto-anchored** (I3): every re-placed tile lands `unverified` and carries a
+  `machine` position, so the document is stamped `independent_of_method: false` (it can never be
+  laundered into a truth). The loop is anchor → recompute → verify → anchor more → recompute.
+
+### R41 — The home is a PROJECT MANAGER; a project is one dataset + one task *(added 2026-07-24)*
+**His ask:** *"I want the app to be like, what do you want to do today, and you can look through your
+current projects."* Projects persist across sessions in an app-managed store the user points at **once**.
+
+**Statements that can fail:**
+- R41.1 The home (`/`) is a **project manager** (`data-testid="project-manager"`): a greeting, a **New
+  project** action, and cards for existing projects with **open / rename / delete / export**.
+- R41.2 On first run (no store folder chosen) it prompts to **pick one folder, once**; it is remembered
+  thereafter. The store may not be inside a dataset or the repo (the backend refuses both).
+- R41.3 **New project** = name → task (only *Build mosaic* today) → attach a dataset → the server authors
+  the document → navigate to `/project/:id`. The dataset stays raw and read-only; the project gets its
+  own folder.
+- R41.4 Opening a project loads **that** project's document (no adopt-latest); a missing dataset is
+  reported gracefully, not a crash. **I1 (no dataset knowledge) is unchanged and reinforced** — the
+  store is app-managed, the dataset is never written into.
+
+---
+
 ## 2. THE SIX STEPS
 
 The step header is a progress indicator, not a menu (R4.2). The exact gate is in R4.3.
@@ -853,10 +916,10 @@ The step header is a progress indicator, not a menu (R4.2). The exact gate is in
 
 | | |
 |---|---|
-| **He sees** | A `.facts` strip: **Trials** (count, `?` = the measured `why`), **Range** (`11–348`), **Pass split** (value + `n_pass1 · n_pass2`, `?` = the measured `why`), **Gaps** (`none`, or `283→297, 298→311`). Then `lo` / `hi` / `pass split` inputs + `Apply`. Then the **contact sheet** (one sprite sheet; clicking a cell sets the cursor and jumps to the Sweep). |
+| **He sees** | A `.facts` strip: **Trials** (count, `?` = the measured `why`), **Range** (`11–348`), **Gaps** (`none`, or `283→297, 298→311`) — the **Pass split** fact and its input are gone (2026-07-24, R4.6). Then `lo` / `hi` inputs + `Apply`. Then the **contact sheet** (one sprite sheet; clicking a cell sets the cursor and jumps to the Sweep) — with every snapshot that is **not a tile of this mosaic framed in red**, live against the `lo`/`hi` he is typing (**R2.7**), and a one-line legend counting them. |
 | **Unlocks** | A session exists. |
-| **Does** | `Apply` → `PATCH /api/session/run` → a **reload**. ⚠️ **Destructive**: it invalidates the build, the tone window and the scan. If anything is placed, **confirm first** — *"Reloading discards the build and every position in it. Continue?"* *(sweep.js:2446-2457.)* |
-| **Writes** | A new session + a new document. |
+| **Does** | `Apply` → `POST /api/mosaic/document/rescope` → **the server re-authors the tile set** to exactly the trials in range (2026-07-24; it used to be a full session reload, and before that it changed nothing at all). 🔴 **It keeps every surviving tile's position and judgement** — only tiles that LEAVE the range are dropped. It confirms first **only when placed work would leave**, and names it: *"N placed tile(s) fall outside lo–hi and leave the mosaic (…). Their positions are discarded. Continue?"* ⚠️ A changed trial list is a different problem for the solver, so the **gaps are recomputed and the build is marked stale**. |
+| **Writes** | The project's document (tiles, `trial_range`, `pass_split`, `gaps`), through the auto-save. ⛔ A dropped trial is **not** an exclusion: `unusable_tiles` and the human-edit counters do not move. |
 | **Numbers, not prose** | The two detections (run = the longest contiguous block of Snapshot trials; pass split = the trial before the largest *interior* inter-trial gap, ignoring the block's first step) are **measured**, are validated on **n = 1 dataset**, and are always overridable. Their reasoning lives on the `?`. |
 | **Gaps are LIVE** | Recomputed on **every** exclusion, from live tile state. This used to be written once at load from the session's list and never again — while the `?` promised it was recomputed. *(sweep.js:1699-1705, 596-602.)* |
 

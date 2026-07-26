@@ -32,16 +32,37 @@ export const ROUTES = {
   screenPropose: '/api/mosaic/screen/propose',
   build: '/api/mosaic/build',
   export: '/api/mosaic/export',
+  recompute: '/api/mosaic/recompute', // 202 job — freeze anchors, re-place the rest (R40)
   gaps: '/api/mosaic/gaps',
   run: '/api/mosaic/run',
-  saveAs: '/api/documents/save-as',
+  saveAs: '/api/documents/save-as', //   Export a project to a file
   load: '/api/documents/load',
-  autosave: '/api/analyses', // POST /api/analyses/{id}/autosave
+  workspace: '/api/workspace', //        the app-managed store (picked once — R41.2)
+  projects: '/api/workspace/analyses', // a "project" IS an analysis (list/create/delete/PATCH rename)
+  document: '/api/analyses', //          PUT /api/analyses/{id}/document — the durable auto-save (R29)
 } as const;
 
 /** THE TESTID REGISTRY. Grouped by screen; see README.md for the human-readable table. */
 export const TID = {
-  // ── Home / shell ──────────────────────────────────────────────────────────
+  // ── Home / shell (2026-07-24: the home is a PROJECT MANAGER — R41) ─────────────
+  manager: 'project-manager', //            the home
+  firstRunStore: 'first-run-store', //      R41.2 — the pick-a-folder-once prompt
+  chooseStore: 'choose-store',
+  newProject: 'new-project', //             the "New project" CTA
+  projectCard: 'project-card', //           data-project-id; the card is the Open affordance
+  projectName: 'project-name',
+  projectRename: 'project-rename',
+  projectExport: 'project-export',
+  projectDelete: 'project-delete',
+  projectGrid: 'project-grid',
+  // the new-project flow (/new): name → task → dataset
+  newProjectFlow: 'new-project-flow',
+  npName: 'np-name',
+  npNext: 'np-next',
+  npBack: 'np-back',
+  npCancel: 'np-cancel',
+  taskCard: 'task-card', //                 data-task=mosaic
+  // the attach-dataset picker (the ex-home dataset browser)
   browser: 'dataset-browser',
   card: 'dataset-card',
   cardName: 'dataset-name',
@@ -49,7 +70,7 @@ export const TID = {
   cardShapes: 'dataset-shapes',
   topbar: 'topbar',
   homeLink: 'home-link',
-  saveProject: 'save-project', //           R5.1 — "Save…" in the top bar, on every step
+  saveIndicator: 'save-indicator', //       R5/R29 (reframed) — "Saved / Saving… / Couldn't save"; data-state
   toast: 'toast', //                        role=status|alert; transient messages (locked-step, resume…)
 
   // ── Wizard nav ────────────────────────────────────────────────────────────
@@ -61,6 +82,7 @@ export const TID = {
   loadDir: 'load-dir',
   loadBrowse: 'load-browse',
   loadOpen: 'load-open',
+  loadOpenDataset: 'load-open-dataset', //  the open project's dataset name + its "N trials · K excluded"
   loadPhase: 'load-phase',
   loadProject: 'load-project', //           R5.3 — "Load a project…" (reachable cold)
   loadResultFORBIDDEN: 'load-result', //    R4.5/§6.6 — must NOT exist
@@ -69,14 +91,15 @@ export const TID = {
   rangeFacts: 'range-facts',
   factTrials: 'fact-trials',
   factRange: 'fact-range',
-  factSplit: 'fact-passsplit',
+  // 2026-07-24: the Pass split fact + its override input are GONE (R4.6) — an internal build detail now.
   factGaps: 'fact-gaps', //                 text "none" on fresh open (R2.3); grows only on user exclude
   rangeLo: 'range-lo',
   rangeHi: 'range-hi',
-  rangeSplit: 'range-split',
   rangeApply: 'range-apply',
   contactSheet: 'contact-sheet',
-  contactCell: 'contact-cell', //           data-trial
+  contactCell: 'contact-cell', //           data-trial, data-out, data-out-reason=range|unusable
+  sheetLegend: 'sheet-legend',
+  sheetNOut: 'sheet-n-out', //              how many loaded snapshots are NOT tiles of this mosaic
 
   // ── 3 · Screen ────────────────────────────────────────────────────────────
   screenFacts: 'screen-facts',
@@ -170,6 +193,11 @@ export const TID = {
   staleItem: 'stale-item', //               data-trial (the "go and look" buttons)
   buildStalePanel: 'build-stale-panel',
   buildStaleResolve: 'build-stale-resolve',
+  // Recompute (R40) — freeze the anchors, re-place the rest against their composite.
+  recomputePanel: 'recompute-panel',
+  recomputeBtn: 'recompute-btn',
+  recomputeSummary: 'recompute-summary', // "N anchored → re-place M"
+  recomputeHint: 'recompute-hint', //       shown when nothing is anchored
   // status bar
   statusBar: 'status-bar',
   statusTrial: 'status-trial', //           "trial <n>" — never "trial —" (R14)
@@ -234,15 +262,27 @@ export class Home {
   constructor(readonly page: Page) {}
   async open() {
     await this.page.goto('/');
-    await expect(byId(this.page, TID.browser)).toBeVisible();
+    await expect(byId(this.page, TID.manager)).toBeVisible();
   }
   card() {
     return fixtureCard(this.page);
   }
-  /** Click the fixture card → enters the Mosaic feature. */
-  async openFixture() {
+  /**
+   * Create a project on the fixture via the new-project flow (name → task → dataset) → enters the Mosaic
+   * feature at `/project/:id` (R41.3; R4.5 lands it on Range).
+   *
+   * ⚠️ HARNESS DEPENDENCY: assumes the app-managed store folder is already chosen and the fixture's data
+   * root is registered (the e2e global-setup should `PUT /api/workspace` + scan the fixture root, mirroring
+   * the python `workspace` fixture). If `first-run-store` shows instead, that setup is missing.
+   */
+  async openFixture(name = 'e2e project') {
+    await byId(this.page, TID.newProject).click();
+    await expect(this.page).toHaveURL(/\/new(\/|$)/);
+    await byId(this.page, TID.npName).fill(name);
+    await byId(this.page, TID.npNext).click();
+    await this.page.getByTestId(TID.taskCard).first().click();
     await this.card().click();
-    await expect(this.page).toHaveURL(/\/dataset\/synthetic-/);
+    await expect(this.page).toHaveURL(/\/project\//);
   }
 }
 

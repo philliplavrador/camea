@@ -97,6 +97,7 @@ are all server routes now.
 | step | route | body → response |
 |---|---|---|
 | **2 · Range** | `POST /api/mosaic/run` | `RunDetectRequest` → `RunDetection` — the run + the pass split, **measured**, always overridable. Not a session reload |
+| | `POST /api/mosaic/document/rescope` | `RescopeRequest` → `RescopeResponse` — ⭐ `Apply`, made to stick: **the server re-authors the tile set** to the trials in range. Keeps every surviving tile's work; a dropped trial is **not** an exclusion |
 | | `POST /api/mosaic/gaps` | `GapsRequest` → `GapsResponse` — the *only* touch of the exclusion module |
 | **3 · Screen** | `POST /api/mosaic/screen/propose` | `BlankProposeRequest` → `BlankProposal` — **it recommends; the human ticks** |
 | **4 · Place** | `POST /api/mosaic/build` | `BuildStartRequest` → `202 JobRef` → `BuildResult`. Takes the `gpu` lease |

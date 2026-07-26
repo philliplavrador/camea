@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Button } from '../design/primitives/Button';
-import { SaveContext, useSaveController, type SaveApi, type Saver } from './saveContext';
+import { SaveContext, type SaveApi, type Saver } from './saveContext';
 
 /**
- * SAVE, reachable from EVERY screen (BEHAVIOUR R5). Since R2 the project file is the app's ONLY
- * memory, so the one control that makes a session resumable must never be buried behind a step.
+ * SAVE, reachable from EVERY screen. Since the 2026-07-24 reframe **auto-save is the durable save**, so
+ * there is no top-bar button — a quiet "Saved" indicator (`app/SaveIndicator`) shows the state, and
+ * `Ctrl/⌘+S` FORCES a durable save now.
  *
- * The split: the SHELL owns the top-bar button and the global `Ctrl/⌘+S` binding; the FEATURE owns
- * the document, so it registers WHAT to save via `useRegisterSaver` (in `saveContext.ts`). This keeps
- * the shell feature-agnostic (it knows nothing about tiles/anchors) and gives R5.2 its single
- * dispatch point.
+ * The split: the SHELL owns the global `Ctrl/⌘+S` binding; the FEATURE owns the document, so it
+ * registers WHAT to flush via `useRegisterSaver` (in `saveContext.ts`). This keeps the shell
+ * feature-agnostic and gives R5.2 its single dispatch point.
  *
  * 🔴 ONE DISPATCH POINT. The feature must NOT bind its own `Ctrl+S` — the sweep's key handler already
  * lets Ctrl/⌘ combos fall through (BEHAVIOUR §3.1), and a second binding would save twice. The shell
@@ -65,21 +64,4 @@ export function SaveControllerProvider({ children }: { children: ReactNode }) {
   );
 
   return <SaveContext.Provider value={api}>{children}</SaveContext.Provider>;
-}
-
-/** The top-bar Save button (TID.saveProject). Delegates to whatever saver the open feature registered. */
-export function SaveButton() {
-  const { save, saving } = useSaveController();
-  return (
-    <Button
-      data-testid="save-project"
-      size="sm"
-      kbd="Ctrl S"
-      onClick={save}
-      disabled={saving}
-      title="Save the project file (Ctrl+S)"
-    >
-      {saving ? 'Saving…' : 'Save…'}
-    </Button>
-  );
 }

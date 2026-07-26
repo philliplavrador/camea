@@ -1,44 +1,42 @@
 import { useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
 import { useDatasets, type DatasetSummary, type AnalysisRef } from './useDatasets';
-import { useWorkspace } from './useWorkspace';
 import { FolderPicker } from './FolderPicker';
+import { PathField } from './PathField';
 import { useToast } from '../../app';
 import { Button } from '../../design/primitives/Button';
 import { Help } from '../../design/primitives/Help';
 import { cx } from '../../design/cx';
 import styles from './DatasetBrowser.module.css';
 
-const WORKSPACE_HELP =
-  'Where Camea writes your analyses (the .camea project files, exports and autosaves).\n' +
-  'It is a folder you choose — never inside the dataset, never inside the app. A dataset stays raw ' +
-  'and read-only; the workspace is everything you did to it.';
-
 const ROOT_HELP =
-  'The folders Camea scans for datasets. A dataset is any acquisition folder — a log.txt beside ' +
-  'NNN.xml frames. Point at a parent folder and every acquisition beneath it is found.';
-
-type PickerKind = 'root' | 'workspace' | null;
+  'Paste the folder your acquisitions are in and press Enter — a dataset is any folder with a ' +
+  'log.txt beside NNN.xml frames. Point at a parent and everything beneath it is found; point at ' +
+  'one acquisition and you get just that. Type to complete; ◆ marks a dataset.';
 
 // Stable empty references so the filter memo does not see a fresh [] every render.
 const EMPTY_DATASETS: DatasetSummary[] = [];
 const EMPTY_ROOTS: string[] = [];
 
+export interface DatasetPickerProps {
+  /** Pick this dataset (by key). Used by the new-project flow to attach a dataset to a project. */
+  onSelect: (datasetKey: string) => void;
+}
+
 /**
- * THE HOME SCREEN — a dataset browser. Camea opens on your data: the datasets found under the roots
- * you have pointed it at, each a card with a thumbnail, its trial/snapshot counts, its frame shapes,
- * its capture dates and any analyses you already have. Pick one to open it into a feature (Mosaic).
+ * THE DATASET PICKER — the datasets found under the roots you have pointed Camea at, each a card with
+ * a thumbnail, its trial/snapshot counts and frame shapes. Picking one attaches it to the project.
  *
- * This screen carries NO dataset knowledge (HARD RULE 3 / BEHAVIOUR I1): no trial numbers, no counts,
- * no exclusion list, no hard-coded paths. Every number on a card is read off the /api/datasets
- * response; the roots and workspace are whatever the user chose.
+ * (Was the home screen; since the 2026-07-24 project-manager reframe it is the "attach a dataset" step
+ * of the new-project flow. The WORKSPACE is now an app-managed store chosen once in the manager, so its
+ * toolbar is gone from here; a dataset stays raw and read-only either way.)
+ *
+ * This screen carries NO dataset knowledge (HARD RULE 3 / BEHAVIOUR I1): every number on a card is read
+ * off the /api/datasets response; the roots are whatever the user chose.
  */
-export function DatasetBrowser() {
-  const { state, refetch, scanRoot } = useDatasets();
-  const { workspace, setWorkspace } = useWorkspace();
+export function DatasetPicker({ onSelect }: DatasetPickerProps) {
+  const { state, scanRoot } = useDatasets();
   const toast = useToast();
-  const [picker, setPicker] = useState<PickerKind>(null);
+  const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState('');
 
   const roots = state.status === 'ready' ? state.data.roots : EMPTY_ROOTS;
@@ -53,28 +51,28 @@ export function DatasetBrowser() {
     );
   }, [state, query]);
 
+  /** From the Browse… modal: a path we know exists. Errors go to a toast (the modal is gone by then). */
   async function handlePick(path: string) {
-    const kind = picker;
-    setPicker(null);
+    setPicking(false);
     try {
-      if (kind === 'root') {
-        await scanRoot(path);
-        toast.push(`Scanning ${path}`, { tone: 'good' });
-      } else if (kind === 'workspace') {
-        await setWorkspace(path);
-        refetch(); // analyses shown per card are workspace-derived — re-read them
-        toast.push(`Workspace set to ${path}`, { tone: 'good' });
-      }
+      await scanRoot(path);
+      toast.push(`Scanning ${path}`, { tone: 'good' });
     } catch (e) {
       toast.push(String(e instanceof Error ? e.message : e), { tone: 'danger' });
     }
+  }
+
+  /** From the paste box: it keeps the text and shows the failure inline, so let it throw. */
+  async function handleTyped(path: string) {
+    await scanRoot(path);
+    toast.push(`Scanning ${path}`, { tone: 'good' });
   }
 
   return (
     <div className={styles.page} data-testid="dataset-browser">
       <header className={styles.header}>
         <div className={styles.titleRow}>
-          <h1 className={styles.title}>Datasets</h1>
+          <h1 className={styles.title}>Attach a dataset</h1>
           {state.status === 'ready' && (
             <span className={styles.count} data-testid="dataset-count">
               {datasets.length} under {roots.length} root{roots.length === 1 ? '' : 's'}
@@ -93,56 +91,19 @@ export function DatasetBrowser() {
         </div>
 
         <div className={styles.toolbar}>
-          <ToolGroup
-            label="Data root"
-            help={ROOT_HELP}
-            action={
-              <Button variant="ghost" size="sm" onClick={() => setPicker('root')} data-testid="add-root">
-                {roots.length ? 'Add root…' : 'Choose a folder…'}
-              </Button>
-            }
-          >
-            {roots.length ? (
-              <span className={styles.rootList} data-testid="root-list">
-                {roots.map((r) => (
-                  <span className={styles.rootChip} key={r} title={r}>
-                    {r}
-                  </span>
-                ))}
-              </span>
-            ) : (
-              <span className={styles.toolEmpty}>none yet</span>
-            )}
-          </ToolGroup>
-
-          <ToolGroup
-            label="Workspace"
-            help={WORKSPACE_HELP}
-            action={
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setPicker('workspace')}
-                data-testid="set-workspace"
-              >
-                {workspace?.path ? 'Change…' : 'Set…'}
-              </Button>
-            }
-          >
-            {workspace?.path ? (
-              <span className={styles.wsValue} data-testid="workspace-path" title={workspace.path}>
-                {workspace.path}
-                {!workspace.writable && <span className={styles.wsWarn}> read-only</span>}
-                {workspace.n_analyses != null && workspace.n_analyses > 0 && (
-                  <span className={styles.wsCount}>{workspace.n_analyses} saved</span>
-                )}
-              </span>
-            ) : (
-              <span className={styles.toolEmpty} data-testid="workspace-path">
-                not set
-              </span>
-            )}
-          </ToolGroup>
+          <span className={styles.toolLabel}>
+            Data root
+            <Help body={ROOT_HELP} />
+          </span>
+          <PathField
+            submitLabel="Add root"
+            placeholder="paste a folder path, or type to complete…"
+            known={roots}
+            knownLabel="Your roots"
+            onSubmit={handleTyped}
+            onBrowse={() => setPicking(true)}
+            data-testid="root-field"
+          />
         </div>
       </header>
 
@@ -158,12 +119,12 @@ export function DatasetBrowser() {
         <div className={styles.empty}>
           No datasets found.
           <div className={styles.emptyHint}>
-            Point Camea at a folder that contains acquisitions (a directory of NNN.xml + NNN-ccd.dat
-            with a log.txt).
+            Paste the path above and press Enter. A dataset is any folder of NNN.xml + NNN-ccd.dat
+            beside a log.txt — point at one, or at a parent that holds several.
           </div>
           <div className={styles.emptyAction}>
-            <Button variant="primary" size="sm" onClick={() => setPicker('root')}>
-              Choose a folder…
+            <Button variant="ghost" size="sm" onClick={() => setPicking(true)}>
+              Browse instead…
             </Button>
           </div>
         </div>
@@ -176,7 +137,7 @@ export function DatasetBrowser() {
           ) : (
             <div className={styles.grid} role="list">
               {filtered.map((ds) => (
-                <DatasetCard key={ds.key} ds={ds} />
+                <DatasetCard key={ds.key} ds={ds} onSelect={onSelect} />
               ))}
             </div>
           )}
@@ -188,52 +149,29 @@ export function DatasetBrowser() {
         </>
       )}
 
-      {picker && (
+      {picking && (
         <FolderPicker
-          title={picker === 'root' ? 'Choose a data folder' : 'Choose a workspace folder'}
-          confirmLabel={picker === 'root' ? 'Scan this folder' : 'Use this folder'}
-          initialPath={picker === 'workspace' ? (workspace?.path ?? undefined) : undefined}
+          title="Choose a data folder"
+          confirmLabel="Scan this folder"
           onPick={handlePick}
-          onClose={() => setPicker(null)}
+          onClose={() => setPicking(false)}
         />
       )}
     </div>
   );
 }
 
-function ToolGroup({
-  label,
-  help,
-  action,
-  children,
-}: {
-  label: string;
-  help: string;
-  action: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className={styles.toolGroup}>
-      <span className={styles.toolLabel}>
-        {label}
-        <Help body={help} />
-      </span>
-      <div className={styles.toolValue}>{children}</div>
-      {action}
-    </div>
-  );
-}
-
-function DatasetCard({ ds }: { ds: DatasetSummary }) {
+function DatasetCard({ ds, onSelect }: { ds: DatasetSummary; onSelect: (key: string) => void }) {
   const shapes = ds.shapes ?? [];
   const analyses = ds.analyses ?? [];
   const captured = fmtDate(ds.last_at ?? ds.first_at);
   return (
-    <Link
-      to={`/dataset/${ds.key}`}
+    <button
+      type="button"
       className={styles.card}
       role="listitem"
       data-testid="dataset-card"
+      onClick={() => onSelect(ds.key)}
     >
       {ds.thumbnail_url ? (
         <img
@@ -302,7 +240,7 @@ function DatasetCard({ ds }: { ds: DatasetSummary }) {
           </ul>
         )}
       </div>
-    </Link>
+    </button>
   );
 }
 

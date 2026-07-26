@@ -113,21 +113,23 @@ describe('documentStore — real saves clear dirty', () => {
   });
 });
 
-describe('documentStore — autosave is a CRASH-NET, not a save (BEHAVIOUR R5.4/R29/W4)', () => {
-  it('🔴 a successful autosave does NOT clear dirty', async () => {
-    autosaveDocument.mockResolvedValue({ path: '/ws/.autosave', bytes: 10, saved_at: '2026-07-14T04:00:00Z' });
+describe('documentStore — auto-save IS the durable save (2026-07-24 reframe; failure still LOUD, W4)', () => {
+  it('⭐ a successful auto-save CLEARS dirty and writes the durable document (PUT)', async () => {
+    // Auto-save is the save now: it goes through `putDocument` (durable), not the crash-net sidecar.
+    putDocument.mockResolvedValue({ path: '/ws/analysis-1', bytes: 10, saved_at: '2026-07-14T04:00:00Z' });
     useDocument.getState().openDocument(makeDoc(), { analysisId: 'analysis-1' });
     useDocument.getState().patchDocument({ modified: 'x' });
     expect(useDocument.getState().dirty).toBe(true);
 
     await useDocument.getState().autosaveNow();
-    expect(autosaveDocument).toHaveBeenCalledWith('analysis-1', expect.any(Object));
+    expect(putDocument).toHaveBeenCalledWith('analysis-1', expect.any(Object));
     expect(useDocument.getState().autosave.state).toBe('ok');
-    expect(useDocument.getState().dirty).toBe(true); // still dirty — autosave is not a save
+    expect(useDocument.getState().dirty).toBe(false); // cleared — the project saved itself
+    expect(useDocument.getState().lastSavedAt).toBe('2026-07-14T04:00:00Z');
   });
 
-  it('🔴 an autosave failure is LOUD (recorded, message set) and never thrown to the caller', async () => {
-    autosaveDocument.mockRejectedValue(new Error('AUTOSAVE FAILED: range_mismatch'));
+  it('🔴 an auto-save failure is LOUD (recorded, message set) and never thrown to the caller', async () => {
+    putDocument.mockRejectedValue(new Error('SAVE FAILED: range_mismatch'));
     useDocument.getState().openDocument(makeDoc(), { analysisId: 'analysis-1' });
     useDocument.getState().patchDocument({ modified: 'x' });
 
@@ -135,28 +137,28 @@ describe('documentStore — autosave is a CRASH-NET, not a save (BEHAVIOUR R5.4/
     const a = useDocument.getState().autosave;
     expect(a.state).toBe('failed');
     expect(a.message).toContain('range_mismatch');
-    expect(useDocument.getState().dirty).toBe(true);
+    expect(useDocument.getState().dirty).toBe(true); // a failed save leaves the work unsaved
   });
 
-  it('scheduleAutosave is a no-op without an analysis (nowhere to autosave to)', () => {
+  it('scheduleAutosave is a no-op without an analysis (nowhere to save to)', () => {
     useDocument.getState().openDocument(makeDoc(), { analysisId: null });
     useDocument.getState().patchDocument({ modified: 'x' }); // calls scheduleAutosave internally
     expect(useDocument.getState().autosave.state).toBe('idle');
   });
 
-  it('scheduleAutosave debounces and fires autosaveNow after AUTOSAVE_MS', async () => {
+  it('scheduleAutosave debounces and fires the durable save once after AUTOSAVE_MS', async () => {
     vi.useFakeTimers();
-    autosaveDocument.mockResolvedValue({ path: '/ws/.autosave', bytes: 10, saved_at: 't' });
+    putDocument.mockResolvedValue({ path: '/ws/analysis-1', bytes: 10, saved_at: 't' });
     useDocument.getState().openDocument(makeDoc(), { analysisId: 'analysis-1' });
 
     useDocument.getState().patchDocument({ modified: 'a' });
     expect(useDocument.getState().autosave.state).toBe('pending');
-    expect(autosaveDocument).not.toHaveBeenCalled();
+    expect(putDocument).not.toHaveBeenCalled();
 
     // A second edit inside the window must not fire a second timer's worth of saves.
     useDocument.getState().patchDocument({ modified: 'b' });
     await vi.advanceTimersByTimeAsync(AUTOSAVE_MS + 5);
-    expect(autosaveDocument).toHaveBeenCalledTimes(1);
+    expect(putDocument).toHaveBeenCalledTimes(1);
   });
 });
 

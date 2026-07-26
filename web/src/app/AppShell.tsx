@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { ToastProvider } from './ToastProvider';
-import { SaveControllerProvider, SaveButton } from './SaveController';
+import { SaveControllerProvider } from './SaveController';
+import { SaveIndicator } from './SaveIndicator';
 import { ThemeToggle } from './ThemeToggle';
 import styles from './AppShell.module.css';
 
@@ -12,8 +13,8 @@ import styles from './AppShell.module.css';
  *
  * Two cross-cutting shell services wrap the whole tree so both the top bar and the feature share them:
  *   • ToastProvider — the transient-message channel (locked-step nudge, resume confirmation…).
- *   • SaveControllerProvider — Save reachable from EVERY screen (R5): the shell owns the button and
- *     the global Ctrl/⌘+S; the feature registers WHAT to save.
+ *   • SaveControllerProvider — Ctrl/⌘+S from every screen forces a durable save (2026-07-24: auto-save
+ *     is the save now, so there is no button; the feature registers a "flush" saver).
  */
 export function AppShell() {
   return (
@@ -26,9 +27,9 @@ export function AppShell() {
 }
 
 function ShellFrame() {
-  // A feature is open on any route below the home index. The shell owns routing, so this is a
-  // structural fact, not dataset knowledge — no path or key is hard-coded.
-  const inFeature = useLocation().pathname !== '/';
+  // A feature (an open project) is on `/project/:id`. The shell owns routing, so this is a structural
+  // fact, not dataset knowledge — no path or key is hard-coded. The Saved indicator shows only there.
+  const inFeature = useLocation().pathname.startsWith('/project/');
 
   return (
     <div className={styles.shell}>
@@ -39,8 +40,8 @@ function ShellFrame() {
         </Link>
         <div className={styles.spacer} />
         <div className={styles.actions}>
-          {/* Save… is present the whole time a feature is open — on every one of its screens (R5.1). */}
-          {inFeature && <SaveButton />}
+          {/* Auto-save is the save (2026-07-24): a quiet "Saved" indicator, no button. Loud on failure. */}
+          {inFeature && <SaveIndicator />}
           <ThemeToggle />
         </div>
       </header>

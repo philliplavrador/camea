@@ -34,12 +34,14 @@ describe('wizard steps render on an empty (pre-hydrate) store', () => {
     expect(screen.queryByTestId('load-result')).toBeNull();
   });
 
-  it('Range shows the facts strip, the lo/hi/split inputs, and gaps read "none" on a fresh open', () => {
+  it('Range shows the facts strip, the lo/hi inputs, and gaps read "none" on a fresh open', () => {
     mount(<RangeStep onNavigate={() => {}} />);
     expect(screen.getByTestId('range-facts')).toBeInTheDocument();
     expect(screen.getByTestId('range-lo')).toBeInTheDocument();
     expect(screen.getByTestId('range-hi')).toBeInTheDocument();
-    expect(screen.getByTestId('range-split')).toBeInTheDocument();
+    // The pass split is no longer shown or editable here (2026-07-24) — it is an internal build detail.
+    expect(screen.queryByTestId('range-split')).toBeNull();
+    expect(screen.queryByTestId('fact-passsplit')).toBeNull();
     expect(screen.getByTestId('range-apply')).toBeInTheDocument();
     // R2.3 — gaps are "none" until the USER excludes something.
     expect(screen.getByTestId('fact-gaps')).toHaveTextContent(/none/i);

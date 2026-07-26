@@ -15,9 +15,19 @@ in `test_260620d.py`, under `-m slow`.
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
-from .conftest import OFF_SHAPE_TRIAL, RUN_HI, RUN_LO, err, open_session, run_job
+from .conftest import (
+    OFF_SHAPE_TRIAL,
+    RUN_HI,
+    RUN_LO,
+    STRAY_SNAPSHOTS,
+    err,
+    open_session,
+    run_job,
+)
 
 # =================================================================================================
 # Step 2 · Range
@@ -74,6 +84,57 @@ def test_the_gate_drops_by_SHAPE_loudly_and_never_by_trial_number(client, synth)
     assert dropped[OFF_SHAPE_TRIAL]["reason"] == "off_shape"
     assert (dropped[OFF_SHAPE_TRIAL]["w"], dropped[OFF_SHAPE_TRIAL]["h"]) == (512, 128)
     assert run["detected"] is False                          # chosen by hand
+
+
+def test_rescope_makes_the_range_stick_and_keeps_the_work(client, synth, workspace):
+    """⭐ `Apply` on the Range step. A project opens on every square snapshot the dataset holds —
+    including the strays before the scan started (5, 7, 8 here; 1 and 5-7 on 260620d). They are not
+    tiles of this mosaic, and until this route they were swept, solved and exported as if they were.
+
+    🔴 And a re-scope must not wipe the sweep: every surviving tile keeps its position and its state.
+    ⛔ A dropped trial is NOT an exclusion — `unusable_tiles` stays the human's own `E` presses."""
+    everything = [*STRAY_SNAPSHOTS, *synth.trials]
+    sid = open_session(client, synth.path, everything)["session_id"]
+    aid = client.post("/api/workspace/analyses",
+                      json={"session_id": sid, "feature": "mosaic", "name": "s",
+                            "trials": everything}).json()["analysis_id"]
+    doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
+    assert len(doc["tiles"]) == len(everything)              # the strays came in as tiles
+
+    # some work on a tile that will SURVIVE, and one the user excluded by hand
+    doc["tiles"][str(RUN_LO)].update({"state": "anchored", "status": "anchor", "human": True,
+                                      "x": 0.0, "y": 0.0, "ncc": 0.91, "seq": 1})
+    doc["tiles"][str(RUN_LO + 1)].update({"state": "excluded", "status": "excluded",
+                                          "x": None, "y": None})
+
+    r = client.post("/api/mosaic/document/rescope",
+                    json={"session_id": sid, "doc": doc, "lo": RUN_LO, "hi": RUN_HI})
+    assert r.status_code == 200, r.text
+    out = r.json()
+
+    assert out["removed"] == STRAY_SNAPSHOTS and out["n_placed_removed"] == 0
+    assert out["added"] == []
+    assert sorted(int(t) for t in out["doc"]["tiles"]) == synth.trials
+    assert out["run"]["lo"] == RUN_LO and out["run"]["hi"] == RUN_HI
+    assert out["doc"]["trial_range"] == [RUN_LO, RUN_HI]
+
+    kept = out["doc"]["tiles"][str(RUN_LO)]
+    assert kept["state"] == "anchored" and kept["ncc"] == 0.91  # the human's work survived
+    assert out["doc"]["unusable_tiles"] == [RUN_LO + 1]         # ⛔ his `E`, and ONLY his `E`
+    assert out["doc"]["pass_split"] == synth.pass_split         # re-detected for the new range
+
+
+def test_rescope_refuses_a_range_with_no_snapshot_in_it(client, synth, workspace):
+    sid = open_session(client, synth.path, synth.trials)["session_id"]
+    aid = client.post("/api/workspace/analyses",
+                      json={"session_id": sid, "feature": "mosaic", "name": "s",
+                            "trials": synth.trials}).json()["analysis_id"]
+    doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
+
+    r = client.post("/api/mosaic/document/rescope",
+                    json={"session_id": sid, "doc": doc, "lo": 1, "hi": 2})  # E'phys trials only
+    assert r.status_code == 400
+    assert err(r)["code"] == "bad_request"
 
 
 def test_gaps_is_a_pure_function_over_a_trial_list(client):
@@ -538,6 +599,56 @@ def test_recheck_is_GLOBAL_and_is_allowed_to_say_no(client, synth, seeded):
 def test_recheck_with_nothing_anchored_is_refused(client, seeded):
     sid, aid, doc, bid = seeded
     r = client.post("/api/mosaic/recheck", json={"session_id": sid, "doc": doc})
+    assert r.status_code == 409
+    assert err(r)["code"] == "refused"
+
+
+def test_recompute_re_places_a_tile_against_the_frozen_anchor_field(client, synth, seeded):
+    """⭐ RECOMPUTE = recheck's per-target `match_anchor` loop, but it WRITES: it re-places every
+    non-anchored tile against the frozen anchor composite (`unverified` + `machine`), and NEVER touches
+    an `anchored`/`human` tile. A machine placed it, so the reply is stamped non-independent."""
+    sid, aid, doc, bid = seeded
+    a0 = synth.trials[0]
+    anchors = list(synth.trials[:4])                        # a certified anchor field, at the truth
+    for t in anchors:
+        doc["tiles"][str(t)].update({"state": "anchored", "status": "anchor",
+                                     "x": synth.truth(t, a0)[0], "y": synth.truth(t, a0)[1],
+                                     "human": True})
+    victim = synth.trials[5]                                 # unverified, planted 400 px WRONG
+    doc["tiles"][str(victim)].update({"state": "unverified", "status": "unverified",
+                                      "x": synth.truth(victim, a0)[0] + 400.0,
+                                      "y": synth.truth(victim, a0)[1] + 400.0})
+    anchor_xy = (doc["tiles"][str(anchors[0])]["x"], doc["tiles"][str(anchors[0])]["y"])
+
+    r = client.post("/api/mosaic/recompute",
+                    json={"session_id": sid, "doc": doc, "trials": [victim]})
+    assert r.status_code == 202
+    res = run_job(client, r.json()["job_id"])["result"]
+    assert res["kind"] == "recompute"
+    assert res["n_reference"] == len(anchors)
+    assert res["n_placed"] == 1
+    new = res["doc"]
+
+    # the anchored tile is the FROZEN reference — untouched, still anchored, same position.
+    a = new["tiles"][str(anchors[0])]
+    assert a["state"] == "anchored"
+    assert (a["x"], a["y"]) == anchor_xy
+
+    # the victim was re-placed against the anchors: unverified, carrying `machine`, back near the truth.
+    v = new["tiles"][str(victim)]
+    assert v["state"] == "unverified"
+    assert v.get("machine") is not None
+    err_px = math.hypot(v["x"] - synth.truth(victim, a0)[0], v["y"] - synth.truth(victim, a0)[1])
+    assert err_px < 10.0                                     # a 400 px error, snapped back onto the truth
+
+    # a machine touched it -> the response is stamped, and can never claim to be an independent truth.
+    assert new["provenance"]["independent_of_method"] is False
+
+
+def test_recompute_with_nothing_anchored_is_refused(client, seeded):
+    """Nothing anchored ⇒ there is no ground truth to place the rest against. Refused, not guessed."""
+    sid, aid, doc, bid = seeded
+    r = client.post("/api/mosaic/recompute", json={"session_id": sid, "doc": doc})
     assert r.status_code == 409
     assert err(r)["code"] == "refused"
 

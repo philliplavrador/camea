@@ -1,22 +1,24 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { AppShell } from './AppShell';
-import { DatasetBrowser } from '../features/home/DatasetBrowser';
+import { ProjectManager } from '../features/home/ProjectManager';
+import { NewProjectFlow } from '../features/home/NewProjectFlow';
 import { MosaicFeature } from '../features/mosaic/MosaicFeature';
 import { DesignGallery } from '../design/gallery/DesignGallery';
 
 /**
- * Routes. The shell wraps every screen; the home index is the dataset browser; a dataset opens into
- * a feature. Today the only feature is Mosaic (a placeholder here — the six-step wizard mounts into
- * it). React Router is the pick: a small, standard nested-route model that maps exactly onto
- * "shell → feature → step", with typed params (:key) and no framework lock-in.
+ * Routes (2026-07-24 project-manager reframe). The shell wraps every screen. The home index is the
+ * PROJECT MANAGER ("what do you want to do today?"); `/new` is the create flow; a project opens into a
+ * feature at `/project/:id` (the id is the analysis id). Today the only task is Mosaic. React Router is
+ * the pick: a small, standard nested-route model that maps onto "shell → project → step".
  */
 export const router = createBrowserRouter([
   {
     path: '/',
     element: <AppShell />,
     children: [
-      { index: true, element: <DatasetBrowser /> },
-      { path: 'dataset/:key', element: <MosaicFeature /> },
+      { index: true, element: <ProjectManager /> },
+      { path: 'new', element: <NewProjectFlow /> },
+      { path: 'project/:id', element: <MosaicFeature /> },
     ],
   },
   // The design-system gallery — a full-page reference of every primitive in both themes, outside the

@@ -37,18 +37,25 @@ from __future__ import annotations
 
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 import camea
 from camea.api import routes_core
 from camea.api.schemas import ErrorCode
 
 __all__ = ["create_app", "APP", "CORS_ORIGINS"]
+
+#: `web/dist/` in a source checkout — `app.py` is `src/camea/api/app.py`, so `parents[3]` is the
+#: repo root. ⚠️ This resolves the *dev* case only; a frozen build (PyInstaller) will need its own
+#: answer (see the worklog — the freeze has never been tested) and should override this, not patch it.
+_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 
 #: The Vite dev server. ⛔ Not a wildcard, and never `0.0.0.0`.
 CORS_ORIGINS = [
@@ -154,17 +161,38 @@ def create_app(*, cors: bool = True) -> FastAPI:
     mosaic_routes.set_session_provider(routes_core.SESSIONS.get)
     app.include_router(mosaic_routes.router)
 
-    @app.get("/", include_in_schema=False)
-    def _root() -> dict:
-        """No front end is bundled yet. Point a human at the docs rather than at a 404."""
-        return {
-            "app": "Camea",
-            "version": camea.__version__,
-            "docs": "/docs",
-            "openapi": "/openapi.json",
-            "health": "/api/health",
-            "note": "The UI is served by the Vite dev server in --browser; see `camea --help`.",
-        }
+    # ---------------------------------------------------------------------------------------------
+    # The built UI. `--window` and `--browser` both load from THIS origin (see the CORS note above) —
+    # so once `web/dist/` exists, this app serves it directly; there is no separate frontend server
+    # in either shipped mode, only in the two-terminal `npm run dev` loop.
+    # ---------------------------------------------------------------------------------------------
+    if _DIST.is_dir():
+        app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+
+        @app.get("/", include_in_schema=False)
+        def _index() -> FileResponse:
+            return FileResponse(_DIST / "index.html")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def _spa_fallback(full_path: str) -> FileResponse:
+            """React Router uses browser history (`createBrowserRouter`), so e.g. a hard refresh on
+            `/dataset/<key>` has no server-side route of its own — only the SPA's client-side router
+            resolves it. Registered last, so it never shadows `/api/*`, `/docs` or `/openapi.json`,
+            which are all added to `app.routes` before this."""
+            return FileResponse(_DIST / "index.html")
+    else:
+        @app.get("/", include_in_schema=False)
+        def _root() -> dict:
+            """No built UI on disk. Point a human at the docs rather than at a 404."""
+            return {
+                "app": "Camea",
+                "version": camea.__version__,
+                "docs": "/docs",
+                "openapi": "/openapi.json",
+                "health": "/api/health",
+                "note": "No built UI found at web/dist. Run `cd web && npm run build`, or use the "
+                        "two-terminal dev loop (`npm run dev` there + this backend with --headless).",
+            }
 
     app.state.started_at = time.time()
     return app

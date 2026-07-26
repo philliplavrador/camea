@@ -202,8 +202,8 @@ function Showcase() {
 
       <Section title="Live warnings · they stay on the page">
         <LiveWarning>
-          <b>THE BUILD IS STALE.</b> 3 excluded since the build (12, 15, 18). Re-solve, or knowingly
-          do not.
+          <b>THE BUILD IS STALE.</b> ‹N› excluded since the build (‹trial›, ‹trial›, ‹trial›) —
+          example values, not a real dataset. Re-solve, or knowingly do not.
         </LiveWarning>
         <LiveWarning variant="loud" help={'best − second < 0.10 is the signature of a surviving grid alias.\nThe electrode grid repeats every 256 px. Check D and V before you anchor.'}>
           <b>THIN MARGIN.</b> best &minus; second is <b>0.06</b>. The correlator found a second position
@@ -280,11 +280,11 @@ function Showcase() {
 
       <Section title="Status bar · the footer readout (must read ~6 ms)">
         <StatusBar>
-          <StatusItem label="trial">12</StatusItem>
+          <StatusItem label="trial">‹n›</StatusItem>
           <StatusItem>
             <Badge state="unverified">unverified</Badge>
           </StatusItem>
-          <StatusItem label="pass">1</StatusItem>
+          <StatusItem label="pass">‹n›</StatusItem>
           <StatusItem label="top-left">(-268, 432)</StatusItem>
           <PerfReadout msPerFrame={6.1} fps={60} />
         </StatusBar>

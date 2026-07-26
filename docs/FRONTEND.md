@@ -110,8 +110,9 @@ npm run e2e          # playwright — boots the backend (headless, at tests/fixt
                      # dev server itself, then drives the smoke test. See playwright.config.ts.
 ```
 
-The smoke test (`e2e/smoke.spec.ts`) loads the shell, asserts the dataset browser renders the fixture
-(`synthetic`, 12 snapshots, 512×512), and opens it into the mosaic feature. Vitest and Playwright do
+The smoke test (`e2e/smoke.spec.ts`) loads the shell, asserts the project manager renders, creates a
+project on the fixture (`synthetic`, 12 snapshots, 512×512), and opens it into the mosaic feature at
+`/project/:id`. Vitest and Playwright do
 not fight over `*.spec.ts`: Vitest is scoped to `src/`, Playwright to `e2e/`.
 
 ---
@@ -129,8 +130,9 @@ web/
     api/         client.ts (openapi-fetch) · schema.d.ts (GENERATED — do not edit)
     app/         AppShell.tsx (feature-agnostic shell) · router.tsx
     features/
-      home/      DatasetBrowser.tsx — THE HOME SCREEN (GET /api/datasets)
-      mosaic/    MosaicFeature.tsx — placeholder; the six-step wizard mounts here
+      home/      ProjectManager.tsx — THE HOME (project manager) · NewProjectFlow.tsx (name→task→
+                 dataset) · DatasetBrowser.tsx → DatasetPicker (the attach-dataset step)
+      mosaic/    MosaicFeature.tsx — keyed on /project/:id; the six-step wizard mounts here
     store/       sweepStore.ts — scaffold (see BEHAVIOUR R9/R11/R14/R36 before filling it in)
     styles/      tokens.css · global.css
     test/        setup.ts (jest-dom)
@@ -149,3 +151,33 @@ web/
 | `npm run test` | Vitest unit tests |
 | `npm run e2e` | Playwright (auto-starts backend + dev server) |
 | `npm run lint` / `npm run format` | ESLint / Prettier |
+
+---
+
+## CI (`.github/workflows/ci.yml`)
+
+Runs on every **push** and **pull_request**, on any branch. The one rule the whole repo is built
+on holds here too: **CI proves the app without the private data.** It runs on a stock GitHub runner
+with **no 35 GB mirror and no GPU** — the only dataset it touches is the committed ~5.6 MB synthetic
+fixture at `tests/fixtures/synthetic/`. Four jobs, in parallel:
+
+| job | toolchain | does |
+|---|---|---|
+| **backend** | Python 3.12 + uv | `uv sync` (no `gpu` extra) → `ruff check` → `uv run pytest -q` (fast suite) → `mypy` *(advisory, non-blocking)* |
+| **frontend** | Node 22 | `npm ci` → `npm run build` (tsc + vite) → `npm run lint` → `npm run test` (vitest) |
+| **api-drift** | Node 22 + uv | `npm run check:api` — dumps the live OpenAPI from the backend and diffs the committed `schema.d.ts` (HARD RULE 4). Needs both toolchains, so it is its own job. |
+| **e2e** | Node 22 + uv | `npx playwright install --with-deps chromium` → `npx playwright test --project=fast` |
+
+**What CI deliberately does NOT run** (and why):
+
+- **The 312/312 solver guard** (`tests/slow/test_solver_312.py`) — needs the private mirror + a GPU.
+  It is `@slow`, and pyproject's `addopts = -m 'not slow'` deselects it before its fixtures are ever
+  built, so `uv run pytest` in CI never touches it. Runs locally / nightly.
+- **The Playwright `@slow` specs** — they drive a real t33 GPU solver build. The e2e job runs only
+  the **`fast`** Playwright project (defined with `grepInvert: /@slow/`), so the slow build specs are
+  excluded on a GPU-less runner. Run them locally with `npm run e2e`.
+- **The `gpu` extra** (`cupy-cuda12x[ctk]`) — never installed in CI; there is no CUDA runtime. CI
+  exercises the engine's CPU/NumPy path.
+
+Caching: uv keyed on `uv.lock` (`astral-sh/setup-uv` `enable-cache`); npm keyed on
+`web/package-lock.json` (`actions/setup-node` `cache: npm`).

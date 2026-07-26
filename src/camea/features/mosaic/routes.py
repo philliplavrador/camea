@@ -75,6 +75,9 @@ from camea.api.schemas import (
     QcReport,
     QcRequest,
     RecheckRequest,
+    RecomputeRequest,
+    RescopeRequest,
+    RescopeResponse,
     RunDetectRequest,
     RunDetection,
     ScoreResult,
@@ -82,6 +85,7 @@ from camea.api.schemas import (
     SeedResponse,
 )
 from camea.core import dataset as core_dataset
+from camea.core import document as core_document
 from camea.core.frames import TEXTURE_MEASURE, FrameStore
 from camea.core.jobs import JOBS, Busy, Progress, check_cancelled, report_adapter
 from camea.core.workspace import DatasetIsReadOnly, app_state_dir, refuse_write, safe_basename
@@ -411,6 +415,54 @@ def post_run(body: RunDetectRequest) -> dict:
     return run
 
 
+@router.post("/document/rescope", response_model=RescopeResponse)
+def post_rescope(body: RescopeRequest) -> dict:
+    """`POST /api/mosaic/document/rescope` — ⭐ **the Range step's `Apply`, made to STICK.**
+
+    `POST /run` measures; this one writes. A project opens on every square snapshot the dataset holds,
+    and on a real acquisition that includes the stray snapshots taken before the mosaic scan started
+    (`1`, `5-7` on 260620d, ahead of the run at `11-348`). Until now `Apply` re-measured the run and
+    left them in the document, so they were swept, solved and exported as tiles of a mosaic they were
+    never part of. This re-authors the tile set to exactly the trials in range.
+
+    ⛔ **NO DATASET KNOWLEDGE.** The trial list is `_detect_run` over `log.txt` + the per-trial XML
+    shape, bounded by the range the USER typed. No number is named here, and nothing is defaulted for
+    "his" dataset.
+    ⛔ **A DROPPED TRIAL IS NOT AN EXCLUSION.** It does not land in `unusable_tiles` and it does not
+    count as a human edit: it was never a tile of this mosaic. `E` remains the only thing that
+    excludes.
+
+    🔴 Every surviving tile keeps its position, state and provenance. The reply's `n_placed_removed`
+    is the work that was thrown away — the caller confirms **before** calling (the Range step does).
+    """
+    s = _session(body.session_id)
+    run = _detect_run(s, body.lo, body.hi)
+    run["pass_split"] = _pass_split(s, run["lo"], run["hi"], run["trials"], body.pass_split)
+    run["gaps"] = core_dataset.gaps(run["trials"])
+
+    docmod = _document()
+    try:
+        doc, info = docmod.rescope(
+            _doc(body.doc),
+            run["trials"],
+            lo=run["lo"],
+            hi=run["hi"],
+            pass_split=run["pass_split"]["value"],
+            # ⭐ the measurement for any trial that has just JOINED the mosaic — the Screen step's
+            # cards read it, and the session already holds it (no recompute).
+            texture=s.frames.texture(),
+            run={"detected": run["detected"], "why": run["why"],
+                 "pass_split_detected": run["pass_split"]["detected"],
+                 "pass_split_why": run["pass_split"]["why"]},
+        )
+    except core_document.DocumentError as e:
+        raise ApiError(400, "bad_request", str(e)) from e
+
+    # Stamp it, as `/seed` and `/discard-machine` do: the reply is a document the client can adopt
+    # and autosave as-is, with its provenance recomputed against the tile set it actually carries.
+    return {"doc": docmod.stamp(doc), "run": run, **info}
+
+
 # =================================================================================================
 # gaps — ⭐ THE ONE FUNCTION THE APP MAY IMPORT FROM THE EXCLUSION MODULE
 # =================================================================================================
@@ -687,7 +739,14 @@ def post_seed(body: SeedRequest) -> dict:
         doc, info = docmod.seed_from_build(doc, build)
     except (docmod.SeedRefused, ValueError) as e:  # no protected tile is in the build -> refuse
         raise ApiError(409, "refused", str(e)) from e
-    return {"doc": doc, **info}
+    # ⭐ STAMP THE RESPONSE. `seed_from_build` returns a NORMALISED but UNSTAMPED doc, so without this
+    # the reply could carry a `build` block while `provenance.independent_of_method` is still true and
+    # the warning is absent — the self-contradiction R28 exists to prevent. `stamp()` re-derives the
+    # verdict from the document's HISTORY (the build block just added), forcing
+    # `independent_of_method: false` + `PROVENANCE_WARNING`. It is the same `stamp()` the export path
+    # runs (`features/mosaic/export.as_exported`), and it is idempotent — save/autosave/export re-stamp
+    # anyway; this just makes the /seed RESPONSE already honest.
+    return {"doc": docmod.stamp(doc), **info}
 
 
 @router.post("/document/machine-evidence", response_model=MachineEvidenceResponse)
@@ -722,8 +781,13 @@ def post_discard_machine(body: DiscardMachineRequest) -> dict:
     """
     # ⚠️ `discard_machine` returns **(doc, info)**, not a single dict — the raw tuple could not
     # validate against `DiscardMachineResponse` and 500'd. Unpack it.
-    doc, info = _document().discard_machine(_doc(body.doc))
-    return {"doc": doc, **info}
+    docmod = _document()
+    doc, info = docmod.discard_machine(_doc(body.doc))
+    # ⭐ STAMP THE RESPONSE (as `/seed` does). The doc is normalised but unstamped; after a discard
+    # there is no machine evidence left, so `stamp()` sets `independent_of_method: true` and drops the
+    # warning — an honest, self-consistent reply rather than one carrying whatever the posted
+    # provenance happened to claim. Same `stamp()` the export path runs; idempotent.
+    return {"doc": docmod.stamp(doc), **info}
 
 
 # =================================================================================================
@@ -935,8 +999,111 @@ def post_recheck(body: RecheckRequest) -> dict:
             "disagree": [r for r in rows if r["still_stale"]],
         }
 
-    job = JOBS.submit_thread("recheck", fn)
+    # ⭐ HOLDS THE `gpu` LEASE, exactly as `build` and `export` do. The recheck fires a GPU
+    # `match_anchor` per target, so without the lease a build could start concurrently and defeat the
+    # OOM protection the lease exists for (parent ~2 GB + a spawned build ~2 GB on a 4 GB card). The
+    # interactive `_need_gpu_free()` above only refuses to START while a lease is held; the lease is
+    # what stops the reverse race — a build starting mid-recheck.
+    try:
+        job = JOBS.submit_thread("recheck", fn, exclusive="gpu")
+    except Busy as e:
+        raise ApiError(409, "busy", str(e) or "a job already holds the GPU") from e
     return {"job_id": job.job_id, "kind": "recheck"}
+
+
+@router.post("/recompute", response_model=JobRef, status_code=202)
+def post_recompute(body: RecomputeRequest) -> dict:
+    """`POST /api/mosaic/recompute` -> **202 `JobRef`**. ⭐ **THE TOOL THE USER REACHES FOR.**
+
+    Freeze the tiles the human has anchored and re-place every other tile against their combined
+    composite — then he anchors more and recomputes again. It is `recheck`'s per-target
+    `match_anchor(global)` loop (same `gpu` lease, same progress/cancel, N × ~1 s so it never blocks),
+    but it **writes** the answer instead of only measuring it.
+
+    🔴 **It never moves an `anchored`, `human`, or `excluded` tile** — those are the frozen reference
+    and the human's own work (the re-solve-wipes-the-sweep bug `seed_from_build` exists to prevent).
+    Every placed tile lands `unverified` + `machine`; **nothing is auto-anchored** (I3), and the
+    machine fingerprint keeps provenance honest. A target with no measurable overlap against the
+    anchors is **left untouched** — its previous placement stands; anchor a neighbour and recompute.
+
+    ⚡ The anchor set is FIXED across all targets, so `solve`'s incremental composite cache builds the
+    reference composite **once** and reuses it for every match.
+    """
+    _need_gpu_free()
+    s = _session(body.session_id)
+    docmod = _document()
+    doc = _doc(body.doc)
+
+    field = _anchor_field(doc)
+    if not field:
+        raise ApiError(
+            409, "refused",
+            "nothing is anchored — there is no ground truth to place the rest against. Anchor a few "
+            "tiles you trust, then recompute.")
+
+    tiles = doc.get("tiles") or {}
+
+    def _is_target(k: str | int, t: dict) -> bool:
+        trial = int(k)
+        if trial in field:                              # an anchor -> the frozen reference
+            return False
+        if t.get("human"):                              # a hand placement -> his own work
+            return False
+        state = t.get("state") or ("anchored" if t.get("status") == "anchor" else t.get("status"))
+        if state == "excluded":                         # he ruled it out
+            return False
+        return trial in s.frames.row_of                 # loaded in this session
+
+    if body.trials is not None:
+        want = {int(t) for t in body.trials}
+        targets = sorted(int(k) for k, t in tiles.items() if int(k) in want and _is_target(k, t))
+    else:
+        targets = sorted(int(k) for k, t in tiles.items() if _is_target(k, t))
+
+    refuse = list(((doc.get("blank_scan") or {}).get("blank")) or [])
+    anchors = sorted(field)
+    solve = _solve()
+
+    def fn(report, cancel) -> dict:
+        placed: dict[int, tuple[float, float]] = {}
+        n_unmeasurable = 0
+        n = len(targets)
+        for i, t in enumerate(targets):
+            check_cancelled(cancel, "recompute")
+            report(Progress(phase="recompute", phase_index=i + 1, n_phases=max(1, n),
+                            pct=(100.0 * i / n if n else 100.0),
+                            message=f"trial {t} ({i + 1}/{n})"))
+
+            res = solve.match_anchor(s.frames, t, anchors, dict(field),
+                                     mode="global", refuse=refuse)
+            r = res.to_json() if hasattr(res, "to_json") else res
+            best = r.get("best")
+            if best is None:
+                # Refused (a blank target), or nothing correlated against the anchors. Leave the tile
+                # where it was — "I could not measure it" is not "move it to nowhere".
+                n_unmeasurable += 1
+                continue
+            placed[t] = (float(best["x"]), float(best["y"]))
+
+        new_doc, info = docmod.place_against_anchors(doc, placed)
+        # ⭐ STAMP THE RESULT — like /seed. `place_against_anchors` returns a normalised but UNSTAMPED
+        # doc; every re-placed tile now carries `machine`, so `stamp()` forces
+        # `independent_of_method: false` + the warning. The reply is already honest.
+        return {
+            "kind": "recompute",
+            "doc": docmod.stamp(new_doc),
+            "n_placed": int(info["n_placed"]),
+            "n_unmeasurable": int(n_unmeasurable),
+            "n_reference": len(anchors),
+        }
+
+    # ⭐ HOLDS THE `gpu` LEASE, exactly as `build`, `export` and `recheck` do — it fires a GPU
+    # `match_anchor` per target.
+    try:
+        job = JOBS.submit_thread("recompute", fn, exclusive="gpu")
+    except Busy as e:
+        raise ApiError(409, "busy", str(e) or "a job already holds the GPU") from e
+    return {"job_id": job.job_id, "kind": "recompute"}
 
 
 # =================================================================================================

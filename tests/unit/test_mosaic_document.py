@@ -284,6 +284,90 @@ def test_the_laundered_document_is_still_stamped_not_independent():
 
 
 # =================================================================================================
+# rescope — the Range step's Apply. It keeps the work; a dropped trial is not an exclusion.
+# =================================================================================================
+def test_rescope_drops_the_trials_that_left_the_range_and_adds_the_ones_that_joined():
+    doc = fresh([1, 5, 6, 7, *RUN])                       # stray pre-scan snapshots + the run
+    out, info = M.rescope(doc, RUN, lo=RUN[0], hi=RUN[-1])
+
+    assert M.trials_of(out) == RUN
+    assert info["removed"] == [1, 5, 6, 7] and info["n_removed"] == 4
+    assert info["added"] == [] and info["n_placed_removed"] == 0
+    assert out["trial_range"] == [RUN[0], RUN[-1]]
+
+    back, info2 = M.rescope(out, [1, 5, 6, 7, *RUN], lo=1, hi=RUN[-1])
+    assert info2["added"] == [1, 5, 6, 7]
+    assert back["tiles"]["5"]["state"] == "unplaced"
+
+
+def test_rescope_keeps_every_surviving_tiles_work():
+    """🔴 Nudging `hi` must not wipe a half-swept run."""
+    doc = fresh([1, 5, *RUN])
+    place(doc, 12, (100.0, 7.0), state="anchored", human=True, ncc=0.93, seq=4)
+    exclude(doc, 13)
+    doc = M.normalise(doc)
+
+    out, _ = M.rescope(doc, RUN, lo=RUN[0], hi=RUN[-1])
+    keep = out["tiles"]["12"]
+    assert keep["state"] == "anchored" and keep["ncc"] == 0.93 and keep["seq"] == 4
+    assert (keep["x"], keep["y"]) == (0.0, 0.0)           # the origin moved onto the surviving anchor
+    assert out["tiles"]["13"]["state"] == "excluded"      # HIS `E` press survives the re-scope
+
+
+def test_a_trial_that_leaves_the_range_is_not_an_exclusion():
+    """⛔ It was never a tile of this mosaic. It is not `excluded`, and it is not a human edit."""
+    doc = fresh([1, 5, 6, 7, *RUN])
+    out, _ = M.rescope(doc, RUN, lo=RUN[0], hi=RUN[-1])
+    out = M.stamp(out)
+    assert out["unusable_tiles"] == []
+    assert M.excluded_trials(out) == []
+    assert out["provenance"]["human_edits"]["excluded"] == 0
+
+
+def test_rescope_recomputes_the_gaps_and_stales_the_build():
+    """⚠️ A changed trial list is a DIFFERENT PROBLEM for the solver."""
+    doc = fresh([*RUN, 25, 26])
+    doc, _ = M.seed_from_build(doc, a_build([*RUN, 25, 26]))
+    assert doc["gaps"] == [[20, 25]]
+    assert doc["build"]["stale"] is False
+
+    out, _ = M.rescope(doc, RUN, lo=RUN[0], hi=RUN[-1])
+    assert out["gaps"] == []                              # the gap left with the trials
+    assert out["build"]["stale"] is True
+    assert "25" not in out["tiles"]
+
+
+def test_rescope_reports_the_placed_work_it_is_about_to_throw_away():
+    doc = fresh([1, 5, *RUN])
+    place(doc, 5, (10.0, 10.0))
+    out, info = M.rescope(doc, RUN, lo=RUN[0], hi=RUN[-1])
+    assert info["n_placed_removed"] == 1
+    assert "5" not in out["tiles"]
+
+
+def test_rescope_prunes_the_blank_scan_to_the_new_tile_set():
+    doc = fresh([1, 5, *RUN], blank={"proposed": [5, 12]})
+    out, _ = M.rescope(doc, RUN, lo=RUN[0], hi=RUN[-1])
+    assert out["blank_scan"]["blank"] == [12]
+    assert out["blank_scan"]["scanned"] == [12]
+    assert out["tiles"]["12"]["blank"] is True
+
+
+def test_rescope_moves_the_cursor_and_the_origin_off_a_dropped_trial():
+    doc = fresh([1, 5, *RUN])
+    doc["cursor"] = 5
+    doc["origin_trial"] = 1
+    out, _ = M.rescope(doc, RUN, lo=RUN[0], hi=RUN[-1])
+    assert out["cursor"] == RUN[0]
+    assert out["origin_trial"] == RUN[0]
+
+
+def test_rescope_refuses_an_empty_range():
+    with pytest.raises(core.DocumentError):
+        M.rescope(fresh(), [])
+
+
+# =================================================================================================
 # discard_machine — 🔴 destructive, or nothing
 # =================================================================================================
 def test_discard_machine_destroys_every_position_and_the_build():
@@ -477,7 +561,7 @@ def test_tolerance_px_region_default_is_required_by_the_scorer():
 # ⭐ the document IS a ground-truth document — the scorer reads it unchanged
 # =================================================================================================
 def test_the_scorer_reads_a_saved_document_unchanged(tmp_path):
-    from camea.engine import score
+    from guard import score     # tests/guard/score.py — the scorer, NOT shipped in the wheel
 
     doc = fresh()
     place(doc, 11, (0.0, 0.0), state="anchored")

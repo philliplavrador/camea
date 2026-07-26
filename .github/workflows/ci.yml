@@ -1,0 +1,187 @@
+# Camea CI — proves the app WITHOUT the private data.
+#
+# The guiding rule the whole repo is built on: everything CI needs is committed. It runs on a
+# stock GitHub-hosted runner with NO 35 GB data mirror and NO GPU. The only dataset it ever touches
+# is the ~5.6 MB synthetic fixture at tests/fixtures/synthetic/, which is in the repo.
+#
+# What deliberately does NOT run here (needs the private mirror + a real GPU — see report below):
+#   * tests/slow/test_solver_312.py — the 312/312 solver guard. Deselected automatically by the
+#     pyproject `addopts = -m 'not slow'`, so `uv run pytest` in the backend job never even asks for
+#     its fixtures. It runs on the maintainer's machine and nightly, never on a CI runner.
+#   * the Playwright @slow specs — they drive a REAL t33 solver build on the GPU. The e2e job runs
+#     only the `fast` Playwright project, which is defined with `grepInvert: /@slow/`.
+#   * the `gpu` extra (cupy-cuda12x[ctk]) — never installed in CI; there is no CUDA runtime here and
+#     the engine's CPU/NumPy path is what CI exercises.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Least privilege: CI only reads the repo. No token needs write access here.
+permissions:
+  contents: read
+
+# One in-flight run per ref; a new push cancels the superseded one. (push + pull_request both fire
+# on a PR branch — this keeps that from piling up redundant runs.)
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Python 3.12 is the floor and the target (spectralign -> salpa ships no 3.11 wheel; see pyproject).
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+
+jobs:
+  # ── BACKEND ────────────────────────────────────────────────────────────────────────────────────
+  # Lint + the FAST Python suite. uv-managed, CPU-only, no data mirror.
+  backend:
+    name: backend (ruff · pytest · mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (with cache keyed on uv.lock)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      # No `--extra gpu`: there is no CUDA runtime on the runner. Default groups install the `dev`
+      # group (ruff/mypy/pytest/httpx), so the whole fast toolchain comes from this one sync.
+      - name: uv sync (CPU only, no gpu extra)
+        run: uv sync
+
+      - name: ruff check
+        run: uv run ruff check
+
+      # The 312/312 guard is marked @slow and pyproject's `addopts = -m 'not slow'` deselects it
+      # BEFORE its data-mirror/GPU fixtures are ever constructed. So this is the fast suite only.
+      - name: pytest (fast suite — @slow guard deselected by addopts)
+        run: uv run pytest -q
+
+      # NON-BLOCKING. mypy is not a merge gate: the four guarded engine files (t27/t33/quality/render)
+      # are byte-identical copies of the archived science and are excluded from ruff for the same
+      # reason — they are not clean under strict typing and must not be "fixed". Type regressions in
+      # the app code are still surfaced in the log, just not enforced.
+      - name: mypy (advisory, non-blocking)
+        continue-on-error: true
+        run: uv run mypy -p camea
+
+  # ── FRONTEND ───────────────────────────────────────────────────────────────────────────────────
+  # Pure Node: typecheck+build, lint, and the Vitest unit suite. Needs no Python.
+  frontend:
+    name: frontend (build · lint · vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node (with npm cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: build (tsc -b + vite build)
+        run: npm run build
+
+      - name: lint (eslint)
+        run: npm run lint
+
+      - name: test (vitest)
+        run: npm run test
+
+  # ── API DRIFT ──────────────────────────────────────────────────────────────────────────────────
+  # HARD RULE 4: the frontend API client is GENERATED from the backend, never hand-written.
+  # `npm run check:api` dumps the LIVE OpenAPI from the backend (uv run python) and diffs a fresh
+  # openapi-typescript render against the committed web/src/api/schema.d.ts. It therefore needs BOTH
+  # toolchains, so it gets its own job rather than bloating either of the two above.
+  api-drift:
+    name: api drift (schema.d.ts vs live backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (with cache keyed on uv.lock)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      - name: uv sync (backend must be importable)
+        run: uv sync
+
+      - name: Setup Node (with npm cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # openapi-typescript must be present for check-schema.mjs's `npx --no-install`.
+      - name: npm ci
+        working-directory: web
+        run: npm ci
+
+      - name: check:api (fails if the generated contract has drifted)
+        working-directory: web
+        run: npm run check:api
+
+  # ── E2E ────────────────────────────────────────────────────────────────────────────────────────
+  # Playwright against the real app: the config auto-starts the FastAPI backend (uv, pointed at the
+  # synthetic fixture) and the Vite dev server. Needs BOTH toolchains.
+  e2e:
+    name: e2e (playwright — fast project only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (with cache keyed on uv.lock)
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      # Pre-sync so the backend webServer (`uv --directory .. run camea`) starts instantly, no GPU.
+      - name: uv sync (CPU only, no gpu extra)
+        run: uv sync
+
+      - name: Setup Node (with npm cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        working-directory: web
+        run: npm ci
+
+      - name: Install Playwright Chromium (+ system deps)
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      # ⚠️ `--project=fast` runs ONLY the fast Playwright project, which is defined in
+      # playwright.config.ts with `grepInvert: /@slow/`. The @slow specs drive a REAL t33 GPU solver
+      # build and CANNOT run on a GPU-less CI runner — they are INTENTIONALLY EXCLUDED here and run
+      # locally / nightly. Do not add the slow project to CI.
+      - name: playwright test (fast project only — @slow excluded, needs a GPU)
+        working-directory: web
+        run: npx playwright test --project=fast
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 7

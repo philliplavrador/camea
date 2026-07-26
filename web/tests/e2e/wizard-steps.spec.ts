@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { Wizard, TID, byId, enterMosaic, answerNextPrompt, ROUTES } from './pages';
+import { Wizard, TID, byId, enterMosaic } from './pages';
 import { STEPS } from './pages';
 import { SHORT } from './fixture';
 
@@ -56,54 +56,38 @@ test.describe('Six-step wizard (R4) and Save-from-anywhere (R5)', () => {
     await wizard.expectActive('place');
   });
 
-  test('R5.1: "Save…" lives in the top bar and is visible on all six steps', async ({ page }) => {
+  // R5 is reframed (2026-07-24): auto-save IS the save, so there is no manual Save button — a quiet
+  // "Saved" indicator instead, and Ctrl+S FORCES the durable save (a PUT), from any screen.
+  test('R5.1 (reframed): the "Saved" indicator is visible on every step while a project is open', async ({
+    page,
+  }) => {
     const wizard = new Wizard(page);
     await enterMosaic(page);
     for (const step of STEPS) {
       if (await wizard.isLocked(step)) continue;
       await wizard.goto(step);
-      await expect(byId(page, TID.saveProject)).toBeVisible({ timeout: SHORT });
+      await expect(byId(page, TID.saveIndicator)).toBeVisible({ timeout: SHORT });
     }
   });
 
-  test('R5.2: Ctrl+S saves from ANY screen — it is handled above the sweep-only gate', async ({
+  test('R5.2 (reframed): there is NO manual Save button anywhere — auto-save is the save', async ({
+    page,
+  }) => {
+    await enterMosaic(page);
+    await expect(page.getByTestId('save-project')).toHaveCount(0);
+  });
+
+  test('R5.3 (reframed): Ctrl+S from ANY screen forces the durable save now (a PUT, not a save-as)', async ({
     page,
   }) => {
     const wizard = new Wizard(page);
     await enterMosaic(page);
-    await wizard.goto('range'); // a NON-sweep screen — Ctrl+S must still fire the save
+    await wizard.goto('range'); // a NON-sweep screen — Ctrl+S must still flush from anywhere
     const saved = page.waitForRequest(
-      (r) => r.url().includes(ROUTES.saveAs) && r.method() === 'POST',
+      (r) => r.url().includes('/document') && r.method() === 'PUT',
       { timeout: SHORT },
     );
-    answerNextPrompt(page, tmpProjectPath());
     await page.keyboard.press('Control+s');
     await saved;
   });
-
-  test('R5.3: "Load a project…" lives on the Load screen (resuming is a way of starting)', async ({
-    page,
-  }) => {
-    const wizard = new Wizard(page);
-    await enterMosaic(page);
-    await wizard.goto('load');
-    await expect(byId(page, TID.loadProject)).toBeVisible({ timeout: SHORT });
-  });
-
-  test('R5.4: the rolling autosave note stays on Mosaic and is separate from "Save…"', async ({
-    page,
-  }) => {
-    // The autosave (crash net) must not read as the same control as the file the user controls.
-    const wizard = new Wizard(page);
-    await enterMosaic(page);
-    if (!(await wizard.isLocked('mosaic'))) {
-      await wizard.goto('mosaic');
-      await expect(byId(page, TID.mosaicAutosaveNote)).toBeVisible({ timeout: SHORT });
-    }
-  });
 });
-
-function tmpProjectPath(): string {
-  // Backends and specs share the machine; a throwaway path is enough for R5.2's "did it POST?" check.
-  return `${process.env.TEMP ?? process.env.TMPDIR ?? '.'}/camea-e2e-${Date.now()}.camea.json`;
-}

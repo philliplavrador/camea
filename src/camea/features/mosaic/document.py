@@ -22,8 +22,8 @@ THE FIVE THINGS THAT MUST SURVIVE ANY REWRITE OF THIS FILE
    cost. There is no toggle.) The one symbol this feature may take from the exclusion module is
    `gaps()`, and it takes it through `core.dataset.gaps` — a pure function over a trial list.
 
-2. ⭐ **THIS DOCUMENT *IS* A GROUND-TRUTH DOCUMENT.** `engine/score.py :: load_gt()` reads it
-   **unchanged**, at the TOP level:
+2. ⭐ **THIS DOCUMENT *IS* A GROUND-TRUTH DOCUMENT.** The benchmark scorer (`tests/guard/score.py ::
+   load_gt()`) reads it **unchanged**, at the TOP level:
 
        doc["tiles"][k]["status"] == "anchor"   and   x / y   (and `r`, defaulting to)
        doc["tolerance_px"]["region_default"]
@@ -411,6 +411,105 @@ def new_payload(doc: dict, *, trials: list[int] | tuple[int, ...] = (), lo: int 
 
 
 # =================================================================================================
+# rescope — ⭐ "which trials are the mosaic?", answered a SECOND time, without losing the work
+# =================================================================================================
+def rescope(doc: dict, trials: list[int] | tuple[int, ...], *, lo: int | None = None,
+            hi: int | None = None, pass_split: int | None = None,
+            texture: dict | None = None, run: dict | None = None) -> tuple[dict, dict]:
+    """Re-scope an EXISTING document to `trials`. -> `(doc, info)`.
+
+    The Range step's `Apply`. A project opens on every square snapshot the dataset holds — which on a
+    real acquisition includes the stray snapshots taken **before the mosaic scan started** (three
+    lone blocks on 260620d: `1`, `5-7`, then the run at `11-348`). They are not tiles of this mosaic
+    and they must not be swept, solved or exported as if they were. The user says which range IS the
+    mosaic; this rewrites the tile set to exactly that.
+
+    ⛔ **THE APP STILL CARRIES NO DATASET KNOWLEDGE.** `trials` is the caller's list — measured by
+    the route from `log.txt` + the per-trial XML shape, or typed by the user. No number is named here
+    and none is defaulted. Nothing is *excluded*: an out-of-range trial is not "thrown out", it was
+    never part of this mosaic. (`unusable_tiles` stays the human's own `E` presses, and `human_edits`
+    keeps counting only those.)
+
+    🔴 **IT KEEPS THE WORK ON EVERY SURVIVING TILE.** A tile still in range comes through byte-for-byte
+    — its position, its state, its anchor, its `machine`, its `judged_at`. Rebuilding the tile dict
+    from scratch (the obvious implementation) would silently wipe a half-swept run the moment the user
+    nudged `hi`. Only tiles that LEAVE the range are dropped, and `info` reports how much placed work
+    went with them so the caller can confirm first.
+
+    ⚠️ A changed trial list is a **different problem** for the solver: `normalise()` recomputes `gaps`
+    and `mark_stale_if_input_changed()` flags the build. That is the whole reason this is one function
+    on the server rather than three edits in the browser.
+    """
+    ts = sorted({int(t) for t in trials})
+    if not ts:
+        raise core.DocumentError(
+            "a mosaic needs at least one trial: the range you asked for is empty"
+        )
+
+    doc = copy.deepcopy(doc)
+    old = tiles_of(doc)
+    keep = {str(t) for t in ts}
+
+    removed = sorted(int(k) for k in old if k not in keep)
+    added = [t for t in ts if str(t) not in old]
+    n_placed_removed = sum(1 for t in removed if state_of(old[str(t)]) in PLACED_STATES)
+
+    scan = doc.get("blank_scan") if isinstance(doc.get("blank_scan"), dict) else {}
+    scanned = {int(t) for t in (scan.get("scanned") or [])}
+    tex = {int(k): float(v) for k, v in (texture or {}).items()}
+    split = None if pass_split is None else int(pass_split)
+
+    tiles: dict[str, dict] = {}
+    for t in ts:
+        k = str(t)
+        if k in old:
+            tiles[k] = old[k]                            # ⭐ the human's work, untouched
+        else:
+            tiles[k] = {
+                "status": "unplaced", "state": "unplaced", "x": None, "y": None,
+                "r": float(R_UNPLACED), "pass": pass_of(t, split),
+                "machine": None, "moved_px": None,
+                "ncc": None, "margin": None, "n_anchors": None,
+                "blank": t in scanned,                   # a measurement, if the scan ever saw it
+                "texture": tex.get(t),
+                "judged_at": None,
+            }
+    doc["tiles"] = tiles
+
+    doc["trial_range"] = [int(lo) if lo is not None else ts[0],
+                          int(hi) if hi is not None else ts[-1]]
+    doc["pass_split"] = split
+    if doc.get("origin_trial") not in ts:
+        doc["origin_trial"] = ts[0]
+    if doc.get("cursor") not in ts:
+        doc["cursor"] = ts[0]
+
+    # The blank scan's lists are about frames; a frame that is no longer in the mosaic is no longer
+    # its business. (`scanned` is the measurement's own record and is pruned the same way — a card for
+    # a trial that is not in the document would render against a tile that does not exist.)
+    if scan:
+        for key in ("blank", "scanned", "overruled_by_user"):
+            if isinstance(scan.get(key), list):
+                scan[key] = [int(t) for t in scan[key] if int(t) in set(ts)]
+
+    r = dict(run or {})
+    block = doc.get("run") if isinstance(doc.get("run"), dict) else {}
+    doc["run"] = {**block,
+                  "detected": bool(r.get("detected", False)),
+                  "why": str(r.get("why") or block.get("why") or ""),
+                  "pass_split_detected": bool(r.get("pass_split_detected",
+                                                    block.get("pass_split_detected", False))),
+                  "pass_split_why": str(r.get("pass_split_why")
+                                        or block.get("pass_split_why") or ""),
+                  "n_trials": len(ts)}
+
+    doc = normalise(doc)                                 # gaps, pass, unusable_tiles, build staleness
+    return doc, {"n_trials": len(ts), "added": added, "removed": removed,
+                 "n_added": len(added), "n_removed": len(removed),
+                 "n_placed_removed": n_placed_removed}
+
+
+# =================================================================================================
 # seed_from_build — 🔴 A RE-SOLVE MUST NOT DESTROY THE HUMAN'S WORK
 # =================================================================================================
 def seed_from_build(doc: dict, build: dict) -> tuple[dict, dict]:
@@ -514,6 +613,52 @@ def seed_from_build(doc: dict, build: dict) -> tuple[dict, dict]:
     }
     return normalise(doc), {"n_seeded": n_seeded, "n_protected": len(protected),
                             "seed_translation": (float(dx), float(dy))}
+
+
+def place_against_anchors(doc: dict, placed: dict) -> tuple[dict, dict]:
+    """⭐ **RECOMPUTE's write** — land the machine placements that `POST /api/mosaic/recompute`
+    measured against the FROZEN anchor field. -> `(doc, {"n_placed"})`.
+
+    `placed = {trial: (x, y)}` are the positions `solve.match_anchor` returned for the non-anchored
+    targets. ⭐ **They need NO translation.** Unlike a cold build (which lands in its own frame and
+    `seed_from_build` slides onto the human's by a median offset), the recompute composite is built
+    from the **anchors' own document positions**, so `match_anchor`'s world coords are already in the
+    document's frame. Sliding them would be a bug.
+
+    Each placed tile becomes `unverified` at that position, carrying `machine` — which is what makes it
+    re-placeable, keeps `moved_px` / the QC report meaningful, and (via `stamp()`) forces
+    `independent_of_method: false`.
+
+    🔴 **It NEVER touches an `anchored`, `human`, or `excluded` tile** — those are the frozen reference
+    and the human's own work. The route already filters them out of the targets; this is that same
+    guard restated where the write happens. (A re-solve that wipes the human's work is exactly the bug
+    `seed_from_build` exists to prevent — this shares its rule. Nothing is ever auto-anchored: I3.)
+    """
+    doc = copy.deepcopy(doc)
+    tiles = tiles_of(doc)
+    n_placed = 0
+    for t, xy in (placed or {}).items():
+        tile = tiles.get(str(int(t))) or tiles.get(int(t))
+        if not isinstance(tile, dict):
+            continue
+        # Defensive: never overwrite the frozen reference or a hand placement.
+        if state_of(tile) == "excluded" or state_of(tile) == "anchored" or tile.get("human"):
+            continue
+        x, y = float(xy[0]), float(xy[1])
+        tile["state"] = "unverified"
+        tile["status"] = "unverified"
+        tile["x"] = x
+        tile["y"] = y
+        tile["r"] = _placed_radius(tile)
+        tile["machine"] = [x, y]
+        # A fresh machine placement: it carries no divert history and is not stale.
+        tile["diverted"] = False
+        tile.pop("divert_reason", None)
+        tile.pop("rejected_match", None)
+        tile["stale"] = False
+        tile["source"] = "recompute (re-placed against the anchor composite)"
+        n_placed += 1
+    return normalise(doc), {"n_placed": n_placed}
 
 
 # =================================================================================================

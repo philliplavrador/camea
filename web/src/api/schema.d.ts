@@ -473,7 +473,13 @@ export interface paths {
         delete: operations["delete_analysis_api_workspace_analyses__analysis_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Rename Analysis
+         * @description Rename an analysis — the project manager's rename. ⭐ Rewrites the manifest ONLY; the directory
+         *     never moves and the `analysis_id` is forever (a rename that moved the dir would break the slot guard
+         *     and every path the document carries).
+         */
+        patch: operations["rename_analysis_api_workspace_analyses__analysis_id__patch"];
         trace?: never;
     };
     "/api/analyses/{analysis_id}/document": {
@@ -744,6 +750,42 @@ export interface paths {
          *     poisoned.
          */
         post: operations["post_run_api_mosaic_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mosaic/document/rescope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Rescope
+         * @description `POST /api/mosaic/document/rescope` — ⭐ **the Range step's `Apply`, made to STICK.**
+         *
+         *     `POST /run` measures; this one writes. A project opens on every square snapshot the dataset holds,
+         *     and on a real acquisition that includes the stray snapshots taken before the mosaic scan started
+         *     (`1`, `5-7` on 260620d, ahead of the run at `11-348`). Until now `Apply` re-measured the run and
+         *     left them in the document, so they were swept, solved and exported as tiles of a mosaic they were
+         *     never part of. This re-authors the tile set to exactly the trials in range.
+         *
+         *     ⛔ **NO DATASET KNOWLEDGE.** The trial list is `_detect_run` over `log.txt` + the per-trial XML
+         *     shape, bounded by the range the USER typed. No number is named here, and nothing is defaulted for
+         *     "his" dataset.
+         *     ⛔ **A DROPPED TRIAL IS NOT AN EXCLUSION.** It does not land in `unusable_tiles` and it does not
+         *     count as a human edit: it was never a tile of this mosaic. `E` remains the only thing that
+         *     excludes.
+         *
+         *     🔴 Every surviving tile keeps its position, state and provenance. The reply's `n_placed_removed`
+         *     is the work that was thrown away — the caller confirms **before** calling (the Range step does).
+         */
+        post: operations["post_rescope_api_mosaic_document_rescope_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1054,6 +1096,40 @@ export interface paths {
          *     evidence.
          */
         post: operations["post_recheck_api_mosaic_recheck_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mosaic/recompute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Recompute
+         * @description `POST /api/mosaic/recompute` -> **202 `JobRef`**. ⭐ **THE TOOL THE USER REACHES FOR.**
+         *
+         *     Freeze the tiles the human has anchored and re-place every other tile against their combined
+         *     composite — then he anchors more and recomputes again. It is `recheck`'s per-target
+         *     `match_anchor(global)` loop (same `gpu` lease, same progress/cancel, N × ~1 s so it never blocks),
+         *     but it **writes** the answer instead of only measuring it.
+         *
+         *     🔴 **It never moves an `anchored`, `human`, or `excluded` tile** — those are the frozen reference
+         *     and the human's own work (the re-solve-wipes-the-sweep bug `seed_from_build` exists to prevent).
+         *     Every placed tile lands `unverified` + `machine`; **nothing is auto-anchored** (I3), and the
+         *     machine fingerprint keeps provenance honest. A target with no measurable overlap against the
+         *     anchors is **left untouched** — its previous placement stands; anchor a neighbour and recompute.
+         *
+         *     ⚡ The anchor set is FIXED across all targets, so `solve`'s incremental composite cache builds the
+         *     reference composite **once** and reuses it for every match.
+         */
+        post: operations["post_recompute_api_mosaic_recompute_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2081,7 +2157,7 @@ export interface components {
              * Result
              * @description null until state == 'done'. Discriminated on `kind`.
              */
-            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"]) | null;
+            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"]) | null;
             /** @description Set iff state == 'failed'. */
             error?: components["schemas"]["JobError"] | null;
         };
@@ -2731,6 +2807,56 @@ export interface components {
             still_stale: boolean;
         };
         /**
+         * RecomputeRequest
+         * @description `POST /api/mosaic/recompute` → 202 `JobRef`. ⭐ **The tool the user reaches for.** Freeze the
+         *     tiles he has anchored and re-place every other tile against their combined composite — then he
+         *     anchors more and recomputes again.
+         *
+         *     It is `recheck`'s per-target `match_anchor(global)` loop, but it **writes** the answer instead of
+         *     only measuring it: every placed tile lands `unverified` + `machine` (never `anchored` — I3), and
+         *     an `anchored`, `human`, or `excluded` tile is never touched (the frozen reference / his own work).
+         *     A target with no measurable overlap against the anchors is **left untouched** — anchor a neighbour
+         *     and recompute again.
+         */
+        RecomputeRequest: {
+            /** Session Id */
+            session_id: string;
+            doc: components["schemas"]["MosaicDocument"];
+            /**
+             * Trials
+             * @description null = every non-anchored, non-human, non-excluded, loaded tile.
+             */
+            trials?: number[] | null;
+        };
+        /**
+         * RecomputeResult
+         * @description `Job.result` when `kind == "recompute"`. ⚠️ Unlike `recheck`, it **returns the DOCUMENT** — the
+         *     front end adopts it exactly as it adopts a `/seed` result (and re-hydrates the sweep).
+         */
+        RecomputeResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "recompute";
+            doc: components["schemas"]["MosaicDocument"];
+            /**
+             * N Placed
+             * @description tiles re-placed against the anchor composite.
+             */
+            n_placed: number;
+            /**
+             * N Unmeasurable
+             * @description targets with no measurable overlap with the anchors — left untouched.
+             */
+            n_unmeasurable: number;
+            /**
+             * N Reference
+             * @description anchored tiles used as the frozen ground truth.
+             */
+            n_reference: number;
+        };
+        /**
          * Refusal
          * @description ⛔ **BLANK FRAMES ARE REFUSED, NOT SCORED. There is no `force` flag and there will not be
          *     one.** Two blank frames 136 trials apart correlate **+0.43 at zero shift** (honest noise floor
@@ -2784,6 +2910,66 @@ export interface components {
             n_anchors?: number | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * RenameAnalysisRequest
+         * @description Rename an analysis (`PATCH /api/workspace/analyses/{id}`). Rewrites the manifest only — **the
+         *     directory never moves; the id is forever.** This is what the project manager's rename does.
+         */
+        RenameAnalysisRequest: {
+            /** Name */
+            name: string;
+        };
+        /**
+         * RescopeRequest
+         * @description `POST /api/mosaic/document/rescope` — the Range step's `Apply`, applied to the DOCUMENT.
+         *
+         *     ⭐ **THE SERVER RE-AUTHORS THE TILE SET.** `POST /api/mosaic/run` only *measures* the run; it
+         *     leaves the document alone, so a project opened on every square snapshot in the dataset kept the
+         *     stray pre-scan snapshots (`1`, `5-7` on 260620d) as tiles of the mosaic. This is the route that
+         *     makes the answer stick — and it is a route, not four edits in the browser, because a changed
+         *     trial list changes the **gaps** and makes the build **stale**.
+         *
+         *     🔴 It keeps every surviving tile's work byte-for-byte; only trials that leave the range are
+         *     dropped. `n_placed_removed` in the reply is what the caller should have confirmed first.
+         */
+        RescopeRequest: {
+            /** Session Id */
+            session_id: string;
+            doc: components["schemas"]["MosaicDocument"];
+            /** Lo */
+            lo?: number | null;
+            /** Hi */
+            hi?: number | null;
+            /**
+             * Pass Split
+             * @description Override. Omit and the split is re-detected for the new range.
+             */
+            pass_split?: number | null;
+        };
+        /** RescopeResponse */
+        RescopeResponse: {
+            doc: components["schemas"]["MosaicDocument"];
+            /** @description The re-detection the new tile set was authored from. */
+            run: components["schemas"]["RunDetection"];
+            /** N Trials */
+            n_trials: number;
+            /** Added */
+            added: number[];
+            /**
+             * Removed
+             * @description Trials that left the mosaic. ⛔ NOT 'excluded' — they were never tiles of it, and they do not appear in `unusable_tiles` or in the human-edit counters.
+             */
+            removed: number[];
+            /** N Added */
+            n_added: number;
+            /** N Removed */
+            n_removed: number;
+            /**
+             * N Placed Removed
+             * @description How many of `removed` carried a position. The work that was thrown away.
+             */
+            n_placed_removed: number;
         };
         /**
          * RunBlock
@@ -4244,6 +4430,41 @@ export interface operations {
             };
         };
     };
+    rename_analysis_api_workspace_analyses__analysis_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameAnalysisRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_document_api_analyses__analysis_id__document_get: {
         parameters: {
             query?: {
@@ -4660,6 +4881,39 @@ export interface operations {
             };
         };
     };
+    post_rescope_api_mosaic_document_rescope_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RescopeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RescopeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_gaps_api_mosaic_gaps_post: {
         parameters: {
             query?: never;
@@ -4965,6 +5219,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["RecheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_recompute_api_mosaic_recompute_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecomputeRequest"];
             };
         };
         responses: {

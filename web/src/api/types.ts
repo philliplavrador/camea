@@ -31,6 +31,7 @@ export type ExportResult = Schemas['ExportResult'];
 export type ExportedFile = Schemas['ExportedFile'];
 export type RecheckResult = Schemas['RecheckResult'];
 export type RecheckRow = Schemas['RecheckRow'];
+export type RecomputeResult = Schemas['RecomputeResult'];
 
 // ── Datasets / browser ────────────────────────────────────────────────────────
 export type DatasetSummary = Schemas['DatasetSummary'];
@@ -91,6 +92,8 @@ export type CreateAnalysisRequest = Schemas['CreateAnalysisRequest'];
 export type RunDetectRequest = Schemas['RunDetectRequest'];
 export type RunDetection = Schemas['RunDetection'];
 export type PassSplit = Schemas['PassSplit'];
+export type RescopeRequest = Schemas['RescopeRequest'];
+export type RescopeResponse = Schemas['RescopeResponse'];
 export type GapsRequest = Schemas['GapsRequest'];
 export type GapsResponse = Schemas['GapsResponse'];
 export type BlankProposeRequest = Schemas['BlankProposeRequest'];
@@ -115,6 +118,7 @@ export type ScoreResult = Schemas['ScoreResult'];
 
 // ── Mosaic: recheck / export / qc / provenance ────────────────────────────────────
 export type RecheckRequest = Schemas['RecheckRequest'];
+export type RecomputeRequest = Schemas['RecomputeRequest'];
 export type ExportRequest = Schemas['ExportRequest'];
 export type QcRequest = Schemas['QcRequest'];
 export type QcReport = Schemas['QcReport'];

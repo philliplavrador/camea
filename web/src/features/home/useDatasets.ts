@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../../api/client';
+import { api, ApiError, type ErrorEnvelope } from '../../api/client';
 import type { components } from '../../api/schema';
 
 export type DatasetSummary = components['schemas']['DatasetSummary'];
@@ -59,9 +59,17 @@ export function useDatasets(): DatasetsHook {
     const seq = ++reqSeq.current;
     const r = await api.POST('/api/datasets/scan', { body: { root, depth: 3, remember: true } });
     if (r.error !== undefined || r.data === undefined) {
-      throw new Error(`could not scan ${root} (${r.response.status})`);
+      // The backend says WHY ("no such directory: …"). Show that, not a bare status code.
+      throw new ApiError(r.response.status, r.error as ErrorEnvelope | undefined);
     }
-    if (seq === reqSeq.current) setState({ status: 'ready', data: r.data });
+    if (seq !== reqSeq.current) return;
+    // The scan response lists only the datasets under the root just added. Re-read the whole set, or
+    // adding a second root would appear to make the first one's datasets vanish.
+    setState({ status: 'ready', data: r.data });
+    const all = await api.GET('/api/datasets');
+    if (seq === reqSeq.current && all.data !== undefined) {
+      setState({ status: 'ready', data: all.data });
+    }
   }, []);
 
   return { state, refetch, scanRoot };

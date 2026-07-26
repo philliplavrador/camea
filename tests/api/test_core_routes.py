@@ -420,6 +420,26 @@ def test_delete_an_analysis(client, synth, workspace):
     assert client.delete(f"/api/workspace/analyses/{aid}").status_code == 404
 
 
+def test_rename_a_project_rewrites_the_manifest_and_keeps_the_id(client, synth, workspace):
+    """The project manager's rename: `PATCH /api/workspace/analyses/{id}`. It rewrites the manifest
+    name; the id (the directory) is forever, so the slot guard and every stored path keep working."""
+    s = open_session(client, synth.path, synth.trials)
+    aid = client.post("/api/workspace/analyses",
+                      json={"session_id": s["session_id"], "feature": "mosaic", "name": "before",
+                            "trials": synth.trials}).json()["analysis_id"]
+    r = client.patch(f"/api/workspace/analyses/{aid}", json={"name": "after"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "after"
+    assert body["analysis_id"] == aid                        # ⭐ the id never moves
+    # it persists — the list reflects the new name.
+    listed = client.get("/api/workspace/analyses").json()["analyses"]
+    assert [a["name"] for a in listed if a["analysis_id"] == aid] == ["after"]
+    # an empty name is refused; a missing analysis is a 404.
+    assert client.patch(f"/api/workspace/analyses/{aid}", json={"name": "  "}).status_code == 400
+    assert client.patch("/api/workspace/analyses/nope", json={"name": "x"}).status_code == 404
+
+
 # =================================================================================================
 # jobs
 # =================================================================================================

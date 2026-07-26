@@ -255,6 +255,45 @@ class SettingsUpdate(Req):
 
 
 # =================================================================================================
+# 🔴 fs — THE FOLDER PICKER THAT DOES NOT NEED A NATIVE WINDOW.  CORE.
+# =================================================================================================
+#
+# In `--browser` and `--headless` there is no pywebview, so `/api/dialog/*` cannot open a native
+# dialog and honestly returns 501. `GET /api/fs/list` is the way out — served in EVERY mode. It is a
+# directory LISTER, not a file server: it returns NAMES, never bytes.
+
+
+class FsEntry(Res):
+    """One row in the folder picker."""
+
+    name: str
+    path: str
+    is_dataset: bool = Field(
+        description="It has a `log.txt` and at least one `NNN.xml`. ⛔ Recognised by SHAPE, never by "
+        "name — nothing in this app knows what a dataset is called."
+    )
+    n_children: int | None = Field(
+        default=None, description="Sub-directories. null when the folder could not be read."
+    )
+
+
+class FsListResponse(Res):
+    """`GET /api/fs/list` — the served folder picker. See the section note above."""
+
+    path: str
+    parent: str | None = Field(default=None, description="null at a filesystem root.")
+    is_dataset: bool
+    entries: list[FsEntry]
+    roots: list[str] = Field(
+        description="The drives / mount points, so the picker can start from nothing."
+    )
+    error: str | None = Field(
+        default=None, description="Set when `path` itself could not be listed. Not an HTTP error — "
+        "the picker must still render its roots and its parent."
+    )
+
+
+# =================================================================================================
 # DATASETS — the browser. **The new home screen.**  CORE.
 # =================================================================================================
 #
@@ -584,6 +623,13 @@ class CreateAnalysisRequest(Req):
     trials: list[int] | None = Field(
         default=None, description="The feature's selection. null = the session's whole trial list."
     )
+
+
+class RenameAnalysisRequest(Req):
+    """Rename an analysis (`PATCH /api/workspace/analyses/{id}`). Rewrites the manifest only — **the
+    directory never moves; the id is forever.** This is what the project manager's rename does."""
+
+    name: str
 
 
 # =================================================================================================
@@ -1106,6 +1152,43 @@ class RunDetection(Res):
     gaps: list[Gap] = Field(default_factory=list)
 
 
+class RescopeRequest(Req):
+    """`POST /api/mosaic/document/rescope` — the Range step's `Apply`, applied to the DOCUMENT.
+
+    ⭐ **THE SERVER RE-AUTHORS THE TILE SET.** `POST /api/mosaic/run` only *measures* the run; it
+    leaves the document alone, so a project opened on every square snapshot in the dataset kept the
+    stray pre-scan snapshots (`1`, `5-7` on 260620d) as tiles of the mosaic. This is the route that
+    makes the answer stick — and it is a route, not four edits in the browser, because a changed
+    trial list changes the **gaps** and makes the build **stale**.
+
+    🔴 It keeps every surviving tile's work byte-for-byte; only trials that leave the range are
+    dropped. `n_placed_removed` in the reply is what the caller should have confirmed first."""
+
+    session_id: str
+    doc: MosaicDocument
+    lo: int | None = None
+    hi: int | None = None
+    pass_split: int | None = Field(
+        default=None, description="Override. Omit and the split is re-detected for the new range."
+    )
+
+
+class RescopeResponse(Res):
+    doc: MosaicDocument
+    run: RunDetection = Field(description="The re-detection the new tile set was authored from.")
+    n_trials: int
+    added: list[int]
+    removed: list[int] = Field(
+        description="Trials that left the mosaic. ⛔ NOT 'excluded' — they were never tiles of it, "
+        "and they do not appear in `unusable_tiles` or in the human-edit counters."
+    )
+    n_added: int
+    n_removed: int
+    n_placed_removed: int = Field(
+        description="How many of `removed` carried a position. The work that was thrown away."
+    )
+
+
 # -------------------------------------------------------------------------------------------------
 # gaps — ⭐ THE ONE FUNCTION THE APP MAY IMPORT FROM THE EXCLUSION MODULE
 # -------------------------------------------------------------------------------------------------
@@ -1542,6 +1625,36 @@ class RecheckResult(Res):
     disagree: list[RecheckRow] = Field(description="**Go and look.** These are still wrong.")
 
 
+class RecomputeRequest(Req):
+    """`POST /api/mosaic/recompute` → 202 `JobRef`. ⭐ **The tool the user reaches for.** Freeze the
+    tiles he has anchored and re-place every other tile against their combined composite — then he
+    anchors more and recomputes again.
+
+    It is `recheck`'s per-target `match_anchor(global)` loop, but it **writes** the answer instead of
+    only measuring it: every placed tile lands `unverified` + `machine` (never `anchored` — I3), and
+    an `anchored`, `human`, or `excluded` tile is never touched (the frozen reference / his own work).
+    A target with no measurable overlap against the anchors is **left untouched** — anchor a neighbour
+    and recompute again."""
+
+    session_id: str
+    doc: MosaicDocument
+    trials: list[int] | None = Field(
+        default=None,
+        description="null = every non-anchored, non-human, non-excluded, loaded tile.")
+
+
+class RecomputeResult(Res):
+    """`Job.result` when `kind == "recompute"`. ⚠️ Unlike `recheck`, it **returns the DOCUMENT** — the
+    front end adopts it exactly as it adopts a `/seed` result (and re-hydrates the sweep)."""
+
+    kind: Literal["recompute"] = "recompute"
+    doc: MosaicDocument
+    n_placed: int = Field(description="tiles re-placed against the anchor composite.")
+    n_unmeasurable: int = Field(
+        description="targets with no measurable overlap with the anchors — left untouched.")
+    n_reference: int = Field(description="anchored tiles used as the frozen ground truth.")
+
+
 # -------------------------------------------------------------------------------------------------
 # Step 6 · Mosaic — export + QC.
 # -------------------------------------------------------------------------------------------------
@@ -1662,7 +1775,7 @@ class QcReport(Open):
 # of an `any`. **A new feature adds a member here, and nowhere else.**
 
 JobResult = Annotated[
-    Union[OpenJobResult, BuildResult, ExportResult, RecheckResult],
+    Union[OpenJobResult, BuildResult, ExportResult, RecheckResult, RecomputeResult],
     Field(discriminator="kind"),
 ]
 
@@ -1722,6 +1835,7 @@ __all__ = [
     "WorkspaceInfo",
     "WorkspaceSetRequest",
     "AnalysisSummary",
+    "RenameAnalysisRequest",
     "AnalysisListResponse",
     "CreateAnalysisRequest",
     # documents
@@ -1763,6 +1877,8 @@ __all__ = [
     "DroppedTrial",
     "RunDetectRequest",
     "RunDetection",
+    "RescopeRequest",
+    "RescopeResponse",
     "GapsRequest",
     "GapsResponse",
     "BlankProposeRequest",
@@ -1792,6 +1908,8 @@ __all__ = [
     "RecheckRequest",
     "RecheckRow",
     "RecheckResult",
+    "RecomputeRequest",
+    "RecomputeResult",
     # mosaic — export / qc
     "RenderMode",
     "ExportKind",

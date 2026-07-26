@@ -1046,6 +1046,57 @@
       }
     },
     "/api/workspace/analyses/{analysis_id}": {
+      "patch": {
+        "tags": [
+          "core"
+        ],
+        "summary": "Rename Analysis",
+        "description": "Rename an analysis \u2014 the project manager's rename. \u2b50 Rewrites the manifest ONLY; the directory\nnever moves and the `analysis_id` is forever (a rename that moved the dir would break the slot guard\nand every path the document carries).",
+        "operationId": "rename_analysis_api_workspace_analyses__analysis_id__patch",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameAnalysisRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "core"
@@ -1642,6 +1693,48 @@
         }
       }
     },
+    "/api/mosaic/document/rescope": {
+      "post": {
+        "tags": [
+          "mosaic"
+        ],
+        "summary": "Post Rescope",
+        "description": "`POST /api/mosaic/document/rescope` \u2014 \u2b50 **the Range step's `Apply`, made to STICK.**\n\n`POST /run` measures; this one writes. A project opens on every square snapshot the dataset holds,\nand on a real acquisition that includes the stray snapshots taken before the mosaic scan started\n(`1`, `5-7` on 260620d, ahead of the run at `11-348`). Until now `Apply` re-measured the run and\nleft them in the document, so they were swept, solved and exported as tiles of a mosaic they were\nnever part of. This re-authors the tile set to exactly the trials in range.\n\n\u26d4 **NO DATASET KNOWLEDGE.** The trial list is `_detect_run` over `log.txt` + the per-trial XML\nshape, bounded by the range the USER typed. No number is named here, and nothing is defaulted for\n\"his\" dataset.\n\u26d4 **A DROPPED TRIAL IS NOT AN EXCLUSION.** It does not land in `unusable_tiles` and it does not\ncount as a human edit: it was never a tile of this mosaic. `E` remains the only thing that\nexcludes.\n\n\ud83d\udd34 Every surviving tile keeps its position, state and provenance. The reply's `n_placed_removed`\nis the work that was thrown away \u2014 the caller confirms **before** calling (the Range step does).",
+        "operationId": "post_rescope_api_mosaic_document_rescope_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RescopeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RescopeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/mosaic/gaps": {
       "post": {
         "tags": [
@@ -2034,6 +2127,48 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RecheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRef"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mosaic/recompute": {
+      "post": {
+        "tags": [
+          "mosaic"
+        ],
+        "summary": "Post Recompute",
+        "description": "`POST /api/mosaic/recompute` -> **202 `JobRef`**. \u2b50 **THE TOOL THE USER REACHES FOR.**\n\nFreeze the tiles the human has anchored and re-place every other tile against their combined\ncomposite \u2014 then he anchors more and recomputes again. It is `recheck`'s per-target\n`match_anchor(global)` loop (same `gpu` lease, same progress/cancel, N \u00d7 ~1 s so it never blocks),\nbut it **writes** the answer instead of only measuring it.\n\n\ud83d\udd34 **It never moves an `anchored`, `human`, or `excluded` tile** \u2014 those are the frozen reference\nand the human's own work (the re-solve-wipes-the-sweep bug `seed_from_build` exists to prevent).\nEvery placed tile lands `unverified` + `machine`; **nothing is auto-anchored** (I3), and the\nmachine fingerprint keeps provenance honest. A target with no measurable overlap against the\nanchors is **left untouched** \u2014 its previous placement stands; anchor a neighbour and recompute.\n\n\u26a1 The anchor set is FIXED across all targets, so `solve`'s incremental composite cache builds the\nreference composite **once** and reuses it for every match.",
+        "operationId": "post_recompute_api_mosaic_recompute_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecomputeRequest"
               }
             }
           },
@@ -4197,6 +4332,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/RecheckResult"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RecomputeResult"
                   }
                 ],
                 "discriminator": {
@@ -4205,7 +4343,8 @@
                     "build": "#/components/schemas/BuildResult",
                     "export": "#/components/schemas/ExportResult",
                     "open": "#/components/schemas/OpenJobResult",
-                    "recheck": "#/components/schemas/RecheckResult"
+                    "recheck": "#/components/schemas/RecheckResult",
+                    "recompute": "#/components/schemas/RecomputeResult"
                   }
                 }
               },
@@ -5667,6 +5806,77 @@
         ],
         "title": "RecheckRow"
       },
+      "RecomputeRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "doc": {
+            "$ref": "#/components/schemas/MosaicDocument"
+          },
+          "trials": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trials",
+            "description": "null = every non-anchored, non-human, non-excluded, loaded tile."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "doc"
+        ],
+        "title": "RecomputeRequest",
+        "description": "`POST /api/mosaic/recompute` \u2192 202 `JobRef`. \u2b50 **The tool the user reaches for.** Freeze the\ntiles he has anchored and re-place every other tile against their combined composite \u2014 then he\nanchors more and recomputes again.\n\nIt is `recheck`'s per-target `match_anchor(global)` loop, but it **writes** the answer instead of\nonly measuring it: every placed tile lands `unverified` + `machine` (never `anchored` \u2014 I3), and\nan `anchored`, `human`, or `excluded` tile is never touched (the frozen reference / his own work).\nA target with no measurable overlap against the anchors is **left untouched** \u2014 anchor a neighbour\nand recompute again."
+      },
+      "RecomputeResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "recompute",
+            "title": "Kind",
+            "default": "recompute"
+          },
+          "doc": {
+            "$ref": "#/components/schemas/MosaicDocument"
+          },
+          "n_placed": {
+            "type": "integer",
+            "title": "N Placed",
+            "description": "tiles re-placed against the anchor composite."
+          },
+          "n_unmeasurable": {
+            "type": "integer",
+            "title": "N Unmeasurable",
+            "description": "targets with no measurable overlap with the anchors \u2014 left untouched."
+          },
+          "n_reference": {
+            "type": "integer",
+            "title": "N Reference",
+            "description": "anchored tiles used as the frozen ground truth."
+          }
+        },
+        "type": "object",
+        "required": [
+          "doc",
+          "n_placed",
+          "n_unmeasurable",
+          "n_reference"
+        ],
+        "title": "RecomputeResult",
+        "description": "`Job.result` when `kind == \"recompute\"`. \u26a0\ufe0f Unlike `recheck`, it **returns the DOCUMENT** \u2014 the\nfront end adopts it exactly as it adopts a `/seed` result (and re-hydrates the sweep)."
+      },
       "Refusal": {
         "properties": {
           "reason": {
@@ -5794,6 +6004,129 @@
         ],
         "title": "RejectedMatch",
         "description": "What the matcher wanted, on a tile the app **diverted** to the solver's answer. It is the\n*evidence for* the divert and the QC report needs it in full."
+      },
+      "RenameAnalysisRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "RenameAnalysisRequest",
+        "description": "Rename an analysis (`PATCH /api/workspace/analyses/{id}`). Rewrites the manifest only \u2014 **the\ndirectory never moves; the id is forever.** This is what the project manager's rename does."
+      },
+      "RescopeRequest": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "doc": {
+            "$ref": "#/components/schemas/MosaicDocument"
+          },
+          "lo": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lo"
+          },
+          "hi": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi"
+          },
+          "pass_split": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Split",
+            "description": "Override. Omit and the split is re-detected for the new range."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "doc"
+        ],
+        "title": "RescopeRequest",
+        "description": "`POST /api/mosaic/document/rescope` \u2014 the Range step's `Apply`, applied to the DOCUMENT.\n\n\u2b50 **THE SERVER RE-AUTHORS THE TILE SET.** `POST /api/mosaic/run` only *measures* the run; it\nleaves the document alone, so a project opened on every square snapshot in the dataset kept the\nstray pre-scan snapshots (`1`, `5-7` on 260620d) as tiles of the mosaic. This is the route that\nmakes the answer stick \u2014 and it is a route, not four edits in the browser, because a changed\ntrial list changes the **gaps** and makes the build **stale**.\n\n\ud83d\udd34 It keeps every surviving tile's work byte-for-byte; only trials that leave the range are\ndropped. `n_placed_removed` in the reply is what the caller should have confirmed first."
+      },
+      "RescopeResponse": {
+        "properties": {
+          "doc": {
+            "$ref": "#/components/schemas/MosaicDocument"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunDetection",
+            "description": "The re-detection the new tile set was authored from."
+          },
+          "n_trials": {
+            "type": "integer",
+            "title": "N Trials"
+          },
+          "added": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Added"
+          },
+          "removed": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Removed",
+            "description": "Trials that left the mosaic. \u26d4 NOT 'excluded' \u2014 they were never tiles of it, and they do not appear in `unusable_tiles` or in the human-edit counters."
+          },
+          "n_added": {
+            "type": "integer",
+            "title": "N Added"
+          },
+          "n_removed": {
+            "type": "integer",
+            "title": "N Removed"
+          },
+          "n_placed_removed": {
+            "type": "integer",
+            "title": "N Placed Removed",
+            "description": "How many of `removed` carried a position. The work that was thrown away."
+          }
+        },
+        "type": "object",
+        "required": [
+          "doc",
+          "run",
+          "n_trials",
+          "added",
+          "removed",
+          "n_added",
+          "n_removed",
+          "n_placed_removed"
+        ],
+        "title": "RescopeResponse"
       },
       "RunBlock": {
         "properties": {

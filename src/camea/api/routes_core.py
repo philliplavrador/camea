@@ -44,12 +44,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import Field
 
 import camea
 from camea.api.schemas import (
     AnalysisListResponse,
     AnalysisSummary,
+    RenameAnalysisRequest,
     AutosaveRequest,
     CreateAnalysisRequest,
     DatasetDetail,
@@ -61,6 +61,8 @@ from camea.api.schemas import (
     DialogSaveFileRequest,
     DocumentResponse,
     ErrorCode,
+    FsEntry,
+    FsListResponse,
     GpuInfo,
     HealthResponse,
     Job,
@@ -72,7 +74,6 @@ from camea.api.schemas import (
     LogResponse,
     OkResponse,
     OpenSessionRequest,
-    Res,
     SaveDocumentRequest,
     SaveResult,
     SessionListResponse,
@@ -333,36 +334,10 @@ def put_settings(body: SettingsUpdate) -> dict:
 #
 # ⛔ It is a *directory lister*, not a file server: it returns NAMES, never bytes. It cannot read a
 # file, and there is nothing to write with.
-
-
-class FsEntry(Res):
-    """One row in the folder picker."""
-
-    name: str
-    path: str
-    is_dataset: bool = Field(
-        description="It has a `log.txt` and at least one `NNN.xml`. ⛔ Recognised by SHAPE, never by "
-        "name — nothing in this app knows what a dataset is called."
-    )
-    n_children: int | None = Field(
-        default=None, description="Sub-directories. null when the folder could not be read."
-    )
-
-
-class FsListResponse(Res):
-    """`GET /api/fs/list` — the served folder picker. See the section note above."""
-
-    path: str
-    parent: str | None = Field(default=None, description="null at a filesystem root.")
-    is_dataset: bool
-    entries: list[FsEntry]
-    roots: list[str] = Field(
-        description="The drives / mount points, so the picker can start from nothing."
-    )
-    error: str | None = Field(
-        default=None, description="Set when `path` itself could not be listed. Not an HTTP error — "
-        "the picker must still render its roots and its parent."
-    )
+#
+# ⚠️ `FsEntry` / `FsListResponse` are wire models and so live in `camea.api.schemas` with every other
+# request/response model (the single-source-of-contract invariant), and are imported at the top of
+# this file. They are NOT redefined here.
 
 
 def _fs_roots() -> list[str]:
@@ -968,6 +943,23 @@ def post_analyses(body: CreateAnalysisRequest) -> dict:
 
     core_document.DOCUMENTS.put(doc, ws.document_path(analysis.analysis_id))
     return ws.get(analysis.analysis_id).to_json()
+
+
+@router.patch("/api/workspace/analyses/{analysis_id}", response_model=AnalysisSummary)
+def rename_analysis(analysis_id: str, body: RenameAnalysisRequest) -> dict:
+    """Rename an analysis — the project manager's rename. ⭐ Rewrites the manifest ONLY; the directory
+    never moves and the `analysis_id` is forever (a rename that moved the dir would break the slot guard
+    and every path the document carries)."""
+    ws = _workspace()
+    name = body.name.strip()
+    if not name:
+        raise ApiError(400, "bad_request", "a project name cannot be empty")
+    try:
+        return ws.rename(analysis_id, name).to_json()
+    except core_workspace.NoSuchAnalysis as e:
+        raise ApiError(404, "not_found", str(e)) from e
+    except core_workspace.WorkspaceError as e:
+        raise ApiError(400, "bad_request", str(e)) from e
 
 
 @router.delete("/api/workspace/analyses/{analysis_id}", response_model=OkResponse)

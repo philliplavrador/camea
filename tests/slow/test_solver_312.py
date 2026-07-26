@@ -23,7 +23,7 @@ WHAT IT ACTUALLY CHECKS (all six must hold)
                                               links are voting on pass-1 tiles — the mistake t33's
                                               design forbids.
   4. the score is 312/312 within 10 px     -> against the human ground truth, via the canonical
-                                              scorer (`camea.engine.score`, whose `robust_align` is
+                                              scorer (`tests/guard/score.py`, whose `robust_align` is
                                               proven code — a reimplementation with a different
                                               tie-break scored the SAME positions 152/156 where this
                                               one gives 155/156)
@@ -51,8 +51,8 @@ import time
 import numpy as np
 import pytest
 
-from camea.engine import score as bscore
 from camea.engine import t27, t33
+from guard import score as bscore     # tests/guard/score.py — the scorer, NOT shipped in the wheel
 
 EXPECT_TILES = 312          # 11-348, with the 26 thrown-out frames removed. NOT 338.
 TOL_PX = 10.0               # the challenge criterion

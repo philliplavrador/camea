@@ -11,7 +11,7 @@ export { AppShell } from './AppShell';
 export { ToastProvider } from './ToastProvider';
 export { useToast } from './toastContext';
 export type { ToastApi, ToastTone } from './toastContext';
-export { SaveControllerProvider, SaveButton } from './SaveController';
+export { SaveControllerProvider } from './SaveController';
 export { useSaveController, useRegisterSaver } from './saveContext';
 export type { SaveApi, Saver } from './saveContext';
 export { useTheme } from './useTheme';

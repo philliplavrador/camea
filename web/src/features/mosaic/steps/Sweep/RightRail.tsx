@@ -8,6 +8,7 @@ import { useSweepStore, fieldSignature } from '../../store';
 import { startRecheck, pollJobUntilDone } from '../../../../api';
 import type { RecheckResult, RecheckRow, MosaicDocument } from '../../../../api';
 import { Panel } from '../../../../design';
+import { RecomputePanel } from './RecomputePanel';
 import { fmtNcc, fmtMargin, fmtInt } from './format';
 import styles from './RightRail.module.css';
 
@@ -83,6 +84,8 @@ export function RightRail({ onGoToTrial }: RightRailProps) {
 
   return (
     <aside className={styles.rail} data-testid="right-rail">
+      <RecomputePanel />
+
       <div data-testid="evidence">
         <Panel
           title="Evidence"

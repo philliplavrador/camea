@@ -1,0 +1,170 @@
+.home {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 40px 32px 64px;
+}
+
+.center {
+  min-height: 60vh;
+  display: grid;
+  place-items: center;
+  padding: 40px 32px;
+}
+
+.firstRun {
+  max-width: 480px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
+.firstRunLede {
+  color: var(--text-dim);
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.greeting {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h1);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--text);
+}
+
+.sub {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-readout);
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.cardWrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.card {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 120px;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cardName {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardFacts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
+.dataset {
+  color: var(--data);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.placed {
+  font-variant-numeric: tabular-nums;
+}
+
+.modified {
+  color: var(--text-faint);
+}
+
+.provenance {
+  align-self: flex-start;
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+}
+
+.cardMenu {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 0 2px;
+}
+
+.cardMenu button {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.cardMenu button:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.cardMenu .danger:hover {
+  color: var(--excluded);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 64px 0;
+  color: var(--text-dim);
+}
+
+.muted {
+  color: var(--text-dim);
+}
+
+.error {
+  color: var(--excluded);
+}

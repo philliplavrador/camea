@@ -10,6 +10,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
+from camea.api.app import _DIST
+
 from .conftest import err
 
 
@@ -29,9 +31,10 @@ def test_the_openapi_schema_is_servable(client):
     # Every route the front end may call. If a route is not here, the client cannot call it — and
     # that is the point of the contract living in `schemas.py`.
     for path in ("/api/health", "/api/gpu", "/api/settings", "/api/fs/list", "/api/datasets",
-                 "/api/sessions", "/api/workspace", "/api/jobs", "/api/documents/load",
+                 "/api/sessions", "/api/workspace", "/api/workspace/analyses/{analysis_id}",
+                 "/api/jobs", "/api/documents/load",
                  "/api/mosaic/run", "/api/mosaic/gaps", "/api/mosaic/match/anchor",
-                 "/api/mosaic/build", "/api/mosaic/export", "/api/mosaic/qc"):
+                 "/api/mosaic/build", "/api/mosaic/export", "/api/mosaic/recompute", "/api/mosaic/qc"):
         assert path in s["paths"], f"{path} is missing from the OpenAPI schema"
     assert "MosaicDocument" in s["components"]["schemas"]
 
@@ -109,6 +112,24 @@ def test_importing_the_app_does_not_import_cupy_or_spectralign():
 
 
 def test_the_root_page_points_a_human_somewhere_useful(client):
+    """Two contracts, picked at import time by whether `web/dist/` exists (CI's backend job never
+    builds it; a dev box that has run `npm run build` has it). Either way `/` must resolve to
+    something a human can act on — the built UI, or a pointer to how to get one."""
     r = client.get("/")
     assert r.status_code == 200
-    assert r.json()["openapi"] == "/openapi.json"
+    if _DIST.is_dir():
+        assert r.headers["content-type"].startswith("text/html")
+        assert '<div id="root">' in r.text
+    else:
+        assert r.json()["openapi"] == "/openapi.json"
+
+
+def test_unmatched_routes_fall_back_to_the_spa_when_built(client):
+    """`createBrowserRouter` means a path like `/project/<id>` has no server-side route of its own —
+    only the SPA's client-side router resolves it, so a hard refresh there must not 404."""
+    r = client.get("/project/some-id")
+    if _DIST.is_dir():
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/html")
+    else:
+        assert r.status_code == 404

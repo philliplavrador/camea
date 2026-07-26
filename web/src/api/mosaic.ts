@@ -8,6 +8,8 @@ import { api, unwrap } from './client';
 import type {
   RunDetectRequest,
   RunDetection,
+  RescopeRequest,
+  RescopeResponse,
   GapsResponse,
   BlankProposeRequest,
   BlankProposal,
@@ -24,6 +26,7 @@ import type {
   MatchScoreRequest,
   ScoreResult,
   RecheckRequest,
+  RecomputeRequest,
   ExportRequest,
   QcRequest,
   QcReport,
@@ -41,6 +44,20 @@ import type {
  */
 export async function detectRun(req: RunDetectRequest): Promise<RunDetection> {
   return unwrap(await api.POST('/api/mosaic/run', { body: req }));
+}
+
+/**
+ * ⭐ Make the range STICK (`POST /api/mosaic/document/rescope`) — the Range step's `Apply`. `detectRun`
+ * only measures; this re-authors the document's tile set to exactly the trials in range, ON THE SERVER
+ * (the document is never built in the browser). A project opens on every square snapshot the dataset
+ * holds, strays included; this is what drops the ones that are not tiles of this mosaic.
+ *
+ * 🔴 Every surviving tile keeps its position, state and provenance. ⛔ A dropped trial is NOT an
+ * exclusion — it never enters `unusable_tiles` and it is not a human edit. `n_placed_removed` in the
+ * reply is the placed work that went with the dropped trials: CONFIRM BEFORE CALLING.
+ */
+export async function rescopeDocument(req: RescopeRequest): Promise<RescopeResponse> {
+  return unwrap(await api.POST('/api/mosaic/document/rescope', { body: req }));
 }
 
 /**
@@ -148,6 +165,18 @@ export async function matchScore(req: MatchScoreRequest): Promise<ScoreResult> {
  */
 export async function startRecheck(req: RecheckRequest): Promise<JobRef> {
   return unwrap(await api.POST('/api/mosaic/recheck', { body: req }));
+}
+
+/**
+ * ⭐ RECOMPUTE (`POST /api/mosaic/recompute` → 202 `JobRef`) — the tool the user reaches for. Freeze the
+ * tiles he has anchored and re-place every other tile against their combined composite; then he anchors
+ * more and recomputes again. It is `recheck`'s per-target `match_anchor` loop, but it WRITES the answer:
+ * every placed tile lands `unverified` + `machine` (never `anchored` — I3), an `anchored`/`human`/
+ * `excluded` tile is never touched, and a target with no measurable overlap is left where it was. The
+ * job's result carries the transformed DOCUMENT — adopt it exactly as a `/seed` result.
+ */
+export async function startRecompute(req: RecomputeRequest): Promise<JobRef> {
+  return unwrap(await api.POST('/api/mosaic/recompute', { body: req }));
 }
 
 /**

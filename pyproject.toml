@@ -69,6 +69,11 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put `tests/` on sys.path so shared test-only packages import cleanly — notably
+# `from guard import score` (tests/guard/score.py, the benchmark scorer that carries dataset
+# knowledge and is therefore NOT shipped in the wheel). It is test infrastructure, never imported by
+# anything under src/camea/.
+pythonpath = ["tests"]
 markers = [
     # The 312/312 solver regression guard. ~137 s, and it needs the 35 GB data
     # mirror + a GPU — so it can NEVER run in CI. It runs on your machine and nightly.
@@ -108,7 +113,7 @@ extend-exclude = [
 # `O` (the per-tile implied shift) is inside robust_align, which is copied BYTE-FOR-BYTE from the
 # canonical scorer. A reimplementation with a different tie-break scored the SAME positions 152/156
 # where this one gives 155/156. Renaming a variable in it is not worth one lint code.
-"src/camea/engine/score.py" = ["E741"]
+"tests/guard/score.py" = ["E741"]
 
 [tool.mypy]
 python_version = "3.12"

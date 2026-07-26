@@ -56,6 +56,17 @@ export async function deleteAnalysis(analysisId: string): Promise<void> {
   );
 }
 
+/** Rename an analysis (`PATCH`). Rewrites the manifest only — the directory never moves, the id is
+ *  forever. This is the project manager's rename. */
+export async function renameAnalysis(analysisId: string, name: string): Promise<AnalysisSummary> {
+  return unwrap(
+    await api.PATCH('/api/workspace/analyses/{analysis_id}', {
+      params: { path: { analysis_id: analysisId } },
+      body: { name },
+    }),
+  );
+}
+
 // ── A read hook for the browser card / Load screen ──────────────────────────────────
 
 export type WorkspaceState =

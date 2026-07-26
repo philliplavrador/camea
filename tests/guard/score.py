@@ -1,15 +1,13 @@
 """Score a mosaic build against the hand-verified ground truth. **DEV / BENCHMARK ONLY.**
 
-⚠️ **NOTHING IN THE APP IMPORTS THIS.** It is deliberately *not* re-exported from
-`camea.engine.__init__`, so it is not in the app's import graph and it touches no disk at import.
-Its only caller is the 312/312 regression guard (`tests/slow/test_solver_312.py`).
-
-⚠️ It also carries the only dataset-shaped knowledge left in `camea/engine/`: `RANGES` (the
-260620d denominators 156/156/312, the trial ranges 11/166/167/348 and the `260620d_*.json`
-filenames) and `range_of()`'s 166/167 split. `docs/ENGINE_MOVE.md` §3 argued this file should live
-in `tests/`, not in the shipped package, for exactly that reason. It is here because the layout says
-so — but it **excludes nothing** and **decides nothing** (see `set_excluded()` below), and moving it
-to `tests/guard/score.py` later is a pure file move.
+⚠️ **THIS LIVES UNDER `tests/`, NOT INSIDE THE INSTALLABLE PACKAGE — ON PURPOSE.** It carries the
+only dataset-shaped knowledge the scorer needs: `RANGES` (the 260620d denominators 156/156/312, the
+trial ranges 11/166/167/348 and the `260620d_*.json` filenames) and `range_of()`'s 166/167 split.
+The app carries no dataset knowledge — a hard rule with no toggle — and a pip-installable wheel must
+not either, so this module is not shipped under `src/camea/`. It moved here from
+`src/camea/engine/score.py` (`docs/ENGINE_MOVE.md` §3 argued for exactly this) and its only callers
+are the regression guards under `tests/`. It **excludes nothing** and **decides nothing** (see
+`set_excluded()` below): the exclusion ruling is always injected by the caller.
 
 THE METRIC
 ----------
@@ -65,7 +63,10 @@ import numpy as np
 #
 # Resolved LAZILY, at call time, never at import: an import of this module must not depend on a
 # research artefact being present on disk.
-_DEFAULT_GT_DIR = Path(__file__).resolve().parents[3] / "archive" / "analysis" / "ground_truth"
+#
+# ⚠️ parents[2], because this file is tests/guard/score.py: parents[0]=guard, parents[1]=tests,
+# parents[2]=the repo root. (It was parents[3] under the old src/camea/engine/ home.)
+_DEFAULT_GT_DIR = Path(__file__).resolve().parents[2] / "archive" / "analysis" / "ground_truth"
 
 _NO_GT = """\
 THE GROUND TRUTH IS NOT ON THIS MACHINE — nothing can be scored.

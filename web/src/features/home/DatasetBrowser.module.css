@@ -45,23 +45,15 @@
   color: var(--text-faint);
 }
 
-/* ── The toolbar: DATA ROOT + WORKSPACE ─────────────────────────────────────── */
+/* ── The toolbar: DATA ROOT — a paste box, not a modal (see PathField.tsx) ───── */
 .toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px 28px;
+  align-items: flex-start;
+  gap: 12px;
   padding: 12px 14px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-}
-
-.toolGroup {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  flex: 1 1 320px;
 }
 
 /* Micro-cap label — the dim, tracked "ground" against which the mono value is the figure (brief §2). */
@@ -70,43 +62,12 @@
   align-items: center;
   gap: 3px;
   flex: 0 0 auto;
+  padding-top: 9px; /* sits on the input's baseline, not its top edge */
   font-size: var(--fs-label);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: var(--tracking-label);
   color: var(--text-dim);
-}
-
-.toolValue {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-}
-.toolEmpty {
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.rootList {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-.rootChip {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--data);
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 2px 8px;
 }
 
 .wsValue {

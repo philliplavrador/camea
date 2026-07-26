@@ -12,8 +12,9 @@ sigma, an FFT padding, a mask rule or a cut threshold will not crash and will no
 will move six tiles 256 px sideways and still render a mosaic that looks plausible at a glance.
 
 Everything the app needs that is *not* public API on t27/t33/render lives in `adapters.py` — the one
-module allowed to touch their privates. `score.py` is dev/benchmark-only and is deliberately NOT
-imported here.
+module allowed to touch their privates. The benchmark scorer is dev/benchmark-only and carries
+dataset knowledge, so it does **not** ship in this package at all: it lives at `tests/guard/score.py`
+and nothing under `src/camea/` imports it.
 
 Importing this package costs **numpy and nothing else**. cv2 arrives at the first band-pass, cupy at
 the first `t27.xp()`, spectralign at the first solve, matplotlib never unless you ask for a layout

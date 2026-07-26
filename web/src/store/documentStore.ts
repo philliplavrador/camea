@@ -13,9 +13,11 @@
 // dataset knowledge would be stripped — a stale `EXCLUDED_TRIALS` block on re-save (R2.4) — is the
 // SERVER's normalise step, not ours; the front end must never resurrect it, and never authors it either.
 //
-// ⚠️ AUTOSAVE IS A CRASH-NET, NOT A SAVE (BEHAVIOUR R5.4, R29). A successful autosave does NOT clear
-// `dirty`; only an explicit `Save…`/workspace save does. And an autosave FAILURE is LOUD (W4): it is
-// recorded in `autosave.state = 'failed'` with a message the UI surfaces — never swallowed.
+// ⭐ AUTO-SAVE IS THE DURABLE SAVE NOW (2026-07-24). Projects "save themselves": every change is
+// written to the durable analysis document (`PUT`, not the sidecar) and CLEARS `dirty`. There is no
+// manual Save button — a quiet "Saved" indicator reads `autosave.state`/`at` (see `app/SaveIndicator`).
+// An auto-save FAILURE is still LOUD (W4): recorded in `autosave.state = 'failed'` with a message the
+// UI surfaces — never swallowed. (Was a crash-net-only sidecar before the project-manager reframe.)
 //
 // ⛔ NO DATASET KNOWLEDGE. This store holds whatever document it is given; it names no trial, count or
 // exclusion, and it is feature-agnostic (it knows only the generic `Document` envelope). A feature
@@ -23,7 +25,6 @@
 
 import { create } from 'zustand';
 import {
-  autosaveDocument,
   saveDocumentAs,
   putDocument,
   pickSaveFilePath,
@@ -205,11 +206,18 @@ export const useDocument = create<DocumentStore>((set, get) => ({
     if (doc == null || analysisId == null) return;
     set((s) => ({ autosave: { ...s.autosave, state: 'saving' } }));
     try {
-      const result = await autosaveDocument(analysisId, doc);
-      // ⚠️ A successful autosave does NOT clear `dirty` — it is a crash-net, not a save (R5.4/R29).
-      set({ autosave: { state: 'ok', message: null, at: result.saved_at } });
+      // ⭐ THE DURABLE SAVE (2026-07-24): write the real document and CLEAR dirty — the project saves
+      // itself. (Was `autosaveDocument` → the crash-net sidecar, which deliberately did NOT clear
+      // dirty. The reframe promotes auto-save to the durable write; `saveToWorkspace` is the same op.)
+      const result = await putDocument(analysisId, doc);
+      set({
+        dirty: false,
+        lastSavedAt: result.saved_at,
+        lastSavedPath: result.path,
+        autosave: { state: 'ok', message: null, at: result.saved_at },
+      });
     } catch (e) {
-      // 🔴 Never swallowed — recorded loudly so the toast + Mosaic note can shout (W4).
+      // 🔴 Never swallowed — recorded loudly so the indicator + Mosaic note can shout (W4).
       set({ autosave: { state: 'failed', message: errMessage(e), at: get().autosave.at } });
     }
   },

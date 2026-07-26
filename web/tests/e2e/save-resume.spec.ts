@@ -10,6 +10,12 @@ import { SHORT } from './fixture';
  * placement, which tiles were anchored, and the CURSOR (an integer, never null — R14). The file
  * carries NO EXCLUDED_TRIALS block, and loading an old file that has one deletes it (R2.4). The whole
  * round-trip is drivable only because headless save/load fall back to window.prompt (R38).
+ *
+ * ⚠️ SUPERSEDED 2026-07-24 (compiles, but stale at runtime — needs a browser-in-loop rewrite). Auto-save
+ * is the durable save now and projects persist automatically; "resume" is **opening the project from the
+ * manager**, not `Save…`→`Load a project…`. The invariants here (integer cursor, no EXCLUDED_TRIALS,
+ * states persist) still hold — but they should be driven through open-project + the durable PUT, and the
+ * `Save…`-to-a-file / `Load a project…` assertions belong in a new `export-import.spec.ts` instead.
  */
 
 interface SavedDoc {

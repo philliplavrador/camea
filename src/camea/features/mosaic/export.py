@@ -31,8 +31,8 @@ file is not it:
 
 ⛔ **`score.robust_align` IS NOT REIMPLEMENTED ANYWHERE IN THIS FILE.** A reimplementation with a
 different tie-break scored the same positions **152/156** where the canonical one gives **155/156**.
-The exporter does not align and does not score: it writes the document, and `engine/score.py`
-imports its own `robust_align` when somebody scores it. ⛔ And **never** score a document this app
+The exporter does not align and does not score: it writes the document, and the benchmark scorer
+(`tests/guard/score.py`) imports its own `robust_align` when somebody scores it. ⛔ And **never** score a document this app
 produced against the method that seeded it — that is 100 % by construction, and it is how this
 project already destroyed one benchmark.
 
@@ -198,7 +198,7 @@ def as_exported(doc: dict, app_version: str | None = None) -> tuple[dict, list[s
 
 
 def to_gt(doc: dict, app_version: str | None = None) -> dict:
-    """The document -> a ground-truth JSON that `engine/score.py` scores **unchanged**.
+    """The document -> a ground-truth JSON that `tests/guard/score.py` scores **unchanged**.
 
     `score.load_gt()` keeps ONLY `status == "anchor"` rows with a non-null x/y (so `unverified` tiles
     correctly do not inflate the denominator) and falls back to `tolerance_px.region_default` for a
@@ -809,7 +809,7 @@ def write_positions(doc: dict, path: str | Path, include_unverified: bool = True
 # 3b. the ground-truth JSON
 # =================================================================================================
 def write_gt(doc: dict, path: str | Path, app_version: str | None = None) -> dict:
-    """The ground-truth JSON. Scoreable by `engine/score.py` unchanged.
+    """The ground-truth JSON. Scoreable by `tests/guard/score.py` unchanged.
 
     ⚠️ **THE PROVENANCE STAMP IS MANDATORY, AND IT IS NOT DECORATION.** It says out loud, **in the
     file**, that this is *a build a human signed off on* and **NOT an independent ground truth**, and
