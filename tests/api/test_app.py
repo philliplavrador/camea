@@ -30,8 +30,9 @@ def test_the_openapi_schema_is_servable(client):
     s = r.json()
     # Every route the front end may call. If a route is not here, the client cannot call it — and
     # that is the point of the contract living in `schemas.py`.
-    for path in ("/api/health", "/api/gpu", "/api/settings", "/api/fs/list", "/api/datasets",
-                 "/api/sessions", "/api/workspace", "/api/workspace/analyses/{analysis_id}",
+    for path in ("/api/health", "/api/gpu", "/api/settings", "/api/fs/list", "/api/datasets/at",
+                 "/api/sessions", "/api/projects", "/api/projects/folder",
+                 "/api/projects/{analysis_id}",
                  "/api/jobs", "/api/documents/load",
                  "/api/mosaic/run", "/api/mosaic/gaps", "/api/mosaic/match/anchor",
                  "/api/mosaic/build", "/api/mosaic/export", "/api/mosaic/recompute", "/api/mosaic/qc"):

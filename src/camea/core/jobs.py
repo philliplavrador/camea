@@ -600,6 +600,21 @@ class JobRegistry:
         with self._lock:
             return [self._jobs[j] for j in reversed(self._order) if j in self._jobs]
 
+    def forget_finished(self) -> None:
+        """Drop every job in a terminal state. ⚠️ **For test isolation only.**
+
+        `JOBS` is process-level, so a test that submits into it leaks into every later test in the
+        same process — and a leaked job with a result the API's discriminated union cannot serialise
+        makes `GET /api/jobs` 500 in a *different* test file. A running job is left alone: forgetting
+        one would lose the only handle on it.
+        """
+        with self._lock:
+            for jid in list(self._order):
+                j = self._jobs.get(jid)
+                if j is None or j.state in ("done", "failed", "cancelled"):
+                    self._jobs.pop(jid, None)
+                    self._order.remove(jid)
+
     def cancel(self, job_id: str) -> Job:
         """Idempotent. A `done`/`failed` job raises `NotCancellable` -> the API returns 409.
 

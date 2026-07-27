@@ -4,28 +4,8 @@
   padding: 40px 32px 64px;
 }
 
-.center {
-  min-height: 60vh;
-  display: grid;
-  place-items: center;
-  padding: 40px 32px;
-}
-
-.firstRun {
-  max-width: 480px;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  align-items: center;
-}
-
-.firstRunLede {
-  color: var(--text-dim);
-  font-size: var(--fs-body);
-  line-height: 1.5;
-  margin: 0;
-}
+/* (The first-run "choose a store" screen was removed on 2026-07-25 — a project names its own save
+   folder, so there is nothing to pick before the home can render. Its styles went with it.) */
 
 .head {
   display: flex;
@@ -116,6 +96,16 @@
   color: var(--text-faint);
 }
 
+/* The folder HE named — how he finds this work in Explorer. Mono, because it is a path. */
+.folder {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .provenance {
   align-self: flex-start;
   font-size: var(--fs-micro);
@@ -167,4 +157,21 @@
 
 .error {
   color: var(--excluded);
+}
+
+/* A remembered folder that could not be read — said out loud, never silently dropped. */
+.unreadable {
+  margin-top: 32px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+.unreadable ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-family: var(--font-mono);
+  color: var(--text-faint);
 }

@@ -37,7 +37,7 @@ export type RecomputeResult = Schemas['RecomputeResult'];
 export type DatasetSummary = Schemas['DatasetSummary'];
 export type DatasetListResponse = Schemas['DatasetListResponse'];
 export type DatasetDetail = Schemas['DatasetDetail'];
-export type DatasetScanRequest = Schemas['DatasetScanRequest'];
+export type DatasetAtRequest = Schemas['DatasetAtRequest'];
 export type TrialMeta = Schemas['TrialMeta'];
 export type SnapshotBlock = Schemas['SnapshotBlock'];
 export type ShapeGroup = Schemas['ShapeGroup'];
@@ -81,9 +81,8 @@ export type ValidateDocumentRequest = Schemas['ValidateDocumentRequest'];
 export type ValidationReport = Schemas['ValidationReport'];
 export type DocumentProblem = Schemas['DocumentProblem'];
 
-// ── Workspace / analyses ────────────────────────────────────────────────────────
-export type WorkspaceInfo = Schemas['WorkspaceInfo'];
-export type WorkspaceSetRequest = Schemas['WorkspaceSetRequest'];
+// ── Projects — one project is ONE FOLDER, named by the user ──────────────────────
+export type ProjectFolderInfo = Schemas['ProjectFolderInfo'];
 export type AnalysisSummary = Schemas['AnalysisSummary'];
 export type AnalysisListResponse = Schemas['AnalysisListResponse'];
 export type CreateAnalysisRequest = Schemas['CreateAnalysisRequest'];

@@ -195,13 +195,20 @@ def state_dir(tmp_path, monkeypatch) -> Path:
 def client(state_dir) -> TestClient:
     """A fresh app per test, with the module-level singletons reset.
 
-    ⚠️ `SESSIONS`, `SETTINGS` and the mosaic router's finished-build register are process-level, so a
-    test that opened a session would otherwise leak it into the next one. Reset them here rather than
-    making every test remember to.
+    ⚠️ `SESSIONS`, `SETTINGS`, `JOBS` and the mosaic router's finished-build register are
+    process-level, so a test that opened a session would otherwise leak it into the next one. Reset
+    them here rather than making every test remember to.
+
+    🔴 `JOBS` matters across FILES, not just tests: `tests/unit/test_mosaic_routes.py` submits into the
+    module-level registry a job whose fn returns a bool, and a leaked job whose `result` the API's
+    discriminated union cannot serialise makes `GET /api/jobs` 500 here — a failure that appears only
+    when `tests/unit` happens to run first. (`test_jobs.py` states the rule: never the module-level
+    `JOBS`. This fixture is the safety net for when something does anyway.)
     """
     from camea.api import routes_core
     from camea.api.app import create_app
     from camea.core.document import DOCUMENTS
+    from camea.core.jobs import JOBS
     from camea.features.mosaic import routes as mosaic_routes
     from camea.settings import SETTINGS
 
@@ -210,6 +217,7 @@ def client(state_dir) -> TestClient:
     routes_core._DATASET_PATHS.clear()
     routes_core._THUMB_CACHE.clear()
     mosaic_routes._BUILDS.clear()
+    JOBS.forget_finished()
     DOCUMENTS.clear()
     SETTINGS.clear()                      # resets AND persists into the isolated state_dir
 
@@ -218,12 +226,30 @@ def client(state_dir) -> TestClient:
 
 
 @pytest.fixture()
-def workspace(tmp_path, client) -> Path:
-    """A chosen workspace, outside the repo and outside any dataset."""
-    ws = tmp_path / "work"
-    r = client.put("/api/workspace", json={"path": str(ws), "create": True})
-    assert r.status_code == 200, r.text
-    return ws
+def workspace(tmp_path) -> Path:
+    """A place to put project folders — outside the repo and outside any dataset.
+
+    ⚠️ Since 2026-07-25 there is no app-managed store to choose: a project names **its own** folder
+    (`core.project`). This fixture is just a tmp parent to mint those folders under; nothing is
+    written and nothing is registered until a project is actually created in one.
+    """
+    d = tmp_path / "work"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def new_project(client: TestClient, session_id: str, folder, *, feature: str = "mosaic",
+                name: str = "p", trials=None):
+    """`POST /api/projects` — one project, in the folder it names. -> the raw response.
+
+    ⭐ `folder` is required by the contract on purpose: *where to save* is the user's choice, and a
+    default would be the app choosing for him. Tests name it too.
+    """
+    body: dict = {"session_id": session_id, "feature": feature, "name": name,
+                  "folder": str(folder)}
+    if trials is not None:
+        body["trials"] = trials
+    return client.post("/api/projects", json=body)
 
 
 # =================================================================================================

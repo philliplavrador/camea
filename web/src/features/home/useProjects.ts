@@ -1,10 +1,10 @@
 // PROJECTS — the manager's read model. A "project" IS an analysis (one dataset + one task/feature +
-// a name + a document + outputs); the manager lists, renames and deletes them. Create lives in the
-// new-project flow (it needs an open session to author the document on the server).
+// a name + a document + outputs), living in ONE FOLDER the user named; the manager lists, renames,
+// removes and deletes them. Create lives in the new-project flow (it needs an open session to author
+// the document on the server).
 //
-// ⚠️ `listAnalyses` (GET /api/workspace/analyses) 409s with `no_workspace` until the store folder is
-// chosen once — the manager checks the workspace first and shows the first-run prompt, so this hook is
-// only mounted once a store exists.
+// ⭐ `listAnalyses` (GET /api/projects) never 409s: since 2026-07-25 there is no store to choose
+// first, so an empty list is the honest first-run answer and this hook mounts unconditionally.
 
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -17,12 +17,13 @@ import {
 export type ProjectsState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; projects: AnalysisSummary[] };
+  | { status: 'ready'; projects: AnalysisSummary[]; unreadable: string[] };
 
 export interface UseProjects {
   state: ProjectsState;
   refresh: () => void;
-  remove: (id: string) => Promise<void>;
+  /** `deleteFiles: false` forgets it (files stay); `true` removes Camea's files from the folder. */
+  remove: (id: string, deleteFiles?: boolean) => Promise<void>;
   rename: (id: string, name: string) => Promise<AnalysisSummary>;
 }
 
@@ -35,8 +36,9 @@ export function useProjects(): UseProjects {
     let cancelled = false;
     setState({ status: 'loading' });
     listAnalyses().then(
-      ({ analyses }) => {
-        if (!cancelled) setState({ status: 'ready', projects: analyses });
+      ({ analyses, unreadable }) => {
+        if (!cancelled)
+          setState({ status: 'ready', projects: analyses, unreadable: unreadable ?? [] });
       },
       (e: unknown) => {
         if (!cancelled)
@@ -49,8 +51,8 @@ export function useProjects(): UseProjects {
   }, [reloadKey]);
 
   const remove = useCallback(
-    async (id: string) => {
-      await deleteAnalysis(id);
+    async (id: string, deleteFiles = false) => {
+      await deleteAnalysis(id, deleteFiles);
       refresh();
     },
     [refresh],

@@ -95,9 +95,9 @@ def test_rescope_makes_the_range_stick_and_keeps_the_work(client, synth, workspa
     ⛔ A dropped trial is NOT an exclusion — `unusable_tiles` stays the human's own `E` presses."""
     everything = [*STRAY_SNAPSHOTS, *synth.trials]
     sid = open_session(client, synth.path, everything)["session_id"]
-    aid = client.post("/api/workspace/analyses",
+    aid = client.post("/api/projects",
                       json={"session_id": sid, "feature": "mosaic", "name": "s",
-                            "trials": everything}).json()["analysis_id"]
+                            "trials": everything, "folder": str(workspace / "s")}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
     assert len(doc["tiles"]) == len(everything)              # the strays came in as tiles
 
@@ -126,9 +126,9 @@ def test_rescope_makes_the_range_stick_and_keeps_the_work(client, synth, workspa
 
 def test_rescope_refuses_a_range_with_no_snapshot_in_it(client, synth, workspace):
     sid = open_session(client, synth.path, synth.trials)["session_id"]
-    aid = client.post("/api/workspace/analyses",
+    aid = client.post("/api/projects",
                       json={"session_id": sid, "feature": "mosaic", "name": "s",
-                            "trials": synth.trials}).json()["analysis_id"]
+                            "trials": synth.trials, "folder": str(workspace / "s")}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
 
     r = client.post("/api/mosaic/document/rescope",
@@ -173,9 +173,9 @@ def test_the_blank_scan_proposes_and_excludes_NOTHING(client, synth, workspace):
     assert isinstance(p["proposed"], list)
 
     # ⭐ THE POINT: a proposal changes NO document. Nothing is auto-excluded, here or anywhere.
-    aid = client.post("/api/workspace/analyses",
+    aid = client.post("/api/projects",
                       json={"session_id": sid, "feature": "mosaic", "name": "s",
-                            "trials": synth.trials}).json()["analysis_id"]
+                            "trials": synth.trials, "folder": str(workspace / "s")}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
     assert [t for t, v in doc["tiles"].items() if v["state"] == "excluded"] == []
 
@@ -368,9 +368,9 @@ def seeded(client, synth, workspace):
     from camea.features.mosaic import routes as mosaic_routes
 
     sid = open_session(client, synth.path, synth.trials)["session_id"]
-    aid = client.post("/api/workspace/analyses",
+    aid = client.post("/api/projects",
                       json={"session_id": sid, "feature": "mosaic", "name": "seeded",
-                            "trials": synth.trials}).json()["analysis_id"]
+                            "trials": synth.trials, "folder": str(workspace / "seeded")}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
 
     a0 = synth.trials[0]

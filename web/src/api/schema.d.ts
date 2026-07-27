@@ -56,7 +56,7 @@ export interface paths {
         get: operations["get_settings_api_settings_get"];
         /**
          * Put Settings
-         * @description ⛔ Three keys, all of them paths. See `camea.settings` — a settings file that remembered an
+         * @description ⛔ Two keys, both lists of paths. See `camea.settings` — a settings file that remembered an
          *     exclusion would be answering, on the user's behalf, the question the app exists to help him
          *     answer.
          */
@@ -95,29 +95,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/datasets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Datasets
-         * @description **The home screen.** Every dataset under the folders the user has pointed at, with no pixel
-         *     loaded (~0.2 s each). An empty `roots` is the honest first-run state — the UI shows the folder
-         *     picker (`GET /api/fs/list`) rather than pretending to know where his data is.
-         */
-        get: operations["get_datasets_api_datasets_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/datasets/scan": {
+    "/api/datasets/at": {
         parameters: {
             query?: never;
             header?: never;
@@ -127,14 +105,20 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Post Datasets Scan
-         * @description *"Point me at a folder."* A POST, not a GET: a Windows path in a query string is an encoding
-         *     trap, and scanning also updates `settings.dataset_roots`.
+         * Post Datasets At
+         * @description ⭐ *"Look at THIS folder."* A POST, not a GET: a Windows path in a query string is an
+         *     encoding trap.
+         *
+         *     ⛔ **NOTHING IS REMEMBERED AND NOTHING IS RECOMMENDED.** This replaced `POST /api/datasets/scan`
+         *     + `GET /api/datasets` on 2026-07-25. There is no root registry, no depth-3 walk on every launch,
+         *     and no list of datasets the app went looking for: the user names one folder and is told what is
+         *     in it. Either it *is* an acquisition (`is_dataset: true`, one entry), or it directly contains
+         *     some and he picks which — a disambiguation of his own typing, not a suggestion.
          *
          *     ⛔ Nothing here recognises a dataset by name. A folder is a dataset iff it has a `log.txt` and at
          *     least one `NNN.xml`. That is the whole rule.
          */
-        post: operations["post_datasets_scan_api_datasets_scan_post"];
+        post: operations["post_datasets_at_api_datasets_at_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -400,7 +384,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspace": {
+    "/api/projects/folder": {
         parameters: {
             query?: never;
             header?: never;
@@ -408,19 +392,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Workspace
-         * @description `writable` is **proved, not assumed** (it writes and deletes a probe file): a workspace on a
-         *     drive that has been unplugged must show up on the Load screen as `writable: false`, not as a 500
-         *     an hour into a sweep.
+         * Get Project Folder
+         * @description *"Can I save here?"* — asked as the user types, **before** anything is written.
+         *
+         *     `writable` is **proved, not assumed** (it writes and deletes a probe file): a folder on a drive
+         *     that has been unplugged must show up as `writable: false`, not as a 500 an hour into a sweep.
+         *     A refusal (inside a dataset, inside the repo) raises 409 so he is told *why*, not just "no".
          */
-        get: operations["get_workspace_api_workspace_get"];
-        /**
-         * Put Workspace
-         * @description ⛔ **NEVER inside a dataset. NEVER inside the repo.** Both are refused here, at the one moment
-         *     the user names the place — a workspace under the checkout would be committed, `.gitignore`d, or
-         *     blown away by a clean. His work does not live in the app's source tree.
-         */
-        put: operations["put_workspace_api_workspace_put"];
+        get: operations["get_project_folder_api_projects_folder_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -428,15 +408,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/workspace/analyses": {
+    "/api/projects": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Analyses */
-        get: operations["get_analyses_api_workspace_analyses_get"];
+        /**
+         * Get Projects
+         * @description **The home screen.** Every project in the folders the user has saved into.
+         *
+         *     ⚠️ A folder that has moved or is on an unplugged drive is reported in `unreadable`, **not**
+         *     silently dropped and **not** a failure of the whole listing: one dead drive must cost him that
+         *     project's card, never his home screen.
+         */
+        get: operations["get_projects_api_projects_get"];
         put?: never;
         /**
          * Post Analyses
@@ -452,14 +439,14 @@ export interface paths {
          *     collision (pass 2 silently overwriting pass 1's ground-truth records) impossible rather than
          *     merely unlikely.
          */
-        post: operations["post_analyses_api_workspace_analyses_post"];
+        post: operations["post_analyses_api_projects_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/workspace/analyses/{analysis_id}": {
+    "/api/projects/{analysis_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -469,17 +456,25 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete Analysis */
-        delete: operations["delete_analysis_api_workspace_analyses__analysis_id__delete"];
+        /**
+         * Delete Analysis
+         * @description ⭐ **FORGET, OR DELETE — and the app does not guess which.**
+         *
+         *     `delete_files=false` (the default) takes the project off the home screen and **leaves every byte
+         *     where it is**: the folder is his, he named it, and "remove this card" must not be a synonym for
+         *     "destroy a week of sweeping". `delete_files=true` removes Camea's own files from it — the
+         *     manifest, the document, the autosave, `outputs/` — and leaves anything else he put there alone.
+         */
+        delete: operations["delete_analysis_api_projects__analysis_id__delete"];
         options?: never;
         head?: never;
         /**
          * Rename Analysis
-         * @description Rename an analysis — the project manager's rename. ⭐ Rewrites the manifest ONLY; the directory
-         *     never moves and the `analysis_id` is forever (a rename that moved the dir would break the slot guard
-         *     and every path the document carries).
+         * @description Rename a project — the project manager's rename. ⭐ Rewrites the manifest ONLY; the folder
+         *     never moves and the `analysis_id` is forever (a rename that moved the folder would break the slot
+         *     guard, every path the document carries, and any Explorer window he has open on it).
          */
-        patch: operations["rename_analysis_api_workspace_analyses__analysis_id__patch"];
+        patch: operations["rename_analysis_api_projects__analysis_id__patch"];
         trace?: never;
     };
     "/api/analyses/{analysis_id}/document": {
@@ -1205,10 +1200,13 @@ export interface components {
     schemas: {
         /** AnalysisListResponse */
         AnalysisListResponse: {
-            /** Workspace */
-            workspace: string | null;
             /** Analyses */
             analyses: components["schemas"]["AnalysisSummary"][];
+            /**
+             * Unreadable
+             * @description Remembered folders that could not be read this launch (an unplugged drive). Listed, never silently dropped — and never a failure of the whole home screen.
+             */
+            unreadable?: string[];
         };
         /**
          * AnalysisRef
@@ -1230,7 +1228,7 @@ export interface components {
         };
         /**
          * AnalysisSummary
-         * @description An analysis = a document + its outputs, in the workspace. It is bound to ONE dataset.
+         * @description A project = a document + its outputs, in the folder the user named. Bound to ONE dataset.
          */
         AnalysisSummary: {
             /** Analysis Id */
@@ -1248,6 +1246,18 @@ export interface components {
             dataset: string;
             /** Path */
             path: string;
+            /**
+             * Folder
+             * @description The project's own folder — the one he named.
+             * @default
+             */
+            folder: string;
+            /**
+             * Data Dir
+             * @description Where this project's dataset lives.
+             * @default
+             */
+            data_dir: string;
             /** Created */
             created: string;
             /** Modified */
@@ -1608,10 +1618,34 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Folder
+             * @description ⭐ WHERE TO SAVE IT — the folder the user named. The project IS this folder. Refused (409) inside a dataset or inside the repo.
+             */
+            folder: string;
+            /**
              * Trials
              * @description The feature's selection. null = the session's whole trial list.
              */
             trials?: number[] | null;
+        };
+        /**
+         * DatasetAtRequest
+         * @description `POST /api/datasets/at` — *"look at this folder."* (A POST, not a GET: Windows paths in query
+         *     strings are an encoding trap.)
+         *
+         *     ⛔ **Nothing is remembered and nothing is recommended.** The folder is either an acquisition, or
+         *     it directly contains some — and that is as far as it looks. A deeper walk would be the app going
+         *     looking for the user's data, which is exactly what was removed on 2026-07-25.
+         */
+        DatasetAtRequest: {
+            /** Path */
+            path: string;
+            /**
+             * Depth
+             * @description 1 = this folder only. 2 (the default) = this folder, or the acquisitions DIRECTLY inside it — he may have typed the parent. Never deeper.
+             * @default 2
+             */
+            depth: number;
         };
         /**
          * DatasetDetail
@@ -1627,10 +1661,23 @@ export interface components {
              */
             blocks: components["schemas"]["SnapshotBlock"][];
         };
-        /** DatasetListResponse */
+        /**
+         * DatasetListResponse
+         * @description What is at ONE folder the user just named. ⛔ Not a registry — nothing here was remembered
+         *     or scanned on the app's initiative.
+         */
         DatasetListResponse: {
-            /** Roots */
-            roots: string[];
+            /**
+             * Path
+             * @description The folder that was looked at, resolved.
+             */
+            path: string;
+            /**
+             * Is Dataset
+             * @description True when that folder IS one acquisition (log.txt + NNN.xml).
+             * @default false
+             */
+            is_dataset: boolean;
             /** Datasets */
             datasets: components["schemas"]["DatasetSummary"][];
             /**
@@ -1638,25 +1685,6 @@ export interface components {
              * @description Folders that looked like a dataset but could not be read.
              */
             skipped?: string[];
-        };
-        /**
-         * DatasetScanRequest
-         * @description `POST /api/datasets/scan` — the user points at a folder. (A POST, not a GET: Windows paths
-         *     in query strings are an encoding trap, and scanning also updates `settings.dataset_roots`.)
-         */
-        DatasetScanRequest: {
-            /** Root */
-            root: string;
-            /**
-             * Depth
-             * @default 3
-             */
-            depth: number;
-            /**
-             * Remember
-             * @default true
-             */
-            remember: boolean;
         };
         /**
          * DatasetSummary
@@ -2606,6 +2634,30 @@ export interface components {
             pass: number;
         };
         /**
+         * ProjectFolderInfo
+         * @description What Camea can say about a candidate save folder BEFORE anything is written to it.
+         */
+        ProjectFolderInfo: {
+            /** Path */
+            path: string;
+            /** Exists */
+            exists: boolean;
+            /** Writable */
+            writable: boolean;
+            /**
+             * Is Project
+             * @description True when the folder already holds a Camea project.
+             * @default false
+             */
+            is_project: boolean;
+            /**
+             * Empty
+             * @description False when the folder already has files in it.
+             * @default true
+             */
+            empty: boolean;
+        };
+        /**
          * Provenance
          * @description ⚠️ **NOT DECORATION.**
          *
@@ -2913,8 +2965,8 @@ export interface components {
         };
         /**
          * RenameAnalysisRequest
-         * @description Rename an analysis (`PATCH /api/workspace/analyses/{id}`). Rewrites the manifest only — **the
-         *     directory never moves; the id is forever.** This is what the project manager's rename does.
+         * @description Rename a project (`PATCH /api/projects/{id}`). Rewrites the manifest only — **the folder
+         *     never moves; the id is forever.** This is what the project manager's rename does.
          */
         RenameAnalysisRequest: {
             /** Name */
@@ -3241,27 +3293,29 @@ export interface components {
          * Settings
          * @description Everything the app remembers between launches. ⛔ **No dataset knowledge lives here.**
          *     A remembered *path* is not knowledge about the data at that path.
+         *
+         *     ⭐ `workspace` and `dataset_roots` were removed on 2026-07-25: there is no single app-managed
+         *     store and no root registry. A project names its own save folder, and these are the folders the
+         *     user has actually used.
          */
         Settings: {
             /**
-             * Workspace
-             * @description Where analyses are written.
+             * Projects
+             * @description Folders the user has saved a project into. An index for the home screen — the truth is the camea-project.json in each folder.
              */
-            workspace?: string | null;
+            projects?: string[];
             /**
-             * Dataset Roots
-             * @description Folders the user pointed at. The browser scans these.
+             * Recent Datasets
+             * @description Data folders recently opened. Offered back as completions.
              */
-            dataset_roots?: string[];
-            /** Recent Datasets */
             recent_datasets?: string[];
         };
         /** SettingsUpdate */
         SettingsUpdate: {
-            /** Workspace */
-            workspace?: string | null;
-            /** Dataset Roots */
-            dataset_roots?: string[] | null;
+            /** Projects */
+            projects?: string[] | null;
+            /** Recent Datasets */
+            recent_datasets?: string[] | null;
         };
         /**
          * ShapeGroup
@@ -3630,30 +3684,6 @@ export interface components {
             /** Problems */
             problems?: components["schemas"]["DocumentProblem"][];
         };
-        /** WorkspaceInfo */
-        WorkspaceInfo: {
-            /** Path */
-            path: string | null;
-            /** Exists */
-            exists: boolean;
-            /** Writable */
-            writable: boolean;
-            /**
-             * N Analyses
-             * @default 0
-             */
-            n_analyses: number;
-        };
-        /** WorkspaceSetRequest */
-        WorkspaceSetRequest: {
-            /** Path */
-            path: string;
-            /**
-             * Create
-             * @default true
-             */
-            create: boolean;
-        };
     };
     responses: never;
     parameters: never;
@@ -3788,27 +3818,7 @@ export interface operations {
             };
         };
     };
-    get_datasets_api_datasets_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DatasetListResponse"];
-                };
-            };
-        };
-    };
-    post_datasets_scan_api_datasets_scan_post: {
+    post_datasets_at_api_datasets_at_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3817,7 +3827,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DatasetScanRequest"];
+                "application/json": components["schemas"]["DatasetAtRequest"];
             };
         };
         responses: {
@@ -4281,9 +4291,12 @@ export interface operations {
             };
         };
     };
-    get_workspace_api_workspace_get: {
+    get_project_folder_api_projects_folder_get: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description The candidate save folder. */
+                path: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4296,31 +4309,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkspaceInfo"];
-                };
-            };
-        };
-    };
-    put_workspace_api_workspace_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WorkspaceSetRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["WorkspaceInfo"];
+                    "application/json": components["schemas"]["ProjectFolderInfo"];
                 };
             };
             /** @description Validation Error */
@@ -4334,7 +4323,7 @@ export interface operations {
             };
         };
     };
-    get_analyses_api_workspace_analyses_get: {
+    get_projects_api_projects_get: {
         parameters: {
             query?: {
                 dataset_key?: string | null;
@@ -4366,7 +4355,7 @@ export interface operations {
             };
         };
     };
-    post_analyses_api_workspace_analyses_post: {
+    post_analyses_api_projects_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -4399,9 +4388,11 @@ export interface operations {
             };
         };
     };
-    delete_analysis_api_workspace_analyses__analysis_id__delete: {
+    delete_analysis_api_projects__analysis_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                delete_files?: boolean;
+            };
             header?: never;
             path: {
                 analysis_id: string;
@@ -4430,7 +4421,7 @@ export interface operations {
             };
         };
     };
-    rename_analysis_api_workspace_analyses__analysis_id__patch: {
+    rename_analysis_api_projects__analysis_id__patch: {
         parameters: {
             query?: never;
             header?: never;

@@ -48,9 +48,18 @@ the UI must set it — specs assert on it.
 
 | testid | element | notes |
 |---|---|---|
-| `dataset-browser` | home container | the home screen IS the browser |
-| `dataset-card` | one dataset | filterable by name text |
-| `dataset-name` / `dataset-snapshots` / `dataset-shapes` | card facts | read straight off `/api/datasets` |
+| `project-manager` | the home | ⭐ no first-run prompt — nothing is picked before he can start (R41.2, 2026-07-25) |
+| `project-card` | one project | `data-project-id`; the card is the Open affordance |
+| `project-name` / `project-folder` | card facts | the name he typed, and the folder he named |
+| `project-rename` / `project-export` / `project-forget` / `project-delete` | card menu | **Remove** forgets (files stay); **Delete** removes Camea's files |
+| `projects-unreadable` | the moved/unplugged list | said out loud, never silently dropped |
+| `project-paths` | the where-from/where-to step | two `PathField`s — **no root registry, no browse grid** |
+| `from-field` / `into-field` | the two path boxes | `path-input` · `path-submit` · `path-browse` · `path-error` inside each |
+| `dataset-choice` | disambiguation chip | shown **only** when one folder holds several acquisitions |
+| `dataset-card` | the RECEIPT for the folder he typed | a confirmation, not a card in a grid |
+| `dataset-name` / `dataset-snapshots` / `dataset-shapes` | receipt facts | read straight off `/api/datasets/at` |
+| `folder-receipt` | the save folder, confirmed | "will be created" / "existing folder" |
+| `np-create` | **Create project** | disabled until BOTH paths resolve |
 | `topbar` | the shell top bar | |
 | `save-project` | **Save…** button | visible & functional on ALL six steps (R5.1) |
 | `toast` | transient message region | `role=status`/`alert`; carries "Finish the step…", "Resumed…" |

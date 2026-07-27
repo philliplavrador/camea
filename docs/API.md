@@ -65,11 +65,10 @@ are all server routes now.
 |---|---|---|
 | **health** | `GET /api/health` | → `HealthResponse` |
 | | `GET /api/gpu` | → `GpuInfo` — detection **executes a real op**; there is exactly one detector |
-| **settings** | `GET` · `PUT /api/settings` | `SettingsUpdate` → `Settings` — workspace, dataset roots, recents |
-| **datasets** | `GET /api/datasets` | → `DatasetListResponse` — **the home screen.** Everything under the remembered roots |
-| *(the browser)* | `POST /api/datasets/scan` | `DatasetScanRequest` → `DatasetListResponse` — "point me at a folder" |
+| **settings** | `GET` · `PUT /api/settings` | `SettingsUpdate` → `Settings` — ⛔ **two keys, both lists of paths**: `projects`, `recent_datasets` |
+| **datasets** | `POST /api/datasets/at` | `DatasetAtRequest` → `DatasetListResponse` — *"what is in THIS folder"*. ⛔ Remembers nothing, looks no deeper than one level (R42) |
 | | `GET /api/datasets/{key}` | → `DatasetDetail` — trials, timestamps, snapshot blocks, shapes |
-| | `GET /api/datasets/{key}/thumbnail.png` | → PNG. One frame, **no session** — the browser card must not cost 5 s |
+| | `GET /api/datasets/{key}/thumbnail.png` | → PNG. One frame, **no session** — the receipt must not cost 5 s |
 | **sessions** | `POST /api/sessions` | `OpenSessionRequest` → `202 JobRef` → `OpenJobResult` |
 | *(an open dataset)* | `GET /api/sessions` · `GET /api/sessions/{id}` | → `SessionListResponse` · `SessionResponse` |
 | | `DELETE /api/sessions/{id}` | → `OkResponse` — frees the stack |
@@ -79,10 +78,11 @@ are all server routes now.
 | **tiles** | `GET /api/sessions/{id}/tiles/{trial}.png?v=` | → 8-bit PNG, flat-fielded, through the global tone window |
 | *(pixels)* | `GET /api/sessions/{id}/tiles/{trial}.raw` | → 16-bit little-endian, raw camera counts, no tone |
 | | `GET /api/sessions/{id}/thumbs.png?v=` · `.json` | → sprite sheet · `ThumbsResponse` |
-| **workspace** | `GET` · `PUT /api/workspace` | `WorkspaceSetRequest` → `WorkspaceInfo` |
-| | `GET /api/workspace/analyses` | → `AnalysisListResponse` |
-| | `POST /api/workspace/analyses` | `CreateAnalysisRequest` → `AnalysisSummary` — **the server authors the doc** |
-| | `DELETE /api/workspace/analyses/{id}` | → `OkResponse` |
+| **projects** | `GET /api/projects/folder?path=` | → `ProjectFolderInfo` — *"can I save here?"*, asked **before** anything is written; `writable` is proved with a probe file |
+| *(one project = one folder he named — R42)* | `GET /api/projects` | → `AnalysisListResponse` — the home screen. Carries `unreadable` (moved / unplugged folders) |
+| | `POST /api/projects` | `CreateAnalysisRequest` (**incl. `folder`**) → `AnalysisSummary` — **the server authors the doc**. `409 refused` inside a dataset or the repo |
+| | `PATCH /api/projects/{id}` | `RenameAnalysisRequest` → `AnalysisSummary` — manifest only; the folder never moves |
+| | `DELETE /api/projects/{id}?delete_files=` | → `OkResponse`. ⭐ **Default forgets** (files stay); `true` removes only Camea's own files |
 | **documents** | `GET` · `PUT /api/analyses/{id}/document` | `SaveDocumentRequest` → `DocumentResponse` · `SaveResult` |
 | | `POST /api/analyses/{id}/autosave` | `AutosaveRequest` → `SaveResult` — **a failure is LOUD** |
 | | `POST /api/documents/load` | `LoadDocumentRequest` → `LoadDocumentResponse` — works **cold** |

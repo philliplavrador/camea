@@ -111,15 +111,20 @@ def wait_until_up(server: Any, timeout: float = 30.0) -> None:
 
 
 def _remember_root(path: str) -> None:
-    """`--open DIR` — exactly what `POST /api/datasets/scan` does, and nothing more.
+    """`--open DIR` — put a path in `recent_datasets`, and nothing more.
 
     ⛔ It remembers a **path**. It does not open a dataset, does not pick one, and does not apply an
     exclusion. A remembered path is not knowledge about the data at that path.
+
+    ⚠️ Since 2026-07-25 there is no root registry for this to add to (`settings.dataset_roots` is
+    gone). It now seeds `recent_datasets`, which is what the *"Pull data from"* box offers back as a
+    completion — so `--open` still means *"start me near here"*, and Playwright still gets a known
+    path in the box without the app scanning anything on launch.
     """
     from camea.settings import SETTINGS
 
-    SETTINGS.ensure_loaded().add_root(path)
-    print(f"[camea] remembered dataset root: {path}")
+    SETTINGS.ensure_loaded().touch_dataset(path)
+    print(f"[camea] remembered data folder: {path}")
 
 
 def main(argv: list[str] | None = None) -> int:

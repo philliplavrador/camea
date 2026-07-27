@@ -1,11 +1,16 @@
 """settings.py — ⭐ **WHAT THE APP REMEMBERS BETWEEN LAUNCHES. AND IT IS ONLY PATHS.**
 
-    {"workspace": "D:/work/camea",
-     "dataset_roots": ["D:/Projects/Camea/data/drive"],
+    {"projects": ["D:/work/retina-run", "E:/runs/cortex"],
      "recent_datasets": ["D:/.../260620d"]}
 
 That is the whole file. It lives in the OS's app-data directory (`core.workspace.app_state_dir()` —
-`%LOCALAPPDATA%/Camea` on Windows), **not** in the workspace and **never** in a dataset.
+`%LOCALAPPDATA%/Camea` on Windows), **not** in a project folder and **never** in a dataset.
+
+⭐ **`dataset_roots` and `workspace` were REMOVED on 2026-07-25** (his ruling — see
+`core/project.py`). There is no root registry to scan on launch and no single app-managed store:
+a project names **where its data comes from** and **where it is saved**, and the only thing kept
+here is the list of folders he has actually saved into, so the home screen can list them.
+`recent_datasets` survives — it is what offers his last data paths back as completions.
 
 ⛔ **NO DATASET KNOWLEDGE. THIS FILE IS WHERE IT WOULD BE MOST TEMPTING TO PUT SOME.**
 A remembered *path* is not knowledge *about the data at that path*. So:
@@ -23,7 +28,9 @@ A remembered *path* is not knowledge *about the data at that path*. So:
 
 **A CORRUPT OR UNREADABLE SETTINGS FILE IS NOT A FATAL ERROR.** It is a convenience cache. It is
 reset to defaults, loudly (`warnings`), and the app starts. Nothing the user has *made* lives here —
-his work is in the workspace, and it is a real file with a real name he chose.
+his work is in the project folders he named, each a real folder with a real name he chose. Losing
+this file costs him the *list* on the home screen, never a project: point Camea at the folder again
+and everything is there, because the truth is the manifest in the folder, not this index.
 """
 
 from __future__ import annotations
@@ -76,8 +83,9 @@ class Settings:
     ⚠️ Thread-safe: the API serves from a thread pool, and the settings are touched on every scan.
     """
 
-    workspace: str | None = None
-    dataset_roots: list[str] = field(default_factory=list)
+    #: Every folder the user has saved a project into. ⭐ An INDEX, not the truth — the truth is the
+    #: `camea-project.json` in each folder. A folder that has moved simply drops out of the listing.
+    projects: list[str] = field(default_factory=list)
     recent_datasets: list[str] = field(default_factory=list)
 
     #: Set when the file on disk could not be read. Surfaced, never swallowed — but never fatal.
@@ -106,10 +114,8 @@ class Settings:
                 self.warnings.append(f"could not read {_fwd(p)} ({e}) — starting with defaults")
                 return self
 
-            ws = raw.get("workspace")
-            self.workspace = _fwd(ws) if isinstance(ws, str) and ws else None
-            self.dataset_roots = _dedup([r for r in (raw.get("dataset_roots") or [])
-                                         if isinstance(r, str)])
+            self.projects = _dedup([r for r in (raw.get("projects") or [])
+                                    if isinstance(r, str)])
             self.recent_datasets = _dedup([r for r in (raw.get("recent_datasets") or [])
                                            if isinstance(r, str)])[:MAX_RECENT]
             return self
@@ -128,32 +134,29 @@ class Settings:
     # the wire
     # ---------------------------------------------------------------------------------------------
     def to_json(self) -> dict[str, Any]:
-        """`api.schemas.Settings`. ⛔ Three keys. All of them paths."""
+        """`api.schemas.Settings`. ⛔ Two keys. Both of them lists of paths."""
         with self._lock:
             return {
-                "workspace": self.workspace,
-                "dataset_roots": list(self.dataset_roots),
+                "projects": list(self.projects),
                 "recent_datasets": list(self.recent_datasets),
             }
 
     # ---------------------------------------------------------------------------------------------
     # mutation — every one of these persists immediately
     # ---------------------------------------------------------------------------------------------
-    def set_workspace(self, path: str | Path | None) -> Settings:
+    def add_project(self, path: str | Path) -> Settings:
+        """Remember a folder the user saved a project into. Most recent first, so the *"Save into"*
+        box can offer his last choice's neighbourhood back to him."""
         with self._lock:
-            self.workspace = _fwd(path) if path else None
+            self.projects = _dedup([_fwd(path), *self.projects])
             return self.save()
 
-    def add_root(self, path: str | Path) -> Settings:
-        """Remember a folder the user pointed at. The browser scans these on every launch."""
-        with self._lock:
-            self.dataset_roots = _dedup([*self.dataset_roots, _fwd(path)])
-            return self.save()
-
-    def remove_root(self, path: str | Path) -> Settings:
+    def forget_project(self, path: str | Path) -> Settings:
+        """Drop a folder from the index. ⚠️ Forgetting is not deleting — `core.project.Project.delete`
+        removes the files; this only stops listing the folder."""
         with self._lock:
             want = _fwd(path).rstrip("/").lower()
-            self.dataset_roots = [r for r in self.dataset_roots if r.lower() != want]
+            self.projects = [r for r in self.projects if r.lower() != want]
             return self.save()
 
     def touch_dataset(self, path: str | Path) -> Settings:
@@ -162,23 +165,21 @@ class Settings:
             self.recent_datasets = _dedup([_fwd(path), *self.recent_datasets])[:MAX_RECENT]
             return self.save()
 
-    def update(self, *, workspace: str | Path | None = None,
-               dataset_roots: list[str] | None = None) -> Settings:
-        """`PUT /api/settings`. Only the fields that are given are touched — `workspace: null` in the
-        body means *"forget it"*, and a field that is absent is left alone (that is what
-        `SettingsUpdate`'s `None` defaults mean, and the route decides which it was)."""
+    def update(self, *, projects: list[str] | None = None,
+               recent_datasets: list[str] | None = None) -> Settings:
+        """`PUT /api/settings`. Only the fields that are given are touched; a field that is absent is
+        left alone (that is what `SettingsUpdate`'s `None` defaults mean)."""
         with self._lock:
-            if workspace is not None:
-                self.workspace = _fwd(workspace) if workspace else None
-            if dataset_roots is not None:
-                self.dataset_roots = _dedup(list(dataset_roots))
+            if projects is not None:
+                self.projects = _dedup(list(projects))
+            if recent_datasets is not None:
+                self.recent_datasets = _dedup(list(recent_datasets))[:MAX_RECENT]
             return self.save()
 
     def clear(self) -> Settings:
         """Reset to defaults **and persist**. The tests use it; so does a user with a broken file."""
         with self._lock:
-            self.workspace = None
-            self.dataset_roots = []
+            self.projects = []
             self.recent_datasets = []
             self.warnings = []
             return self.save()

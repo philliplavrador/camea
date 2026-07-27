@@ -1,0 +1,203 @@
+/* WHERE FROM, WHERE TO — the two-path last step of New project (2026-07-25).
+   Two stacked steps, each: a micro-cap label, a paste box, and a receipt for what he named. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 8px 0 40px;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Micro-cap label — the dim, tracked "ground" against which the mono path is the figure. */
+.label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-dim);
+}
+
+/* ── Disambiguation: he typed a parent holding several acquisitions ──────────── */
+.choose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.chooseLede {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.chooseRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chooseChip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  color: var(--data);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+.chooseChip:hover {
+  border-color: var(--border-focus);
+  background: var(--bg-card-hover);
+}
+.chooseChip:focus-visible {
+  border-color: var(--border-focus);
+  outline: none;
+}
+
+/* ── The receipt — a confirmation of what he typed, NOT a card in a browse grid ── */
+.receipt {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  padding: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+.thumb {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: block;
+}
+.thumbEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.receiptBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-right: 22px; /* clear of the ✕ */
+}
+
+.receiptName {
+  font-size: 15px;
+  font-weight: 600;
+  word-break: break-word;
+}
+.experiment {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: -3px;
+}
+
+/* Every number here is a measurement — monospaced and tabular. */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--data);
+}
+.fact {
+  display: inline-flex;
+  gap: 5px;
+  align-items: baseline;
+}
+.factLabel {
+  color: var(--text-faint);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.warnings {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+/* ── The save folder's receipt ────────────────────────────────────────────────── */
+.folderOk {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 10px 34px 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.folderPath {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--data);
+  word-break: break-all;
+}
+.folderNote {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.clear {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 12px;
+  cursor: pointer;
+}
+.clear:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+.clear:focus-visible {
+  outline: 1px solid var(--border-focus);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}

@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { Home, Sweep, Wizard, TID, byId } from './pages';
-import { FIXTURE, SHORT } from './fixture';
+import { SHORT } from './fixture';
 
 /**
  * BEHAVIOUR §8 — the smoke path the v1 verification ran, adapted to the committed synthetic fixture.
@@ -15,10 +15,13 @@ import { FIXTURE, SHORT } from './fixture';
 test('§8 smoke: open → screen → sweep → esc → toggle → jump → opacity/diff → save', async ({
   page,
 }) => {
-  // 1 — open the fixture: it lists, opens, and excludes NOTHING (R2).
+  // 1 — open the fixture: it opens, and excludes NOTHING (R2).
+  // ⚠️ The snapshot count used to be asserted here, off a card on the home screen. Since the
+  // project-manager reframe the home lists PROJECTS, and the dataset's counts live on the receipt
+  // inside the new-project flow — asserted in `home-browser.spec.ts` ("the receipt states what is in
+  // the folder he typed"), which is the screen that actually shows them.
   const home = new Home(page);
   await home.open();
-  await expect(home.card().getByTestId(TID.cardSnapshots)).toHaveText(String(FIXTURE.snapshots));
   await home.openFixture();
   const wizard = new Wizard(page);
   await wizard.expectActive('range');

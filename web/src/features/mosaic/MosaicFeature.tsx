@@ -25,6 +25,7 @@ import {
   type MosaicDocument,
 } from '../../api';
 import { useToast, useRegisterSaver } from '../../app';
+import { mosaicTrials } from './trials';
 import { useDocument } from '../../store/documentStore';
 import { useSweepStore, anyPlaced } from './store';
 import { WizardNav } from './WizardNav';
@@ -48,17 +49,10 @@ const STEP_INDEX: Record<MosaicStepId, number> = {
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** The largest SQUARE (N×N) shape group's trials — a mosaic wants square tiles, and a session holds
- *  exactly one shape (the backend refuses a mixed-shape open). No trial number is named. */
-function squareTrials(shapes: { w: number; h: number; n: number; trials: number[] }[]): number[] | null {
-  const square = shapes.filter((s) => s.w === s.h).sort((a, b) => b.n - a.n)[0];
-  return square ? [...square.trials].sort((a, b) => a - b) : null;
-}
-
 /** An already-open session for this dataset + trial set, or null. ⭐ Reused so opening a project right
  *  after creating it does NOT load the ~340 MiB frame stack a second time — the new-project flow already
  *  opened one to author the document. Matches on dataset AND the exact loaded trial set (both derive
- *  from the same deterministic `squareTrials`, so a match is exact). */
+ *  from the same deterministic `mosaicTrials`, so a match is exact). */
 async function findOpenSession(dsKey: string, trials: number[]): Promise<SessionResponse | null> {
   try {
     const { sessions } = await listSessions();
@@ -140,7 +134,7 @@ export function MosaicFeature() {
       );
     }
     if (!alive()) return;
-    const trials = squareTrials(detail.summary.shapes ?? []);
+    const trials = mosaicTrials(detail.summary.shapes ?? [], detail.blocks ?? []);
     if (!trials || trials.length === 0) {
       throw new Error('this dataset has no square (N×N) frames to build a mosaic from.');
     }

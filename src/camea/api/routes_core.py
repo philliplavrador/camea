@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -52,9 +53,9 @@ from camea.api.schemas import (
     RenameAnalysisRequest,
     AutosaveRequest,
     CreateAnalysisRequest,
+    DatasetAtRequest,
     DatasetDetail,
     DatasetListResponse,
-    DatasetScanRequest,
     DialogOpenDirectoryRequest,
     DialogOpenFileRequest,
     DialogPathResponse,
@@ -74,6 +75,7 @@ from camea.api.schemas import (
     LogResponse,
     OkResponse,
     OpenSessionRequest,
+    ProjectFolderInfo,
     SaveDocumentRequest,
     SaveResult,
     SessionListResponse,
@@ -86,11 +88,10 @@ from camea.api.schemas import (
     ToneUpdate,
     ValidateDocumentRequest,
     ValidationReport,
-    WorkspaceInfo,
-    WorkspaceSetRequest,
 )
 from camea.core import dataset as core_dataset
 from camea.core import document as core_document
+from camea.core import project as core_project
 from camea.core import workspace as core_workspace
 from camea.core.jobs import JOBS, OPEN_PHASES, NotCancellable, phase_reporter
 from camea.settings import SETTINGS
@@ -98,9 +99,6 @@ from camea.settings import SETTINGS
 router = APIRouter(tags=["core"])
 
 _T0 = time.time()
-
-#: How deep `GET /api/datasets` walks each remembered root. `POST /api/datasets/scan` takes its own.
-DEFAULT_SCAN_DEPTH = 3
 
 #: The browser card's thumbnail. A picture, not a measurement.
 THUMBNAIL_PX = 256
@@ -308,18 +306,15 @@ def get_settings() -> dict:
 
 @router.put("/api/settings", response_model=Settings)
 def put_settings(body: SettingsUpdate) -> dict:
-    """⛔ Three keys, all of them paths. See `camea.settings` — a settings file that remembered an
+    """⛔ Two keys, both lists of paths. See `camea.settings` — a settings file that remembered an
     exclusion would be answering, on the user's behalf, the question the app exists to help him
     answer."""
     SETTINGS.ensure_loaded()
     fields = body.model_dump(exclude_unset=True)
     SETTINGS.update(
-        workspace=fields.get("workspace", None) if "workspace" in fields else None,
-        dataset_roots=fields.get("dataset_roots") if "dataset_roots" in fields else None,
+        projects=fields.get("projects") if "projects" in fields else None,
+        recent_datasets=fields.get("recent_datasets") if "recent_datasets" in fields else None,
     )
-    # `workspace: null` in the body means FORGET IT — and `update()` cannot tell that from "absent".
-    if "workspace" in fields and fields["workspace"] is None:
-        SETTINGS.set_workspace(None)
     return SETTINGS.to_json()
 
 
@@ -434,74 +429,66 @@ def _remember(ds: Any) -> Any:
 
 
 def _dataset_for_key(key: str) -> Any:
-    """Re-open the dataset a key names. Re-scans the remembered roots once if we have not seen it."""
+    """Re-open the dataset a key names.
+
+    ⭐ **A COLD START HAS NO ROOT REGISTRY TO RE-SCAN** (removed 2026-07-25). So the recovery is the
+    two lists of paths that are honestly available: the data folders the user opened recently, and
+    the `data_dir` every remembered project records. Opening last week's project therefore still
+    works, without the app remembering anything *about* the data — only where he put it.
+    """
     with _DATASET_LOCK:
         p = _DATASET_PATHS.get(key)
+
     if p is None:
-        _scan_roots()                                   # a cold start: nothing has been listed yet
+        s = SETTINGS.ensure_loaded()
+        for candidate in [*s.recent_datasets, *_projects().data_dirs()]:
+            try:
+                ds = core_dataset.open_dataset(candidate)
+            except (OSError, ValueError):
+                continue                                # a moved or unplugged folder is not a 500
+            _remember(ds)
+            if ds.key == key:
+                return ds
         with _DATASET_LOCK:
             p = _DATASET_PATHS.get(key)
+
     if p is None:
-        raise ApiError(404, "not_found", f"no dataset with key {key!r} under the remembered roots. "
-                                         f"Point the app at its folder (POST /api/datasets/scan).")
+        raise ApiError(404, "not_found",
+                       f"no dataset with key {key!r} in the folders Camea remembers. "
+                       f"Point the app at its folder (POST /api/datasets/at).")
     try:
         return _remember(core_dataset.open_dataset(p))
     except (OSError, ValueError) as e:
         raise ApiError(404, "not_found", f"{p}: {e}") from e
 
 
-def _workspace_or_none() -> core_workspace.Workspace | None:
-    """The chosen workspace, if there is one and it is still there. **Never raises**: the dataset
-    browser must render on a machine where the workspace drive is unplugged."""
-    path = SETTINGS.ensure_loaded().workspace
-    if not path:
-        return None
-    try:
-        return core_workspace.Workspace.open(path, create=False)
-    except Exception:                                   # noqa: BLE001
-        return None
+def _projects() -> core_project.ProjectSet:
+    """The projects the user has saved, addressed by `analysis_id`.
+
+    ⭐ Built fresh per call off `settings.projects` so a folder added or forgotten in another tab is
+    picked up. **It never raises** — there is no "no workspace chosen" state to be in any more, and
+    an empty list is the honest first-run answer, not an error. (`_workspace()`'s `409 no_workspace`
+    is gone with the store it guarded; see `core/project.py`.)
+    """
+    return core_project.ProjectSet(list(SETTINGS.ensure_loaded().projects))
 
 
 def _analyses_index() -> dict[str, list[dict]]:
-    """`{dataset_key: [AnalysisRef, ...]}` — the "you already have work here" card. `{}` with no
-    workspace, and `{}` if it cannot be read. It is a decoration on a browser card; it does not get
-    to fail the browser."""
-    ws = _workspace_or_none()
-    if ws is None:
-        return {}
+    """`{dataset_key: [AnalysisRef, ...]}` — the "you already have work here" card. `{}` if nothing
+    can be read. It is a decoration on a browser card; it does not get to fail the browser."""
     try:
-        return {k: [a.to_ref() for a in v] for k, v in ws.by_dataset().items()}
+        return {k: [a.to_ref() for a in v] for k, v in _projects().by_dataset().items()}
     except Exception:                                   # noqa: BLE001
         return {}
 
 
-def _scan_roots(depth: int = DEFAULT_SCAN_DEPTH) -> tuple[list[Any], list[dict], list[str]]:
-    """Every dataset under every remembered root. -> `(datasets, skipped, roots)`."""
-    roots = list(SETTINGS.ensure_loaded().dataset_roots)
-    found: list[Any] = []
-    skipped: list[dict] = []
-    seen: set[str] = set()
-    for r in roots:
-        try:
-            res = core_dataset.scan(r, depth=depth)
-        except (OSError, ValueError) as e:
-            skipped.append({"path": r, "reason": str(e)})
-            continue
-        skipped += list(res.skipped)
-        for ds in res.datasets:
-            if ds.key in seen:
-                continue                                # two roots that overlap must not double-list
-            seen.add(ds.key)
-            found.append(_remember(ds))
-    found.sort(key=lambda d: d.name)
-    return found, skipped, roots
-
-
-def _dataset_list_body(datasets: list[Any], skipped: list[dict], roots: list[str]) -> dict:
+def _dataset_list_body(path: str, is_dataset: bool, datasets: list[Any],
+                       skipped: list[dict]) -> dict:
     idx = _analyses_index()
-    recents = {p.lower() for p in SETTINGS.recent_datasets}
+    recents = {p.lower() for p in SETTINGS.ensure_loaded().recent_datasets}
     return {
-        "roots": roots,
+        "path": path,
+        "is_dataset": is_dataset,
         "datasets": [
             ds.summary(
                 thumbnail_url=f"/api/datasets/{ds.key}/thumbnail.png",
@@ -514,35 +501,30 @@ def _dataset_list_body(datasets: list[Any], skipped: list[dict], roots: list[str
     }
 
 
-@router.get("/api/datasets", response_model=DatasetListResponse)
-def get_datasets() -> dict:
-    """**The home screen.** Every dataset under the folders the user has pointed at, with no pixel
-    loaded (~0.2 s each). An empty `roots` is the honest first-run state — the UI shows the folder
-    picker (`GET /api/fs/list`) rather than pretending to know where his data is."""
-    datasets, skipped, roots = _scan_roots()
-    return _dataset_list_body(datasets, skipped, roots)
+@router.post("/api/datasets/at", response_model=DatasetListResponse)
+def post_datasets_at(body: DatasetAtRequest) -> dict:
+    """⭐ *"Look at THIS folder."* A POST, not a GET: a Windows path in a query string is an
+    encoding trap.
 
-
-@router.post("/api/datasets/scan", response_model=DatasetListResponse)
-def post_datasets_scan(body: DatasetScanRequest) -> dict:
-    """*"Point me at a folder."* A POST, not a GET: a Windows path in a query string is an encoding
-    trap, and scanning also updates `settings.dataset_roots`.
+    ⛔ **NOTHING IS REMEMBERED AND NOTHING IS RECOMMENDED.** This replaced `POST /api/datasets/scan`
+    + `GET /api/datasets` on 2026-07-25. There is no root registry, no depth-3 walk on every launch,
+    and no list of datasets the app went looking for: the user names one folder and is told what is
+    in it. Either it *is* an acquisition (`is_dataset: true`, one entry), or it directly contains
+    some and he picks which — a disambiguation of his own typing, not a suggestion.
 
     ⛔ Nothing here recognises a dataset by name. A folder is a dataset iff it has a `log.txt` and at
     least one `NNN.xml`. That is the whole rule.
     """
     try:
-        res = core_dataset.scan(body.root, depth=body.depth)
+        res = core_dataset.scan(body.path, depth=body.depth)
     except (OSError, ValueError) as e:
         raise ApiError(400, "bad_request", str(e)) from e
 
-    if body.remember:
-        SETTINGS.ensure_loaded().add_root(res.root)
-
+    root = Path(res.root)
     for ds in res.datasets:
         _remember(ds)
-    return _dataset_list_body(list(res.datasets), list(res.skipped),
-                             list(SETTINGS.ensure_loaded().dataset_roots))
+    is_dataset = any(ds.path == root for ds in res.datasets)
+    return _dataset_list_body(root.as_posix(), is_dataset, list(res.datasets), list(res.skipped))
 
 
 @router.get("/api/datasets/{key}", response_model=DatasetDetail)
@@ -822,66 +804,109 @@ def get_thumbs_json(session_id: str, cell: int = 64) -> dict:
 
 
 # =================================================================================================
-# workspace — where the analyses live
+# projects — ⭐ ONE PROJECT IS ONE FOLDER, NAMED BY THE USER  (his ruling, 2026-07-25)
 # =================================================================================================
-def _workspace() -> core_workspace.Workspace:
-    path = SETTINGS.ensure_loaded().workspace
-    if not path:
-        raise ApiError(409, "no_workspace",
-                       "no workspace has been chosen. Pick a folder for your analyses "
-                       "(PUT /api/workspace) — it may not be inside a dataset or inside the repo.")
+#
+# There is no app-managed store to choose and no `no_workspace` state: a project carries its own
+# save folder, and `settings.projects` is a plain index of the folders he has used so the home
+# screen can list them. See `core/project.py` for the layout and the guards.
+
+
+def _project_error(e: Exception) -> ApiError:
+    """The one mapping. ⛔ A refused *place* is a 409, not a 400 — the front end shows it inline
+    under the path box, with the backend's real message and the user's typed text kept."""
+    if isinstance(e, core_workspace.DatasetIsReadOnly):
+        return ApiError(409, "refused", str(e))
+    if isinstance(e, core_project.PathRefused):
+        return ApiError(409, "refused", str(e))
+    if isinstance(e, core_project.NoSuchProject):
+        return ApiError(404, "not_found", str(e))
+    if isinstance(e, core_workspace.WorkspaceError):    # ProjectError descends from this
+        return ApiError(400, "bad_request", str(e))
+    if isinstance(e, OSError):
+        return ApiError(500, "io_error", str(e))
+    return ApiError(400, "bad_request", str(e))
+
+
+@router.get("/api/projects/folder", response_model=ProjectFolderInfo)
+def get_project_folder(path: str = Query(description="The candidate save folder.")) -> dict:
+    """*"Can I save here?"* — asked as the user types, **before** anything is written.
+
+    `writable` is **proved, not assumed** (it writes and deletes a probe file): a folder on a drive
+    that has been unplugged must show up as `writable: false`, not as a 500 an hour into a sweep.
+    A refusal (inside a dataset, inside the repo) raises 409 so he is told *why*, not just "no".
+    """
     try:
-        return core_workspace.Workspace.open(path, create=True)
-    except core_workspace.DatasetIsReadOnly as e:
-        raise ApiError(409, "refused", str(e)) from e
-    except core_workspace.PathRefused as e:
-        raise ApiError(409, "refused", str(e)) from e
-    except core_workspace.WorkspaceError as e:
-        raise ApiError(400, "bad_request", str(e)) from e
+        pr = core_project.Project.open(path, create=False)
+    except core_project.ProjectError:
+        # It does not exist YET — the normal case for a new project. Do not refuse him: walk up to
+        # the first ancestor that does exist and judge THAT. `D:/work/2026/retina-run` is a perfectly
+        # good answer even when neither `2026` nor `retina-run` has been made yet.
+        #
+        # ⚠️ The refusals still bite: `Project.open` on each ancestor raises `DatasetIsReadOnly` /
+        # `PathRefused` before we get here, so a path deep inside a dataset or the repo is refused on
+        # the way up rather than reported as "will be created".
+        p = Path(path).expanduser()
+        try:
+            rp = p.resolve()
+        except OSError:
+            rp = p.absolute()
+        anchor = next((d for d in rp.parents if d.exists()), None)
+        if anchor is None:
+            raise ApiError(400, "bad_request",
+                           f"there is no such drive or folder: {rp.as_posix()}") from None
+        try:
+            core_project.Project.open(anchor, create=False)
+        except Exception as e:                          # noqa: BLE001
+            raise _project_error(e) from e
+        return {"path": rp.as_posix(), "exists": False, "writable": _writable(anchor),
+                "is_project": False, "empty": True}
+    except Exception as e:                              # noqa: BLE001
+        raise _project_error(e) from e
 
-
-@router.get("/api/workspace", response_model=WorkspaceInfo)
-def get_workspace() -> dict:
-    """`writable` is **proved, not assumed** (it writes and deletes a probe file): a workspace on a
-    drive that has been unplugged must show up on the Load screen as `writable: false`, not as a 500
-    an hour into a sweep."""
-    path = SETTINGS.ensure_loaded().workspace
-    if not path:
-        return {"path": None, "exists": False, "writable": False, "n_analyses": 0}
     try:
-        return core_workspace.Workspace.open(path, create=False).info()
-    except Exception:                                   # noqa: BLE001 — a vanished drive is not a 500
-        return {"path": path, "exists": False, "writable": False, "n_analyses": 0}
+        empty = not any(pr.path.iterdir())
+    except OSError:
+        empty = False
+    return {
+        "path": pr.path.as_posix(),
+        "exists": True,
+        "writable": _writable(pr.path),
+        "is_project": pr.is_project(),
+        "empty": empty,
+    }
 
 
-@router.put("/api/workspace", response_model=WorkspaceInfo)
-def put_workspace(body: WorkspaceSetRequest) -> dict:
-    """⛔ **NEVER inside a dataset. NEVER inside the repo.** Both are refused here, at the one moment
-    the user names the place — a workspace under the checkout would be committed, `.gitignore`d, or
-    blown away by a clean. His work does not live in the app's source tree."""
+def _writable(d: Path) -> bool:
+    """Proved, not assumed — a probe file, written and deleted."""
+    if not d.is_dir():
+        return False
     try:
-        ws = core_workspace.Workspace.open(body.path, create=body.create)
-    except core_workspace.DatasetIsReadOnly as e:
-        raise ApiError(409, "refused", str(e)) from e
-    except core_workspace.PathRefused as e:
-        raise ApiError(409, "refused", str(e)) from e
-    except core_workspace.WorkspaceError as e:
-        raise ApiError(400, "bad_request", str(e)) from e
-    except OSError as e:
-        raise ApiError(500, "io_error", f"cannot create {body.path}: {e}") from e
-
-    SETTINGS.ensure_loaded().set_workspace(ws.path)
-    return ws.info()
+        fd, tmp = tempfile.mkstemp(dir=str(d), prefix=".camea-probe-")
+        os.close(fd)
+        os.unlink(tmp)
+        return True
+    except OSError:
+        return False
 
 
-@router.get("/api/workspace/analyses", response_model=AnalysisListResponse)
-def get_analyses(dataset_key: str | None = None, feature: str | None = None) -> dict:
-    ws = _workspace()
-    return {"workspace": ws.path.as_posix(),
-            "analyses": [a.to_json() for a in ws.analyses(dataset_key=dataset_key, feature=feature)]}
+@router.get("/api/projects", response_model=AnalysisListResponse)
+def get_projects(dataset_key: str | None = None, feature: str | None = None) -> dict:
+    """**The home screen.** Every project in the folders the user has saved into.
+
+    ⚠️ A folder that has moved or is on an unplugged drive is reported in `unreadable`, **not**
+    silently dropped and **not** a failure of the whole listing: one dead drive must cost him that
+    project's card, never his home screen.
+    """
+    ps = _projects()
+    found = ps.analyses(dataset_key=dataset_key, feature=feature)
+    alive = {a.dir.as_posix().lower() for a in found}
+    unreadable = [f for f in SETTINGS.ensure_loaded().projects
+                  if f.rstrip("/").lower() not in alive]
+    return {"analyses": [a.to_json() for a in found], "unreadable": unreadable}
 
 
-@router.post("/api/workspace/analyses", response_model=AnalysisSummary, status_code=201)
+@router.post("/api/projects", response_model=AnalysisSummary, status_code=201)
 def post_analyses(body: CreateAnalysisRequest) -> dict:
     """⭐ **THE SERVER CREATES THE DOCUMENT**, via the feature's `new_payload` hook.
 
@@ -896,7 +921,6 @@ def post_analyses(body: CreateAnalysisRequest) -> dict:
     merely unlikely.
     """
     s = _session(body.session_id)
-    ws = _workspace()
 
     if body.feature not in core_document.registered_features():
         raise ApiError(400, "bad_request",
@@ -909,12 +933,25 @@ def post_analyses(body: CreateAnalysisRequest) -> dict:
     if stray:
         raise ApiError(400, "bad_request", f"trials not loaded in this session: {stray[:12]}")
 
+    # ⭐ The folder HE named. Refused inside a dataset (the evidence) or inside the repo — at this
+    # one moment, before a byte is written, with the reason said out loud.
     try:
-        analysis = ws.create_analysis(feature=body.feature, name=body.name,
-                                      dataset_key=s.dataset.key, dataset=s.dataset.name,
-                                      data_dir=s.dataset.path.as_posix())
-    except core_workspace.WorkspaceError as e:
-        raise ApiError(400, "bad_request", str(e)) from e
+        pr = core_project.Project.create(
+            body.folder,
+            feature=body.feature,
+            name=body.name,
+            dataset_key=s.dataset.key,
+            dataset=s.dataset.name,
+            data_dir=s.dataset.path.as_posix(),
+        )
+    except Exception as e:                              # noqa: BLE001
+        raise _project_error(e) from e
+
+    analysis = pr.summary()
+    # `core.document` wants the `Workspace` surface (`save_document(id, doc)`). A one-folder
+    # `ProjectSet` is exactly that — and it is scoped to the folder just made, because the index
+    # deliberately does not know about it until the document is safely written.
+    ws = core_project.ProjectSet([pr.path.as_posix()])
 
     # ⛔ Core passes the feature a bag of FACTS ABOUT THE SESSION and nothing else. It does not know
     # what the feature will do with them (mosaic's `new_payload` takes `**_ignored`), and it holds no
@@ -935,42 +972,57 @@ def post_analyses(body: CreateAnalysisRequest) -> dict:
         )
         core_document.save_analysis(ws, analysis.analysis_id, doc)
     except core_document.ValidationError as e:
-        ws.delete(analysis.analysis_id)                 # do not leave a half-made analysis behind
+        pr.delete()                                     # do not leave a half-made project behind
         raise ApiError(400, "bad_request", "; ".join(e.args[0]) if e.args else str(e)) from e
     except core_document.DocumentError as e:
-        ws.delete(analysis.analysis_id)
+        pr.delete()
         raise ApiError(400, "bad_request", str(e)) from e
 
-    core_document.DOCUMENTS.put(doc, ws.document_path(analysis.analysis_id))
-    return ws.get(analysis.analysis_id).to_json()
+    # ⭐ Only NOW is the folder remembered — after the document is safely on disk. A folder added to
+    # the index before the write could survive a failed create and haunt the home screen forever.
+    SETTINGS.ensure_loaded().add_project(pr.path)
+    SETTINGS.touch_dataset(s.dataset.path)
+
+    core_document.DOCUMENTS.put(doc, pr.document_path)
+    return pr.summary().to_json()
 
 
-@router.patch("/api/workspace/analyses/{analysis_id}", response_model=AnalysisSummary)
+@router.patch("/api/projects/{analysis_id}", response_model=AnalysisSummary)
 def rename_analysis(analysis_id: str, body: RenameAnalysisRequest) -> dict:
-    """Rename an analysis — the project manager's rename. ⭐ Rewrites the manifest ONLY; the directory
-    never moves and the `analysis_id` is forever (a rename that moved the dir would break the slot guard
-    and every path the document carries)."""
-    ws = _workspace()
+    """Rename a project — the project manager's rename. ⭐ Rewrites the manifest ONLY; the folder
+    never moves and the `analysis_id` is forever (a rename that moved the folder would break the slot
+    guard, every path the document carries, and any Explorer window he has open on it)."""
     name = body.name.strip()
     if not name:
         raise ApiError(400, "bad_request", "a project name cannot be empty")
     try:
-        return ws.rename(analysis_id, name).to_json()
-    except core_workspace.NoSuchAnalysis as e:
-        raise ApiError(404, "not_found", str(e)) from e
-    except core_workspace.WorkspaceError as e:
-        raise ApiError(400, "bad_request", str(e)) from e
+        return _projects().rename(analysis_id, name).to_json()
+    except Exception as e:                              # noqa: BLE001
+        raise _project_error(e) from e
 
 
-@router.delete("/api/workspace/analyses/{analysis_id}", response_model=OkResponse)
-def delete_analysis(analysis_id: str) -> dict:
-    ws = _workspace()
+@router.delete("/api/projects/{analysis_id}", response_model=OkResponse)
+def delete_analysis(analysis_id: str, delete_files: bool = False) -> dict:
+    """⭐ **FORGET, OR DELETE — and the app does not guess which.**
+
+    `delete_files=false` (the default) takes the project off the home screen and **leaves every byte
+    where it is**: the folder is his, he named it, and "remove this card" must not be a synonym for
+    "destroy a week of sweeping". `delete_files=true` removes Camea's own files from it — the
+    manifest, the document, the autosave, `outputs/` — and leaves anything else he put there alone.
+    """
+    ps = _projects()
     try:
-        ws.delete(analysis_id)
-    except core_workspace.NoSuchAnalysis as e:
-        raise ApiError(404, "not_found", str(e)) from e
-    except core_workspace.WorkspaceError as e:
-        raise ApiError(400, "bad_request", str(e)) from e
+        folder = ps.folder_of(analysis_id)
+    except Exception as e:                              # noqa: BLE001
+        raise _project_error(e) from e
+
+    if delete_files:
+        try:
+            ps.delete(analysis_id)
+        except Exception as e:                          # noqa: BLE001
+            raise _project_error(e) from e
+
+    SETTINGS.ensure_loaded().forget_project(folder)
     core_document.DOCUMENTS.close(analysis_id)
     return {"ok": True}
 
@@ -1010,7 +1062,7 @@ def _document_error(e: Exception) -> ApiError:
 def get_document(analysis_id: str, recovered: bool = False) -> dict:
     """`recovered=true` reads the **autosave** instead — ask `Workspace.recovery()` first: an autosave
     NEWER than the document is a recovery prompt, an older one is noise."""
-    ws = _workspace()
+    ws = _projects()
     try:
         doc, _ = core_document.load_analysis(ws, analysis_id, recovered=recovered)
     except FileNotFoundError as e:
@@ -1028,7 +1080,7 @@ def put_document(analysis_id: str, body: SaveDocumentRequest) -> dict:
     drift the moment the user excludes a tile, and `normalise` is what repairs them — validating them
     first rejects a perfectly good document for drift the very next line of code fixes.
     (`core.document.prepare` owns that order; this route only picks the destination.)"""
-    ws = _workspace()
+    ws = _projects()
     try:
         res = core_document.save_analysis(ws, analysis_id, _doc_of(body))
     except Exception as e:                              # noqa: BLE001
@@ -1049,7 +1101,7 @@ def post_autosave(analysis_id: str, body: AutosaveRequest) -> dict:
     document whose `id`/`dataset_key` disagrees with the slot's is refused with `409 range_mismatch`.
     It is not merged, not renamed, not "repaired".
     """
-    ws = _workspace()
+    ws = _projects()
     try:
         res = core_document.autosave(ws, analysis_id, _doc_of(body))
     except Exception as e:                              # noqa: BLE001

@@ -1,6 +1,6 @@
 // The typed API surface — the ONE import features reach for.
 //
-//   import { useDatasets, matchAnchor, useJob, formatEta, type MatchResult } from '../../api';
+//   import { datasetsAt, matchAnchor, useJob, formatEta, type MatchResult } from '../../api';
 //
 // Every function here is a typed wrapper over the generated client (`schema.d.ts` ← docs/openapi.json).
 // Features never hand-write a request/response body and never `api.POST('/api/...')` directly — that is

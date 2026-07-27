@@ -1,23 +1,25 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE PROJECT MANAGER — Camea's home (2026-07-24). "What do you want to do today?"
 //
-// A project = one dataset + one task (feature). Projects persist in an app-managed store the user
-// points at ONCE (first run), then rename / delete / open / export them here. Creating one lives in the
-// new-project flow (`/new`); opening one navigates to `/project/:id`.
+// A project = one dataset + one task (feature), living in ONE FOLDER the user named when he made it.
+// Rename / delete / open / export them here. Creating one lives in the new-project flow (`/new`);
+// opening one navigates to `/project/:id`.
+//
+// ⭐ **THERE IS NO FIRST-RUN "choose a store" SCREEN** (his ruling, 2026-07-25). Nothing has to be
+// picked before he can start: the home opens straight onto his projects, or onto an honest empty
+// state. Each project carries its own save folder, and Camea remembers only the list of them.
 //
 // ⛔ NO DATASET KNOWLEDGE. Every number on a card is read off the analysis summary the server returns;
 // nothing here names a trial, a count or an exclusion.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { setWorkspace, getDocument, type AnalysisSummary, type MosaicDocument } from '../../api';
+import { getDocument, type AnalysisSummary, type MosaicDocument } from '../../api';
 import { useDocument } from '../../store/documentStore';
 import { useToast } from '../../app';
 import { Button, Card, Badge } from '../../design';
-import { FolderPicker } from './FolderPicker';
-import { useWorkspace } from '../../api/workspace';
 import { useProjects } from './useProjects';
+import { shortPath } from './pathText';
 import styles from './ProjectManager.module.css';
 
 const TASK_LABEL: Record<string, string> = { mosaic: 'Build mosaic' };
@@ -31,62 +33,6 @@ function fmtDate(iso: string | null | undefined): string {
 }
 
 export function ProjectManager() {
-  const [wsKey, setWsKey] = useState(0);
-  const ws = useWorkspace(wsKey);
-
-  // First run: no store folder chosen yet — pick one, once.
-  if (ws.status === 'loading') {
-    return <div className={styles.center} data-testid="project-manager" />;
-  }
-  if (ws.status === 'ready' && !ws.info.path) {
-    return <FirstRunStore onPicked={() => setWsKey((k) => k + 1)} />;
-  }
-
-  return <ProjectHome />;
-}
-
-function FirstRunStore({ onPicked }: { onPicked: () => void }) {
-  const [picking, setPicking] = useState(false);
-  const toast = useToast();
-
-  async function pick(path: string): Promise<void> {
-    setPicking(false);
-    try {
-      await setWorkspace({ path, create: true });
-      onPicked();
-    } catch (e) {
-      toast.push(
-        `Could not use that folder: ${e instanceof Error ? e.message : String(e)}`,
-        { tone: 'danger' },
-      );
-    }
-  }
-
-  return (
-    <section className={styles.center} data-testid="project-manager">
-      <div className={styles.firstRun} data-testid="first-run-store">
-        <h1 className={styles.greeting}>Welcome to Camea</h1>
-        <p className={styles.firstRunLede}>
-          Choose one folder where Camea keeps your projects. It's remembered from now on — you only do
-          this once. It must not be inside a dataset or the app itself.
-        </p>
-        <Button variant="primary" data-testid="choose-store" onClick={() => setPicking(true)}>
-          Choose folder…
-        </Button>
-      </div>
-      {picking && (
-        <FolderPicker
-          title="Where should Camea keep your projects?"
-          confirmLabel="Use this folder"
-          onPick={(p) => void pick(p)}
-          onClose={() => setPicking(false)}
-        />
-      )}
-    </section>
-  );
-}
-
-function ProjectHome() {
   const navigate = useNavigate();
   const { state, refresh, remove, rename } = useProjects();
   const toast = useToast();
@@ -103,11 +49,33 @@ function ProjectHome() {
     }
   }
 
-  async function onDelete(p: AnalysisSummary): Promise<void> {
-    if (!window.confirm(`Delete "${p.name}"? This removes the project and its outputs. This cannot be undone.`))
+  /**
+   * ⭐ REMOVE ≠ DELETE, and the app does not guess which he meant. The folder is his — he named it —
+   * so taking the card off the home screen must not be a synonym for destroying a week of sweeping.
+   * (`window.confirm` on purpose: R38 — Playwright can answer it, a custom modal it cannot.)
+   */
+  async function onForget(p: AnalysisSummary): Promise<void> {
+    if (!window.confirm(`Remove "${p.name}" from this list?\n\nThe files stay in ${p.folder}.`))
       return;
     try {
-      await remove(p.analysis_id);
+      await remove(p.analysis_id, false);
+      toast.push(`Removed "${p.name}" from the list — the files are still there.`);
+    } catch (e) {
+      toast.push(`Remove failed: ${e instanceof Error ? e.message : String(e)}`, { tone: 'danger' });
+    }
+  }
+
+  async function onDelete(p: AnalysisSummary): Promise<void> {
+    if (
+      !window.confirm(
+        `Delete "${p.name}" and its files?\n\nThis removes the document, the autosave and the ` +
+          `exports from ${p.folder}. Anything else you keep in that folder is left alone. ` +
+          `This cannot be undone.`,
+      )
+    )
+      return;
+    try {
+      await remove(p.analysis_id, true);
       toast.push(`Deleted "${p.name}".`, { tone: 'default' });
     } catch (e) {
       toast.push(`Delete failed: ${e instanceof Error ? e.message : String(e)}`, { tone: 'danger' });
@@ -171,10 +139,25 @@ function ProjectHome() {
               project={p}
               onOpen={() => navigate(`/project/${p.analysis_id}`)}
               onRename={() => void onRename(p)}
+              onForget={() => void onForget(p)}
               onDelete={() => void onDelete(p)}
               onExport={() => void onExport(p)}
             />
           ))}
+        </div>
+      )}
+
+      {/* A folder that has moved or is on an unplugged drive. Said out loud, never silently dropped. */}
+      {state.status === 'ready' && state.unreadable.length > 0 && (
+        <div className={styles.unreadable} data-testid="projects-unreadable">
+          {state.unreadable.length} remembered folder
+          {state.unreadable.length === 1 ? '' : 's'} could not be read — moved, renamed, or on a
+          drive that is not plugged in:
+          <ul>
+            {state.unreadable.map((f) => (
+              <li key={f}>{f}</li>
+            ))}
+          </ul>
         </div>
       )}
     </section>
@@ -185,11 +168,12 @@ interface ProjectCardProps {
   project: AnalysisSummary;
   onOpen: () => void;
   onRename: () => void;
+  onForget: () => void;
   onDelete: () => void;
   onExport: () => void;
 }
 
-function ProjectCard({ project: p, onOpen, onRename, onDelete, onExport }: ProjectCardProps) {
+function ProjectCard({ project: p, onOpen, onRename, onForget, onDelete, onExport }: ProjectCardProps) {
   const placed = p.n_anchored != null && p.n_tiles != null ? `${p.n_anchored}/${p.n_tiles} anchored` : null;
   return (
     <div className={styles.cardWrap} role="listitem">
@@ -221,6 +205,12 @@ function ProjectCard({ project: p, onOpen, onRename, onDelete, onExport }: Proje
           {placed && <span className={styles.placed}>{placed}</span>}
           <span className={styles.modified}>Updated {fmtDate(p.modified)}</span>
         </div>
+        {/* ⭐ He chose this folder. Show it to him — it is how he finds his work in Explorer. */}
+        {p.folder && (
+          <span className={styles.folder} title={p.folder} data-testid="project-folder">
+            {shortPath(p.folder, 44)}
+          </span>
+        )}
         {p.independent_of_method === false && (
           <span className={styles.provenance} title="A machine placed tiles in this project.">
             machine-assisted
@@ -236,10 +226,18 @@ function ProjectCard({ project: p, onOpen, onRename, onDelete, onExport }: Proje
         </button>
         <button
           type="button"
+          data-testid="project-forget"
+          onClick={onForget}
+          title="Take it off this list — the files stay where they are"
+        >
+          Remove
+        </button>
+        <button
+          type="button"
           className={styles.danger}
           data-testid="project-delete"
           onClick={onDelete}
-          title="Delete"
+          title="Delete this project's files"
         >
           Delete
         </button>

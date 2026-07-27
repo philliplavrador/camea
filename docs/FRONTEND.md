@@ -38,9 +38,14 @@ uv run camea --headless --port 8000 --open <a-folder-that-contains-datasets>
 ```
 
 > ⚠️ **There is no `--data-dir` flag.** The app carries no dataset knowledge (HARD RULE 3). `--open`
-> *remembers a root* (exactly like `POST /api/datasets/scan`); `GET /api/datasets` then lists every
-> dataset found under the remembered roots. That list **is** the home screen. To use the committed
-> fixture, point it at `tests/fixtures` (the dataset is `synthetic/` beneath it).
+> puts a path in `settings.recent_datasets` — *"start me near here"* — and nothing else. It opens no
+> dataset and scans nothing. To use the committed fixture, point it at `tests/fixtures` (the dataset
+> is `synthetic/` beneath it).
+>
+> ⭐ **There is no root registry (2026-07-25 — BEHAVIOUR R42).** `GET /api/datasets` and
+> `POST /api/datasets/scan` are gone: the home screen is the **project manager**, and a new project
+> asks outright *where the data comes from* and *where to save*. `POST /api/datasets/at` answers
+> "what is in THIS folder" and remembers nothing.
 
 **Terminal 2 — the frontend:**
 

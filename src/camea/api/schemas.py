@@ -240,18 +240,25 @@ class GpuInfo(Res):
 
 class Settings(Res):
     """Everything the app remembers between launches. ⛔ **No dataset knowledge lives here.**
-    A remembered *path* is not knowledge about the data at that path."""
+    A remembered *path* is not knowledge about the data at that path.
 
-    workspace: str | None = Field(default=None, description="Where analyses are written.")
-    dataset_roots: list[str] = Field(
-        default_factory=list, description="Folders the user pointed at. The browser scans these."
+    ⭐ `workspace` and `dataset_roots` were removed on 2026-07-25: there is no single app-managed
+    store and no root registry. A project names its own save folder, and these are the folders the
+    user has actually used."""
+
+    projects: list[str] = Field(
+        default_factory=list,
+        description="Folders the user has saved a project into. An index for the home screen — the "
+        "truth is the camea-project.json in each folder.",
     )
-    recent_datasets: list[str] = Field(default_factory=list)
+    recent_datasets: list[str] = Field(
+        default_factory=list, description="Data folders recently opened. Offered back as completions."
+    )
 
 
 class SettingsUpdate(Req):
-    workspace: str | None = None
-    dataset_roots: list[str] | None = None
+    projects: list[str] | None = None
+    recent_datasets: list[str] | None = None
 
 
 # =================================================================================================
@@ -362,20 +369,36 @@ class DatasetSummary(Res):
 
 
 class DatasetListResponse(Res):
-    roots: list[str]
+    """What is at ONE folder the user just named. ⛔ Not a registry — nothing here was remembered
+    or scanned on the app's initiative."""
+
+    path: str = Field(description="The folder that was looked at, resolved.")
+    is_dataset: bool = Field(
+        default=False, description="True when that folder IS one acquisition (log.txt + NNN.xml)."
+    )
     datasets: list[DatasetSummary]
     skipped: list[str] = Field(
         default_factory=list, description="Folders that looked like a dataset but could not be read."
     )
 
 
-class DatasetScanRequest(Req):
-    """`POST /api/datasets/scan` — the user points at a folder. (A POST, not a GET: Windows paths
-    in query strings are an encoding trap, and scanning also updates `settings.dataset_roots`.)"""
+class DatasetAtRequest(Req):
+    """`POST /api/datasets/at` — *"look at this folder."* (A POST, not a GET: Windows paths in query
+    strings are an encoding trap.)
 
-    root: str
-    depth: int = Field(default=3, ge=1, le=6)
-    remember: bool = True
+    ⛔ **Nothing is remembered and nothing is recommended.** The folder is either an acquisition, or
+    it directly contains some — and that is as far as it looks. A deeper walk would be the app going
+    looking for the user's data, which is exactly what was removed on 2026-07-25.
+    """
+
+    path: str
+    depth: int = Field(
+        default=2,
+        ge=1,
+        le=2,
+        description="1 = this folder only. 2 (the default) = this folder, or the acquisitions "
+        "DIRECTLY inside it — he may have typed the parent. Never deeper.",
+    )
 
 
 class TrialMeta(Res):
@@ -561,28 +584,31 @@ class OpenJobResult(Res):
 
 
 # =================================================================================================
-# WORKSPACE — where analyses live.  CORE.
+# PROJECTS — a project is ONE FOLDER, named by the user.  CORE.
 # =================================================================================================
 #
-# ⛔ The workspace is NEVER inside a dataset and NEVER inside the repo. `core.workspace` refuses
-# `data/`, the repo root, and the open dataset's own directory — one implementation, not the three
-# that had drifted apart in v1.
+# ⛔ A project folder is NEVER inside a dataset and NEVER inside the repo. `core.project` refuses
+# `data/`, the repo, and any raw acquisition folder — reusing `core.workspace`'s one implementation
+# of each guard, not the three that had drifted apart in v1.
+#
+# ⭐ `analysis_id` is still the addressing token: `core.document`, every feature and the whole front
+# end name a project by its id, and none of them know where it is stored. See `core/project.py`.
 
 
-class WorkspaceInfo(Res):
-    path: str | None
+class ProjectFolderInfo(Res):
+    """What Camea can say about a candidate save folder BEFORE anything is written to it."""
+
+    path: str
     exists: bool
     writable: bool
-    n_analyses: int = 0
-
-
-class WorkspaceSetRequest(Req):
-    path: str
-    create: bool = True
+    is_project: bool = Field(
+        default=False, description="True when the folder already holds a Camea project."
+    )
+    empty: bool = Field(default=True, description="False when the folder already has files in it.")
 
 
 class AnalysisSummary(Res):
-    """An analysis = a document + its outputs, in the workspace. It is bound to ONE dataset."""
+    """A project = a document + its outputs, in the folder the user named. Bound to ONE dataset."""
 
     analysis_id: str
     feature: str = Field(description='"mosaic". Features register their own name.')
@@ -590,6 +616,8 @@ class AnalysisSummary(Res):
     dataset_key: str
     dataset: str
     path: str
+    folder: str = Field(default="", description="The project's own folder — the one he named.")
+    data_dir: str = Field(default="", description="Where this project's dataset lives.")
     created: str
     modified: str
     bytes: int
@@ -604,8 +632,12 @@ class AnalysisSummary(Res):
 
 
 class AnalysisListResponse(Res):
-    workspace: str | None
     analyses: list[AnalysisSummary]
+    unreadable: list[str] = Field(
+        default_factory=list,
+        description="Remembered folders that could not be read this launch (an unplugged drive). "
+        "Listed, never silently dropped — and never a failure of the whole home screen.",
+    )
 
 
 class CreateAnalysisRequest(Req):
@@ -620,16 +652,33 @@ class CreateAnalysisRequest(Req):
     session_id: str
     feature: str
     name: str
+    folder: str = Field(
+        description="⭐ WHERE TO SAVE IT — the folder the user named. The project IS this folder. "
+        "Refused (409) inside a dataset or inside the repo."
+    )
     trials: list[int] | None = Field(
         default=None, description="The feature's selection. null = the session's whole trial list."
     )
 
 
 class RenameAnalysisRequest(Req):
-    """Rename an analysis (`PATCH /api/workspace/analyses/{id}`). Rewrites the manifest only — **the
-    directory never moves; the id is forever.** This is what the project manager's rename does."""
+    """Rename a project (`PATCH /api/projects/{id}`). Rewrites the manifest only — **the folder
+    never moves; the id is forever.** This is what the project manager's rename does."""
 
     name: str
+
+
+class ForgetProjectRequest(Req):
+    """`DELETE /api/projects/{id}` — what to do with the files.
+
+    ⭐ Two different things the user might mean, and the app must not guess: **forget** takes it off
+    the home screen and leaves every byte on disk; **delete** removes Camea's own files from the
+    folder (the manifest, the document, the autosave, `outputs/`) and leaves anything else he put
+    there alone."""
+
+    delete_files: bool = Field(
+        default=False, description="False = forget only. True = also remove Camea's files."
+    )
 
 
 # =================================================================================================
@@ -1816,7 +1865,7 @@ __all__ = [
     "AnalysisRef",
     "DatasetSummary",
     "DatasetListResponse",
-    "DatasetScanRequest",
+    "DatasetAtRequest",
     "TrialMeta",
     "DatasetDetail",
     # sessions
@@ -1831,11 +1880,11 @@ __all__ = [
     "TextureResponse",
     "ThumbsResponse",
     "OpenJobResult",
-    # workspace
-    "WorkspaceInfo",
-    "WorkspaceSetRequest",
+    # projects — one project is ONE FOLDER, named by the user (R42)
+    "ProjectFolderInfo",
     "AnalysisSummary",
     "RenameAnalysisRequest",
+    "ForgetProjectRequest",
     "AnalysisListResponse",
     "CreateAnalysisRequest",
     # documents

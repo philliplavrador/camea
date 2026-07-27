@@ -1,16 +1,18 @@
-// DATASETS — the home screen's data (list / scan / detail) and OPEN (which starts a session job).
+// DATASETS — looking at ONE folder the user named, and OPEN (which starts a session job).
 //
 // ⛔ NO DATASET KNOWLEDGE (HARD RULE 3 / BEHAVIOUR I1). This module never names a trial, a count, a
 // range or an exclusion. A dataset opens as "N of whatever is on disk"; which frames are good is the
 // human's decision, and it lives in the document, never here.
+//
+// ⭐ **THERE IS NO ROOT REGISTRY** (his ruling, 2026-07-25). `listDatasets`/`scanDatasets` are gone
+// with it: the app does not keep folders to walk on launch and does not go looking for his data. He
+// names a folder; `datasetsAt` says what is in THAT folder and remembers nothing.
 
-import { useEffect, useState } from 'react';
 import { api, unwrap } from './client';
 import { pollJobUntilDone } from './jobs';
 import type {
   DatasetListResponse,
   DatasetDetail,
-  DatasetScanRequest,
   JobRef,
   Job,
   OpenSessionRequest,
@@ -19,17 +21,18 @@ import type {
 
 // ── Request functions ───────────────────────────────────────────────────────────
 
-/** Every dataset under every remembered root (`GET /api/datasets`). No pixels loaded. */
-export async function listDatasets(): Promise<DatasetListResponse> {
-  return unwrap(await api.GET('/api/datasets'));
-}
-
 /**
- * Point Camea at a folder (`POST /api/datasets/scan`). A POST, not a GET, because a Windows path in a
- * query string is an encoding trap — and scanning also remembers the root in settings.
+ * *"Look at THIS folder."* (`POST /api/datasets/at`) A POST, not a GET, because a Windows path in a
+ * query string is an encoding trap.
+ *
+ * Either the folder IS an acquisition (`is_dataset`, one entry) or it directly contains some and he
+ * picks which — a disambiguation of his own typing, never a suggestion. It looks no deeper, and it
+ * writes nothing down.
  */
-export async function scanDatasets(req: DatasetScanRequest): Promise<DatasetListResponse> {
-  return unwrap(await api.POST('/api/datasets/scan', { body: req }));
+export async function datasetsAt(path: string): Promise<DatasetListResponse> {
+  // `depth: 2` is the backend's own default, spelled out because openapi-typescript types a field
+  // WITH a default as required. 2 = this folder, or the acquisitions directly inside it. Never deeper.
+  return unwrap(await api.POST('/api/datasets/at', { body: { path, depth: 2 } }));
 }
 
 /** Everything sayable about one dataset without loading a pixel (`GET /api/datasets/{key}`). */
@@ -67,40 +70,3 @@ export async function openSessionAndWait(
   return result.session;
 }
 
-// ── The home hook ────────────────────────────────────────────────────────────────
-
-export type DatasetsState =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; data: DatasetListResponse };
-
-/**
- * Load the home screen (`GET /api/datasets`). Empty `roots` is the honest first-run state — the UI
- * shows the folder picker rather than pretending to know where the data lives.
- *
- * `reloadKey` re-runs the fetch when it changes (e.g. after a `scanDatasets` adds a root).
- */
-export function useDatasets(reloadKey?: unknown): DatasetsState {
-  const [state, setState] = useState<DatasetsState>({ status: 'loading' });
-
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: 'loading' });
-    listDatasets()
-      .then((data) => {
-        if (!cancelled) setState({ status: 'ready', data });
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setState({ status: 'error', message: describeError(e) });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadKey]);
-
-  return state;
-}
-
-function describeError(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}

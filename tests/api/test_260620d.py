@@ -100,9 +100,9 @@ def test_a_fresh_document_has_338_tiles_and_0_excluded(client, data_dir, workspa
     sid = open_session(client, data_dir)["session_id"]
     trials = client.post("/api/mosaic/run", json={"session_id": sid}).json()["trials"]
 
-    a = client.post("/api/workspace/analyses",
+    a = client.post("/api/projects",
                     json={"session_id": sid, "feature": "mosaic", "name": "11-348",
-                          "trials": trials}).json()
+                          "trials": trials, "folder": str(workspace / "11-348")}).json()
     assert a["n_tiles"] == N_RUN
     assert a["n_excluded"] == 0
     assert a["n_anchored"] == 0
@@ -119,9 +119,9 @@ def test_312_IS_SOMETHING_THE_USER_PRODUCES_NEVER_A_DEFAULT(client, data_dir, wo
     serpentine one-axis step prior stops holding across them."""
     sid = open_session(client, data_dir)["session_id"]
     trials = client.post("/api/mosaic/run", json={"session_id": sid}).json()["trials"]
-    aid = client.post("/api/workspace/analyses",
+    aid = client.post("/api/projects",
                       json={"session_id": sid, "feature": "mosaic", "name": "his ruling",
-                            "trials": trials}).json()["analysis_id"]
+                            "trials": trials, "folder": str(workspace / "his-ruling")}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
 
     # HIS ruling, applied BY HIM. It lives in this test file, which is the answer key — not in src/.
@@ -144,7 +144,7 @@ def test_312_IS_SOMETHING_THE_USER_PRODUCES_NEVER_A_DEFAULT(client, data_dir, wo
     # and it survives a save -> quit -> cold load. This file is the app's only memory.
     client.delete(f"/api/sessions/{sid}")
     r = client.post("/api/documents/load",
-                    json={"path": client.get("/api/workspace/analyses").json()["analyses"][0]["path"]})
+                    json={"path": client.get("/api/projects").json()["analyses"][0]["path"]})
     assert r.status_code == 200
     reloaded = r.json()["doc"]
     assert len([1 for v in reloaded["tiles"].values() if v["state"] == "excluded"]) == 26

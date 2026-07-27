@@ -11,6 +11,11 @@
 // and docs/FRONTEND.md §"The committed synthetic fixture".
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 export const FIXTURE = {
   /** The dataset name as it appears on the home card and in the URL slug (`synthetic-…`). */
   name: 'synthetic',
@@ -62,3 +67,31 @@ export const FORBIDDEN_KNOWLEDGE: RegExp[] = [
 
 /** A short wait for elements the test EXPECTS to be missing (keeps the red run snappy pre-UI). */
 export const SHORT = 4_000;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TWO PATHS the new-project flow asks for (2026-07-25).
+//
+// ⚠️ `saveRoot` is deliberately in the OS temp dir and NOT under the repo: the backend REFUSES a
+// project folder inside the checkout (a project under `web/.playwright-state` would be refused with
+// `409 refused`, and the test would look like a UI bug). Every run mints a fresh sub-folder, because
+// creating a project over an existing one is refused too — by design.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Forward slashes: it goes into a path box a human would paste into, and the app normalises to `/`. */
+const fwd = (p: string): string => p.replace(/\\/g, '/');
+
+const repoRoot = fwd(resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..'));
+
+export const PATHS = {
+  /** The committed synthetic acquisition — what goes in "Pull data from". */
+  data: `${repoRoot}/tests/fixtures/synthetic`,
+  /** Its parent, to exercise "you typed a folder holding acquisitions". */
+  dataParent: `${repoRoot}/tests/fixtures`,
+  /** Where e2e projects are saved. Outside the repo, or the backend refuses it. */
+  saveRoot: fwd(join(tmpdir(), 'camea-e2e')),
+} as const;
+
+/** A save folder no other test is using. */
+export function freshSaveFolder(label = 'p'): string {
+  return `${PATHS.saveRoot}/${label}-${randomUUID().slice(0, 8)}`;
+}

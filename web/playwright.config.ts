@@ -6,10 +6,17 @@ const webDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(webDir, '..');
 
 /**
- * The committed synthetic dataset lives at tests/fixtures/synthetic. We point the backend at its
- * PARENT (tests/fixtures) as a dataset ROOT — that is how the app discovers datasets. The backend
- * has NO --data-dir flag; `--open <root>` remembers a root and GET /api/datasets lists what is under
- * it. State goes to an isolated dir so a test run never touches the developer's real settings/recents.
+ * The committed synthetic dataset lives at tests/fixtures/synthetic.
+ *
+ * ⭐ **There is no data root to register** (2026-07-25 — BEHAVIOUR R42). `--open <dir>` now only seeds
+ * `settings.recent_datasets`, so the fixture path is offered back as a completion; the specs type the
+ * path outright (`PATHS.data` in fixture.ts), exactly as the user does. The backend still has NO
+ * --data-dir flag.
+ *
+ * ⚠️ Project SAVE folders go to the OS temp dir, never under this repo — the backend refuses a project
+ * folder inside the checkout. See `freshSaveFolder()` in tests/e2e/fixture.ts.
+ *
+ * State goes to an isolated dir so a test run never touches the developer's real settings/recents.
  */
 const FIXTURES_ROOT = join(repoRoot, 'tests', 'fixtures');
 const STATE_DIR = join(webDir, '.playwright-state');

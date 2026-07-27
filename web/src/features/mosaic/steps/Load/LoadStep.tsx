@@ -74,7 +74,11 @@ export function LoadStep({ onOpenDirectory, onLoadProject, openPhase }: LoadStep
 
   async function loadProject() {
     if (!onLoadProject) {
-      toast.push('Resume a saved analysis from the Camea home (the dataset browser).', {
+      // ⚠️ Nothing has passed `onLoadProject` since the 2026-07-24 project-manager reframe: your work
+      // is auto-saved into the project and you resume it by opening it. (The old message pointed at
+      // "the dataset browser", a screen removed on 2026-07-25.) Importing a `.camea.json` someone
+      // sent you is not wired up yet — say so plainly rather than appearing to do nothing.
+      toast.push('Your work is saved automatically — reopen this project from the home screen.', {
         tone: 'default',
       });
       return;

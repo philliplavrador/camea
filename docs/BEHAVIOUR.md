@@ -88,6 +88,17 @@ itself shouldn't store the exclusions for this experiment."*
   stays `0` (R2.1/R2.2). The membership is **measured by the backend** from `log.txt` + the per-trial
   XML shape (`POST /api/mosaic/run`); the browser holds no second opinion about it.
   *(`web/tests/e2e/range-scope.spec.ts`; `web/src/features/mosaic/steps/Range/contact-sheet.test.tsx`.)*
+- R2.8 ⭐ **`log.txt` SAYS WHICH SNAPSHOTS ARE THE MOSAIC, AND ONLY THOSE ARE OPENED**
+  *(his ruling, 2026-07-25: "if you read the log file you should be able to find out exactly which
+  snapshots are part of the mosaic. only include those snapshots as part of it")*. An acquisition
+  session interleaves runs — the operator loads a settings profile, takes frames, loads another — so a
+  **contiguous run of Snapshot trials** is one acquisition, and the mosaic scan is the one holding the
+  most square frames. A new project opens on exactly that. 260620d → **338 trials, 11–348** (the
+  strays `1` and `5–7` stay out); the fixture → **10 tiles, 11–20**. Both are contiguous, which is
+  *why* R2.3 holds. ⛔ **This is not an exclusion and it is not dataset knowledge**: `excluded` stays
+  `0`, no trial number is named, and both filters are computed from what the backend measured off
+  `log.txt` + the per-trial XML (`DatasetDetail.blocks`, `shape_groups`). Widening the range on the
+  Range screen pulls the strays back in — that is his call, not the app's.
 
 **What broke.** The app hard-coded *his* answer to the exact question it exists to help him answer.
 Opening his one dataset removed 26 frames before he had seen one, so the Screen step and `E` — the
@@ -878,19 +889,56 @@ correct anchors as ground truth to place the rest of the snapshots around them."
 
 ### R41 — The home is a PROJECT MANAGER; a project is one dataset + one task *(added 2026-07-24)*
 **His ask:** *"I want the app to be like, what do you want to do today, and you can look through your
-current projects."* Projects persist across sessions in an app-managed store the user points at **once**.
+current projects."*
+
+⚠️ **R41.2 and R41.3 were REWRITTEN on 2026-07-25 — see R42.** The original R41.2 said the store was
+*"one folder, once"*; that is no longer true, and the paragraph below is the current rule.
 
 **Statements that can fail:**
 - R41.1 The home (`/`) is a **project manager** (`data-testid="project-manager"`): a greeting, a **New
-  project** action, and cards for existing projects with **open / rename / delete / export**.
-- R41.2 On first run (no store folder chosen) it prompts to **pick one folder, once**; it is remembered
-  thereafter. The store may not be inside a dataset or the repo (the backend refuses both).
-- R41.3 **New project** = name → task (only *Build mosaic* today) → attach a dataset → the server authors
-  the document → navigate to `/project/:id`. The dataset stays raw and read-only; the project gets its
-  own folder.
+  project** action, and cards for existing projects with **open / rename / remove / delete / export**.
+- R41.2 There is **no first-run prompt and no app-managed store**. The home renders straight away —
+  with cards, or with an honest empty state. Each project carries its own save folder (R42).
+- R41.3 **New project** = name → task (only *Build mosaic* today) → **where from / where to** (R42) →
+  the server authors the document → navigate to `/project/:id`. The dataset stays raw and read-only.
 - R41.4 Opening a project loads **that** project's document (no adopt-latest); a missing dataset is
-  reported gracefully, not a crash. **I1 (no dataset knowledge) is unchanged and reinforced** — the
-  store is app-managed, the dataset is never written into.
+  reported gracefully, not a crash. **I1 (no dataset knowledge) is unchanged and reinforced** — only
+  paths are ever remembered, and the dataset is never written into.
+
+### R42 — ⭐ TWO PATHS: where the data comes FROM, where the project is saved INTO *(2026-07-25)*
+**His ask, verbatim:** *"simplify this attach dataset thing … instead of having, like, data root or
+whatever … here is the path where I can browse folder. No recommended directories or datasets or
+nothing. Just I wanna put in where I wanna pull the data from and where I wanna save the data into."*
+
+This **replaces** the data-root registry (`settings.dataset_roots`, `GET /api/datasets`,
+`POST /api/datasets/scan`, the root chips and the `N under M roots` browse grid) and the single
+app-managed store (`settings.workspace`, `GET/PUT /api/workspace`, the first-run prompt).
+
+**Statements that can fail:**
+- R42.1 The last step of **New project** is two path boxes — *Pull data from* and *Save into*
+  (`from-field` / `into-field`). **Create** is refused until both resolve.
+- R42.2 ⛔ **The app keeps no list of folders to scan and recommends none.** Nothing is walked on
+  launch. The only paths offered back as completions are ones the user has used before
+  (`settings.recent_datasets`) plus the drives the backend reports.
+- R42.3 A folder that **is** an acquisition is taken straight away. A folder holding several lists
+  **just those** to pick from (`dataset-choice`) — disambiguation of his own typing, not a suggestion.
+  A dataset is recognised **by shape** (`log.txt` + one `NNN.xml`), never by name.
+- R42.4 Once a data path resolves, a **receipt** (`dataset-card`) states what is in that folder —
+  thumbnail, trials, snapshots, shapes. Every number is read off `POST /api/datasets/at`.
+- R42.5 **A project IS the folder he named.** Its files sit directly inside it
+  (`camea-project.json`, `document.camea.json`, `autosave.camea.json`, `outputs/`) — no
+  `analyses/<uuid>/` wrapper. ⛔ Refused inside a dataset or inside the repo, at the moment he names
+  it, with the backend's reason shown **inline** and his typed text kept.
+- R42.6 A folder that already holds a project is **refused, not overwritten**, and the existing
+  project is named in the message.
+- R42.7 The home lists projects from the folders Camea remembers he saved into. A folder that has
+  moved or is on an unplugged drive is reported (`projects-unreadable`), never silently dropped, and
+  never fails the whole listing.
+- R42.8 ⭐ **Remove ≠ Delete.** *Remove* takes the card off the home screen and leaves every byte on
+  disk. *Delete* removes only Camea's own files from the folder and **leaves anything else he keeps
+  there alone**. The app does not guess which he meant.
+- R42.9 Reopening a project **cold** still finds its dataset: each project records its `data_dir`, so
+  there is nothing to re-scan and nothing remembered *about* the data.
 
 ---
 

@@ -1,28 +1,34 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// NEW PROJECT — name → task → dataset (2026-07-24). Route `/new`.
+// NEW PROJECT — name → task → where from / where to (2026-07-25). Route `/new`.
 //
-// Name it → pick a task ("Build mosaic" is the only one today) → attach a dataset. On create, the flow
-// opens a session for the dataset and asks the SERVER to author the document (`createAnalysis` — the doc
-// is never authored in the browser), then navigates to `/project/:id` where the mosaic wizard mounts.
+// Name it → pick a task ("Build mosaic" is the only one today) → say where the data comes FROM and
+// where the project is saved INTO. On create, the flow opens a session for the dataset and asks the
+// SERVER to author the document (`createAnalysis` — the doc is never authored in the browser), then
+// navigates to `/project/:id` where the mosaic wizard mounts.
 //
-// ⛔ NO DATASET KNOWLEDGE: `squareTrials` picks the largest N×N shape group off the dataset summary; no
-// trial number is named.
+// ⭐ The last step used to be a dataset BROWSER over a registry of "data roots". His ruling of
+// 2026-07-25 replaced it with two path boxes: the app keeps no roots, scans nothing on launch, and
+// recommends no folders. See `ProjectPaths.tsx`.
+//
+// ⛔ NO DATASET KNOWLEDGE: which trials are the mosaic is decided by `mosaicTrials` — ONE shared
+// implementation (features/mosaic/trials.ts), read off what the backend measured. No number here.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getDataset, openSessionAndWait, createAnalysis } from '../../api';
 import { useToast } from '../../app';
 import { Button, Card } from '../../design';
-import { DatasetPicker } from './DatasetBrowser';
+import { mosaicTrials } from '../mosaic/trials';
+import { ProjectPaths } from './ProjectPaths';
 import styles from './NewProjectFlow.module.css';
 
 type Phase = 'name' | 'task' | 'dataset';
 
-/** The largest SQUARE (N×N) shape group's trials — a mosaic wants square tiles. No trial number named. */
-function squareTrials(shapes: { w: number; h: number; n: number; trials: number[] }[]): number[] | null {
-  const square = shapes.filter((s) => s.w === s.h).sort((a, b) => b.n - a.n)[0];
-  return square ? [...square.trials].sort((a, b) => a - b) : null;
+/** Both paths, once the user has confirmed them. */
+interface Choice {
+  datasetKey: string;
+  folder: string;
 }
 
 const TASKS = [{ key: 'mosaic', label: 'Build mosaic', blurb: 'Place tiles, sweep to verify, export.' }];
@@ -30,7 +36,7 @@ const TASKS = [{ key: 'mosaic', label: 'Build mosaic', blurb: 'Place tiles, swee
 const STEPS: { key: Phase; label: string }[] = [
   { key: 'name', label: 'Name' },
   { key: 'task', label: 'Task' },
-  { key: 'dataset', label: 'Dataset' },
+  { key: 'dataset', label: 'Data & folder' },
 ];
 
 export function NewProjectFlow() {
@@ -40,20 +46,24 @@ export function NewProjectFlow() {
   const [phase, setPhase] = useState<Phase>('name');
   const [name, setName] = useState('');
   const [task, setTask] = useState('mosaic');
+  const [choice, setChoice] = useState<Choice | null>(null);
   const [creating, setCreating] = useState<string | null>(null); // progress message while creating
 
-  async function onDatasetSelected(datasetKey: string): Promise<void> {
-    if (creating) return;
+  // Identity-stable so `ProjectPaths`' effect does not re-fire on every render of this screen.
+  const onReady = useCallback((c: Choice | null) => setChoice(c), []);
+
+  async function onCreate(): Promise<void> {
+    if (creating || !choice) return;
     setCreating('reading dataset…');
     try {
-      const detail = await getDataset(datasetKey);
-      const trials = squareTrials(detail.summary.shapes ?? []);
+      const detail = await getDataset(choice.datasetKey);
+      const trials = mosaicTrials(detail.summary.shapes ?? [], detail.blocks ?? []);
       if (!trials || trials.length === 0) {
         throw new Error('this dataset has no square (N×N) frames to build a mosaic from.');
       }
       setCreating('opening session…');
       const sess = await openSessionAndWait(
-        { dataset_key: datasetKey, trials },
+        { dataset_key: choice.datasetKey, trials },
         { onProgress: (j) => setCreating(j.phase ?? j.message ?? 'opening…') },
       );
       setCreating('creating project…');
@@ -61,6 +71,7 @@ export function NewProjectFlow() {
         session_id: sess.session_id,
         feature: task,
         name: name.trim() || detail.summary.name || 'Untitled project',
+        folder: choice.folder,
         trials,
       });
       navigate(`/project/${project.analysis_id}`);
@@ -168,7 +179,7 @@ export function NewProjectFlow() {
               Back
             </Button>
           </div>
-          <DatasetPicker onSelect={(key) => void onDatasetSelected(key)} />
+          <ProjectPaths onReady={onReady} onCreate={() => void onCreate()} busy={!!creating} />
         </div>
       )}
     </section>

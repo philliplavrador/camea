@@ -18,7 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type Page, type Locator, expect } from '@playwright/test';
-import { FIXTURE, SHORT } from './fixture';
+import { FIXTURE, PATHS, SHORT, freshSaveFolder } from './fixture';
 
 export const STEPS = ['load', 'range', 'screen', 'place', 'sweep', 'mosaic'] as const;
 export type StepName = (typeof STEPS)[number];
@@ -37,37 +37,49 @@ export const ROUTES = {
   run: '/api/mosaic/run',
   saveAs: '/api/documents/save-as', //   Export a project to a file
   load: '/api/documents/load',
-  workspace: '/api/workspace', //        the app-managed store (picked once — R41.2)
-  projects: '/api/workspace/analyses', // a "project" IS an analysis (list/create/delete/PATCH rename)
+  datasetsAt: '/api/datasets/at', //     "look at THIS folder" — no registry, nothing remembered
+  projects: '/api/projects', //          a project IS one folder (list/create/delete/PATCH rename)
+  projectFolder: '/api/projects/folder', // "can I save here?", asked before anything is written
   document: '/api/analyses', //          PUT /api/analyses/{id}/document — the durable auto-save (R29)
 } as const;
 
 /** THE TESTID REGISTRY. Grouped by screen; see README.md for the human-readable table. */
 export const TID = {
   // ── Home / shell (2026-07-24: the home is a PROJECT MANAGER — R41) ─────────────
-  manager: 'project-manager', //            the home
-  firstRunStore: 'first-run-store', //      R41.2 — the pick-a-folder-once prompt
-  chooseStore: 'choose-store',
+  manager: 'project-manager', //            the home. ⭐ No first-run prompt since 2026-07-25 (R41.2)
   newProject: 'new-project', //             the "New project" CTA
   projectCard: 'project-card', //           data-project-id; the card is the Open affordance
   projectName: 'project-name',
+  projectFolder: 'project-folder', //       the folder HE named
   projectRename: 'project-rename',
   projectExport: 'project-export',
-  projectDelete: 'project-delete',
+  projectForget: 'project-forget', //       take it off the list; the files stay
+  projectDelete: 'project-delete', //       remove Camea's files from the folder
   projectGrid: 'project-grid',
-  // the new-project flow (/new): name → task → dataset
+  projectsUnreadable: 'projects-unreadable', // remembered folders that could not be read
+  // the new-project flow (/new): name → task → where from / where to
   newProjectFlow: 'new-project-flow',
   npName: 'np-name',
   npNext: 'np-next',
   npBack: 'np-back',
   npCancel: 'np-cancel',
+  npCreate: 'np-create',
   taskCard: 'task-card', //                 data-task=mosaic
-  // the attach-dataset picker (the ex-home dataset browser)
-  browser: 'dataset-browser',
-  card: 'dataset-card',
+  // ── the two path boxes (R41.3, reframed 2026-07-25) ───────────────────────────
+  paths: 'project-paths',
+  fromField: 'from-field', //               "Pull data from" — a PathField
+  intoField: 'into-field', //               "Save into" — a PathField
+  datasetChoice: 'dataset-choice', //       shown ONLY when one folder holds several acquisitions
+  folderReceipt: 'folder-receipt',
+  card: 'dataset-card', //                  the RECEIPT for the folder he typed, not a browse card
   cardName: 'dataset-name',
   cardSnapshots: 'dataset-snapshots',
   cardShapes: 'dataset-shapes',
+  // the shared path widgets (PathField / FolderPicker)
+  pathInput: 'path-input',
+  pathSubmit: 'path-submit',
+  pathBrowse: 'path-browse',
+  pathError: 'path-error',
   topbar: 'topbar',
   homeLink: 'home-link',
   saveIndicator: 'save-indicator', //       R5/R29 (reframed) — "Saved / Saving… / Couldn't save"; data-state
@@ -250,9 +262,23 @@ export const TID = {
 // ─────────────────────────────────────────────────────────────────────────────
 export const byId = (page: Page, id: string): Locator => page.getByTestId(id);
 
-/** The synthetic dataset's card on the home screen. */
+/** The receipt for the synthetic dataset, once a path has been typed that resolves to it. */
 export const fixtureCard = (page: Page): Locator =>
   page.getByTestId(TID.card).filter({ hasText: FIXTURE.name });
+
+/**
+ * Type a path into one of the two path boxes and commit it (Enter). `PathField` keeps the text and
+ * shows the backend's message inline on failure — so a wrong path fails as a visible `path-error`,
+ * not a vanished form.
+ */
+export async function fillPath(page: Page, fieldId: string, path: string): Promise<void> {
+  const field = page.getByTestId(fieldId);
+  const input = field.getByTestId(TID.pathInput);
+  await input.fill(path);
+  // Dismiss the completion menu first: Enter with an active suggestion COMPLETES rather than submits.
+  await input.press('Escape');
+  await field.getByTestId(TID.pathSubmit).click();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Page objects
@@ -268,20 +294,27 @@ export class Home {
     return fixtureCard(this.page);
   }
   /**
-   * Create a project on the fixture via the new-project flow (name → task → dataset) → enters the Mosaic
-   * feature at `/project/:id` (R41.3; R4.5 lands it on Range).
+   * Create a project on the fixture via the new-project flow (name → task → where from / where to) →
+   * enters the Mosaic feature at `/project/:id` (R41.3; R4.5 lands it on Range).
    *
-   * ⚠️ HARNESS DEPENDENCY: assumes the app-managed store folder is already chosen and the fixture's data
-   * root is registered (the e2e global-setup should `PUT /api/workspace` + scan the fixture root, mirroring
-   * the python `workspace` fixture). If `first-run-store` shows instead, that setup is missing.
+   * ⭐ **NO HARNESS SETUP IS NEEDED ANY MORE.** This used to depend on a store having been chosen and
+   * the fixture root registered — neither existed, which is why `home-browser.spec.ts` carried a
+   * known-gap note. Since 2026-07-25 the flow asks for both paths outright, so the test simply types
+   * them, exactly as the user does.
    */
-  async openFixture(name = 'e2e project') {
+  async openFixture(name = 'e2e project', folder = freshSaveFolder()) {
     await byId(this.page, TID.newProject).click();
     await expect(this.page).toHaveURL(/\/new(\/|$)/);
     await byId(this.page, TID.npName).fill(name);
     await byId(this.page, TID.npNext).click();
     await this.page.getByTestId(TID.taskCard).first().click();
-    await this.card().click();
+
+    await fillPath(this.page, TID.fromField, PATHS.data);
+    await expect(this.card()).toBeVisible();
+    await fillPath(this.page, TID.intoField, folder);
+    await expect(byId(this.page, TID.folderReceipt)).toBeVisible();
+
+    await byId(this.page, TID.npCreate).click();
     await expect(this.page).toHaveURL(/\/project\//);
   }
 }

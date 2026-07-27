@@ -139,7 +139,7 @@ def refuse_write(
         if is_inside(target, r):
             raise DatasetIsReadOnly(
                 f"refusing to write to {Path(target)}: it is inside the dataset {Path(r)}, which is "
-                f"RAW and READ-ONLY. Analyses go in the workspace."
+                f"RAW and READ-ONLY. Choose a project folder outside your data."
             )
 
 

@@ -88,6 +88,14 @@ __all__ = [
     "DatasetIsReadOnly",  # re-exported: it is what `refuse_write` raises. -> 409
     "safe_basename",
     "repo_root",
+    "guard_slot",  # 🔴 the slot guard, shared with `core.project`. -> SlotMismatch
+    # reading an analysis off disk — shared with `core.project`, which stores one per folder
+    "read_analysis",
+    "summarise_analysis",
+    "MANIFEST",
+    "DOCUMENT",
+    "AUTOSAVE",
+    "OUTPUTS",
     # 🔴 atomic IO. Everything the app writes goes through these.
     "atomic_write_text",
     "atomic_write_bytes",
@@ -237,6 +245,37 @@ def safe_basename(basename: str) -> str:
     if not b or any(c in b for c in '\\/:*?"<>|'):
         raise ValueError(f"bad basename: {basename!r}")
     return b
+
+
+def guard_slot(analysis_id: str, doc: Mapping, man: Mapping) -> None:
+    """🔴 **THE SLOT GUARD** — the generic descendant of v1's autosave range guard.
+
+    A document may only be written into the analysis it belongs to. If the envelope's `id` or
+    `dataset_key` disagrees with the slot's manifest, the write is **REFUSED** — not merged, not
+    renamed, not "repaired". Pass 2's autosave once silently overwrote pass 1's ground-truth records;
+    this is the door that was left open.
+
+    (It reads only ENVELOPE keys — `id`, `dataset_key`. Those are `core.document`'s, not any
+    feature's. Core still knows nothing about a trial range, and it does not need to: a different
+    range is a different analysis, and a different analysis is a different **folder**.)
+
+    ⚠️ ONE implementation, called by both storage layers — `Workspace._guard_slot` (the v1 layout,
+    `analyses/<id>/`) and `core.project.Project` (one folder per project, the layout the user chose
+    on 2026-07-25). The module docstring's warning about three drifted copies of the write guard
+    applies here with equal force: do not inline a second copy of this.
+    """
+    did = doc.get("id")
+    dkey = doc.get("dataset_key")
+    if did and did != analysis_id:
+        raise SlotMismatch(
+            f"this document belongs to analysis {did!r}, not {analysis_id!r}. "
+            f"Refusing to overwrite {man.get('name') or analysis_id!r}."
+        )
+    if dkey and man.get("dataset_key") and dkey != man["dataset_key"]:
+        raise SlotMismatch(
+            f"this document is for dataset {dkey!r}; analysis {analysis_id!r} holds "
+            f"{man['dataset_key']!r}. Refusing to overwrite it."
+        )
 
 
 # =================================================================================================
@@ -441,6 +480,11 @@ class Analysis:
             "dataset_key": self.dataset_key,
             "dataset": self.dataset,
             "path": _fwd(self.path),
+            # ⭐ The folder the user named, and the data it was built on. He chose both; the card
+            # shows him both. (`dir` is the document's parent, which under `core.project`'s layout
+            # IS the project folder.)
+            "folder": _fwd(self.dir),
+            "data_dir": self.data_dir,
             "created": self.created,
             "modified": self.modified,
             "bytes": self.bytes,
@@ -686,32 +730,10 @@ class Workspace:
     # ---------------------------------------------------------------------------------------------
 
     def _guard_slot(self, analysis_id: str, doc: Mapping | str) -> None:
-        """🔴 **THE SLOT GUARD** — the generic descendant of v1's autosave range guard.
-
-        A document may only be written into the analysis it belongs to. If the envelope's `id` or
-        `dataset_key` disagrees with the slot's manifest, the write is **REFUSED** — not merged, not
-        renamed, not "repaired". Pass 2's autosave once silently overwrote pass 1's ground-truth
-        records; this is the door that was left open.
-
-        (It reads only ENVELOPE keys — `id`, `dataset_key`. Those are `core.document`'s, not any
-        feature's. Core still knows nothing about a trial range, and it does not need to: a different
-        range is a different analysis, and a different analysis is a different directory.)
-        """
+        """This workspace's slot guard. The rule itself is `guard_slot` — see there."""
         if isinstance(doc, str):
             return  # pre-serialised: the caller has already been through core.document
-        man = self._manifest(analysis_id)
-        did = doc.get("id")
-        dkey = doc.get("dataset_key")
-        if did and did != analysis_id:
-            raise SlotMismatch(
-                f"this document belongs to analysis {did!r}, not {analysis_id!r}. "
-                f"Refusing to overwrite {man.get('name') or analysis_id!r}."
-            )
-        if dkey and man.get("dataset_key") and dkey != man["dataset_key"]:
-            raise SlotMismatch(
-                f"this document is for dataset {dkey!r}; analysis {analysis_id!r} holds "
-                f"{man['dataset_key']!r}. Refusing to overwrite it."
-            )
+        guard_slot(analysis_id, doc, self._manifest(analysis_id))
 
     def save_document(self, analysis_id: str, doc: Mapping | str) -> dict:
         """Write the analysis's document. -> `{path, bytes, saved_at}` (`api.schemas.SaveResult`).
@@ -825,74 +847,99 @@ class Workspace:
         return idx
 
     def _read(self, d: Path) -> Analysis:
-        man = self._manifest(d.name)
-        doc_path = d / DOCUMENT
-
-        # `modified` = the last time anything in this analysis was TOUCHED, taken from the
-        # filesystem. The autosave counts: an hour of sweeping that was only ever autosaved is still
-        # an hour of work, and a card that says "3 days ago" would be a lie.
-        stamps = [_mtime(d / MANIFEST), _mtime(doc_path), _mtime(d / AUTOSAVE)]
-        modified = _iso(max(stamps)) if any(stamps) else man.get("created") or _iso()
-
-        a = Analysis(
-            analysis_id=man.get("analysis_id") or d.name,
-            feature=man.get("feature") or "",
-            name=man.get("name") or d.name,
-            dataset_key=man.get("dataset_key") or "",
-            dataset=man.get("dataset") or "",
-            path=doc_path,
-            created=man.get("created") or modified,
-            modified=modified,
-            bytes=doc_path.stat().st_size if doc_path.is_file() else 0,
-            data_dir=man.get("data_dir") or "",
+        return read_analysis(
+            self._manifest(d.name),
+            manifest_path=d / MANIFEST,
+            document_path=d / DOCUMENT,
+            autosave_path=d / AUTOSAVE,
+            fallback_id=d.name,
         )
-        if a.bytes:
-            self._summarise(a, doc_path)
-        return a
 
     def _summarise(self, a: Analysis, doc_path: Path) -> None:
-        """Fill the card's numbers from the document ON DISK.
+        summarise_analysis(a, doc_path)
 
-        ⚠️ **No cache.** The counts are re-derived from the file every listing, because the one thing
-        this project cannot afford is a summary that disagrees with the document it describes. A
-        312-tile document parses in ~2 ms; a stale `n_anchored` on the browser card is a bug that
-        would take a week to find.
-        """
+
+def read_analysis(
+    man: Mapping,
+    *,
+    manifest_path: Path,
+    document_path: Path,
+    autosave_path: Path,
+    fallback_id: str,
+) -> Analysis:
+    """A manifest + the three paths that go with it -> an `Analysis`.
+
+    ⚠️ ONE implementation, called by both storage layouts (`Workspace`'s `analyses/<id>/` and
+    `core.project.Project`'s one-folder-per-project). The paths are passed in precisely *because*
+    the two layouts put these files in different places; everything else about reading an analysis
+    is identical and must stay that way.
+    """
+    # `modified` = the last time anything in this analysis was TOUCHED, taken from the filesystem.
+    # The autosave counts: an hour of sweeping that was only ever autosaved is still an hour of
+    # work, and a card that says "3 days ago" would be a lie.
+    stamps = [_mtime(manifest_path), _mtime(document_path), _mtime(autosave_path)]
+    modified = _iso(max(stamps)) if any(stamps) else man.get("created") or _iso()
+
+    a = Analysis(
+        analysis_id=man.get("analysis_id") or fallback_id,
+        feature=man.get("feature") or "",
+        name=man.get("name") or fallback_id,
+        dataset_key=man.get("dataset_key") or "",
+        dataset=man.get("dataset") or "",
+        path=document_path,
+        created=man.get("created") or modified,
+        modified=modified,
+        bytes=document_path.stat().st_size if document_path.is_file() else 0,
+        data_dir=man.get("data_dir") or "",
+    )
+    if a.bytes:
+        summarise_analysis(a, document_path)
+    return a
+
+
+def summarise_analysis(a: Analysis, doc_path: Path) -> None:
+    """Fill the card's numbers from the document ON DISK.
+
+    ⚠️ **No cache.** The counts are re-derived from the file every listing, because the one thing
+    this project cannot afford is a summary that disagrees with the document it describes. A
+    312-tile document parses in ~2 ms; a stale `n_anchored` on the browser card is a bug that would
+    take a week to find.
+    """
+    try:
+        doc = json.loads(doc_path.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict):
+            raise ValueError("not an object")
+    except (OSError, ValueError) as e:
+        a.warnings.append(f"could not read the document: {e}")
+        return
+
+    hooks = _FEATURES.get(a.feature)
+
+    if hooks is not None and hooks.counts is not None:
         try:
-            doc = json.loads(doc_path.read_text(encoding="utf-8"))
-            if not isinstance(doc, dict):
-                raise ValueError("not an object")
-        except (OSError, ValueError) as e:
-            a.warnings.append(f"could not read the document: {e}")
+            c = hooks.counts(doc) or {}
+            a.n_tiles = _int_or_none(c.get("n_tiles"))
+            a.n_anchored = _int_or_none(c.get("n_anchored"))
+            a.n_excluded = _int_or_none(c.get("n_excluded"))
+        except Exception as e:  # noqa: BLE001 — a feature hook must not break the browser
+            a.warnings.append(f"{a.feature}: could not count this document: {e}")
+
+    # ⚠️ **HISTORY, NOT SELF-DECLARATION.** If the feature can tell us whether a machine touched
+    # this document, its answer WINS over the document's own `independent_of_method` — because that
+    # field is writable, and a document that laundered a solver build into an "independent ground
+    # truth" would otherwise sit on the browser card claiming to be one. This project has already
+    # destroyed one benchmark exactly that way.
+    if hooks is not None and hooks.machine_evidence is not None:
+        try:
+            a.independent_of_method = hooks.machine_evidence(doc) is None
             return
+        except Exception as e:  # noqa: BLE001
+            a.warnings.append(f"{a.feature}: could not derive provenance: {e}")
 
-        hooks = _FEATURES.get(a.feature)
-
-        if hooks is not None and hooks.counts is not None:
-            try:
-                c = hooks.counts(doc) or {}
-                a.n_tiles = _int_or_none(c.get("n_tiles"))
-                a.n_anchored = _int_or_none(c.get("n_anchored"))
-                a.n_excluded = _int_or_none(c.get("n_excluded"))
-            except Exception as e:  # noqa: BLE001 — a feature hook must not break the browser
-                a.warnings.append(f"{a.feature}: could not count this document: {e}")
-
-        # ⚠️ **HISTORY, NOT SELF-DECLARATION.** If the feature can tell us whether a machine touched
-        # this document, its answer WINS over the document's own `independent_of_method` — because
-        # that field is writable, and a document that laundered a solver build into an "independent
-        # ground truth" would otherwise sit on the browser card claiming to be one. This project has
-        # already destroyed one benchmark exactly that way.
-        if hooks is not None and hooks.machine_evidence is not None:
-            try:
-                a.independent_of_method = hooks.machine_evidence(doc) is None
-                return
-            except Exception as e:  # noqa: BLE001
-                a.warnings.append(f"{a.feature}: could not derive provenance: {e}")
-
-        prov = doc.get("provenance")
-        if isinstance(prov, dict):
-            v = prov.get("independent_of_method")
-            a.independent_of_method = bool(v) if isinstance(v, bool) else None
+    prov = doc.get("provenance")
+    if isinstance(prov, dict):
+        v = prov.get("independent_of_method")
+        a.independent_of_method = bool(v) if isinstance(v, bool) else None
 
 
 #: An analysis id is a directory name that arrives over HTTP. Slug + short hex, and nothing else:

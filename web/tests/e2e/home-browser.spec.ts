@@ -1,14 +1,15 @@
 import { test, expect } from '@playwright/test';
-import { Home, Wizard, TID, byId, enterMosaic } from './pages';
-import { FIXTURE, SHORT } from './fixture';
+import { Home, Wizard, TID, byId, enterMosaic, fillPath } from './pages';
+import { FIXTURE, PATHS, SHORT, freshSaveFolder } from './fixture';
 
 /**
  * THE HOME IS A PROJECT MANAGER (2026-07-24 reframe — R41), and opening a project excludes nothing.
  * Covers BEHAVIOUR I1, R2.1–R2.3, R4.5, R41.
  *
- * ⚠️ HARNESS DEPENDENCY: these assume the app-managed store is already chosen and the fixture root is
- * registered (the e2e global-setup should `PUT /api/workspace` + scan the fixture root). Without that,
- * the home shows the first-run store prompt instead of the greeting/cards.
+ * ⭐ **THE OLD HARNESS DEPENDENCY IS GONE** (2026-07-25). These used to assume a store had been
+ * chosen and a data root registered — neither setup existed, so the note here warned the home would
+ * show a first-run prompt instead. There is no store and no root registry now: the new-project flow
+ * asks for both paths outright and the tests type them.
  */
 test.describe('Home is a project manager (I1, R41)', () => {
   test('R41: the home screen is the project manager, greeting and a New project action', async ({
@@ -57,20 +58,129 @@ test.describe('Home is a project manager (I1, R41)', () => {
     await expect(byId(page, TID.loadResultFORBIDDEN)).toHaveCount(0);
   });
 
-  test('R-shape: the off-shape frame is refused BY SHAPE — the picker card states a shape, not a number', async ({
+  test('R-shape: the off-shape frame is refused BY SHAPE — the receipt states a shape, not a number', async ({
     page,
   }) => {
     // The fixture plants a 512×128 frame (trial 9). It is real data the shape-gate must refuse by
-    // SHAPE — never by a hard-coded trial number (HARD RULE 3). The dataset card (in the new-project
-    // attach-dataset step) advertises its shape groups.
+    // SHAPE — never by a hard-coded trial number (HARD RULE 3). The receipt for the folder the user
+    // typed advertises its shape groups.
     const home = new Home(page);
     await home.open();
     await byId(page, TID.newProject).click();
     await byId(page, TID.npName).fill('shape check');
     await byId(page, TID.npNext).click();
     await page.getByTestId(TID.taskCard).first().click();
+    await fillPath(page, TID.fromField, PATHS.data);
     await expect(home.card().getByTestId(TID.cardShapes)).toContainText(
       `${FIXTURE.tile}×${FIXTURE.tile}`,
     );
+  });
+});
+
+/**
+ * WHERE FROM, WHERE TO — his ruling of 2026-07-25. Two path boxes, no root registry, no browse grid.
+ */
+test.describe('The new-project flow asks for two paths (R41.3)', () => {
+  test('there is no first-run "choose a store" prompt — the home renders straight away', async ({
+    page,
+  }) => {
+    await new Home(page).open();
+    await expect(page.getByRole('heading', { name: /what do you want to do today/i })).toBeVisible();
+    // The deleted screen. Nothing must have to be picked before he can start.
+    await expect(page.getByTestId('first-run-store')).toHaveCount(0);
+    await expect(page.getByTestId('choose-store')).toHaveCount(0);
+  });
+
+  test('the dataset step is two path boxes, not a browse grid over remembered roots', async ({
+    page,
+  }) => {
+    const home = new Home(page);
+    await home.open();
+    await byId(page, TID.newProject).click();
+    await byId(page, TID.npName).fill('two paths');
+    await byId(page, TID.npNext).click();
+    await page.getByTestId(TID.taskCard).first().click();
+
+    await expect(byId(page, TID.paths)).toBeVisible();
+    await expect(byId(page, TID.fromField)).toBeVisible();
+    await expect(byId(page, TID.intoField)).toBeVisible();
+
+    // ⛔ The removed registry UI: no root chips, no "N under M roots" counter, and NO grid of
+    // datasets the app went looking for. Nothing is shown until he names a folder.
+    const body = await page.locator('body').innerText();
+    expect(body).not.toMatch(/data root/i);
+    expect(body).not.toMatch(/under \d+ roots?/i);
+    await expect(page.getByTestId(TID.card)).toHaveCount(0);
+
+    // Create is refused until BOTH paths are given.
+    await expect(byId(page, TID.npCreate)).toBeDisabled();
+    await fillPath(page, TID.fromField, PATHS.data);
+    await expect(byId(page, TID.npCreate)).toBeDisabled();
+    await fillPath(page, TID.intoField, freshSaveFolder('two-paths'));
+    await expect(byId(page, TID.npCreate)).toBeEnabled();
+  });
+
+  test('the receipt states what is in the folder he typed — every number off the response', async ({
+    page,
+  }) => {
+    const home = new Home(page);
+    await home.open();
+    await byId(page, TID.newProject).click();
+    await byId(page, TID.npName).fill('receipt');
+    await byId(page, TID.npNext).click();
+    await page.getByTestId(TID.taskCard).first().click();
+    await fillPath(page, TID.fromField, PATHS.data);
+
+    await expect(home.card().getByTestId(TID.cardName)).toHaveText(FIXTURE.name);
+    await expect(home.card().getByTestId(TID.cardSnapshots)).toHaveText(String(FIXTURE.snapshots));
+  });
+
+  test('a folder with no dataset in it fails INLINE and keeps what he typed', async ({ page }) => {
+    const home = new Home(page);
+    await home.open();
+    await byId(page, TID.newProject).click();
+    await byId(page, TID.npName).fill('bad path');
+    await byId(page, TID.npNext).click();
+    await page.getByTestId(TID.taskCard).first().click();
+
+    const typed = `${PATHS.saveRoot}/definitely-not-a-dataset`;
+    await fillPath(page, TID.fromField, typed);
+
+    const field = byId(page, TID.fromField);
+    await expect(field.getByTestId(TID.pathError)).toBeVisible({ timeout: SHORT });
+    // 🔴 The text SURVIVES. The old modal threw it away and made him type the whole path again.
+    await expect(field.getByTestId(TID.pathInput)).toHaveValue(typed);
+  });
+
+  test('⛔ a project folder inside the dataset is refused, with the reason said out loud', async ({
+    page,
+  }) => {
+    const home = new Home(page);
+    await home.open();
+    await byId(page, TID.newProject).click();
+    await byId(page, TID.npName).fill('into the evidence');
+    await byId(page, TID.npNext).click();
+    await page.getByTestId(TID.taskCard).first().click();
+    await fillPath(page, TID.fromField, PATHS.data);
+
+    // The app does not write on the evidence — refused at the moment he names the place.
+    await fillPath(page, TID.intoField, `${PATHS.data}/my-project`);
+    const field = byId(page, TID.intoField);
+    await expect(field.getByTestId(TID.pathError)).toBeVisible({ timeout: SHORT });
+    await expect(byId(page, TID.npCreate)).toBeDisabled();
+  });
+
+  test('the project card shows the folder he named', async ({ page }) => {
+    const folder = freshSaveFolder('named');
+    // ⚠️ Unique per run: the state dir persists between local runs, so a fixed name would match the
+    // cards left by every previous run and trip Playwright's strict mode.
+    const name = `folder on the card ${folder.slice(-8)}`;
+    const home = new Home(page);
+    await home.open();
+    await home.openFixture(name, folder);
+
+    await home.open();
+    const card = page.getByTestId(TID.projectCard).filter({ hasText: name });
+    await expect(card.getByTestId(TID.projectFolder)).toContainText(folder.slice(-8));
   });
 });
