@@ -47,6 +47,8 @@ test-results/
 # ...except the committed synthetic test fixtures. These are TINY (~1 MB), fake,
 # and they are the only reason CI can run without the 35 GB mirror. They ship.
 !/tests/fixtures/**
+# (the re-include above would otherwise resurrect pycache under fixtures)
+/tests/fixtures/**/__pycache__/
 
 # --- editor / OS ------------------------------------------------------------
 .vscode/

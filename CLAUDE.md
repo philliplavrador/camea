@@ -1,13 +1,22 @@
 # Camea — project conventions
 
 **Camea is a Windows desktop app for microscopy analysis.** It opens on a **project manager**
-("what do you want to do today?" — create / open / rename / delete projects that persist across
-sessions in an app-managed store the user points at once). A **project = one dataset + one task**;
-the first task is a **human-verified mosaic builder** (machine places a first draft → sweep to
-confirm/correct/exclude → **Recompute** re-places the rest against your anchors → export). More
-tasks will follow (segmentation, annotation); they share a common core. ⚠️ **The project-manager
-reframe + the Recompute tool landed 2026-07-24 (branch `revamp`)** — read
-`utils/knowledge/mosaic-builder-direction.md` first for the current shape and the *why*.
+("what do you want to do today?" — create / open / rename / delete projects). A **project = one
+dataset + one task**; the first task is a **human-verified mosaic builder** (machine places a first
+draft → sweep to confirm/correct/exclude → **Recompute** re-places the rest against your anchors →
+export), the second is a fully automatic **video mosaic**. More tasks will follow (segmentation,
+annotation); they share a common core. ⚠️ **The project-manager reframe + the Recompute tool landed
+2026-07-24 (branch `revamp`)** — read `utils/knowledge/mosaic-builder-direction.md` first for the
+current shape and the *why*.
+
+⭐ **STORAGE — HIS RULING OF 2026-08-10 (BEHAVIOUR R44). Read R44 before touching anything that
+writes.** *"Camea saves project-specific files to its own repo automatically, and if users want to
+browse their project data they have to do it through the app itself."* A project lives in
+**`%LOCALAPPDATA%/Camea/projects/<analysis_id>/`** and the user is **never** asked where it goes — he
+names one path, the **data**. Everything a feature builds lands in `<project>/outputs/`, and the
+**Outputs panel** is the only way to browse it: tick files, name a folder, take a copy. ⛔ There is
+no "Open folder", no `fs/reveal`, no save-folder box, and no drafts. **This reverses R42/R43** — do
+not "restore" a save path you find referenced in an older note.
 
 The active work is **developing this app**. This is a **public git repo** (GPL-3.0-or-later,
 GitHub `philliplavrador/camea` — formerly `camea-mosaic-builder`). The tree you work in *is* the
