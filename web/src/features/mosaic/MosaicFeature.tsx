@@ -35,6 +35,7 @@ import { ScreenStep } from './steps/Screen';
 import { PlaceStep } from './steps/Place';
 import { SweepStep } from './steps/Sweep';
 import { MosaicStep } from './steps/Mosaic';
+import { ElectrodesStep } from './steps/Electrodes';
 import type { MosaicStepId } from './steps/types';
 import styles from './MosaicFeature.module.css';
 
@@ -45,6 +46,7 @@ const STEP_INDEX: Record<MosaicStepId, number> = {
   place: 3,
   sweep: 4,
   mosaic: 5,
+  electrodes: 6,
 };
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -183,10 +185,11 @@ export function MosaicFeature() {
   }, [id, openProjectById]);
 
   // ── the step gate (R4.3). load/range/screen/place/sweep are reachable once a session exists; mosaic
-  //    needs something placed. reachable = count of steps reachable from the start (a step at index ≥
+  //    and electrodes need something placed (Electrodes unlocks exactly with Mosaic — both read the
+  //    placed field). reachable = count of steps reachable from the start (a step at index ≥
   //    reachable is LOCKED). With a session but nothing placed: Sweep REACHABLE, Mosaic LOCKED. ───────
   const placed = doc ? anyPlaced(doc.tiles, order) : false;
-  const reachable = !sessionId ? 1 : placed ? 6 : 5;
+  const reachable = !sessionId ? 1 : placed ? 7 : 5;
 
   const go = useCallback(
     (target: MosaicStepId): void => {
@@ -231,6 +234,7 @@ export function MosaicFeature() {
         {step === 'place' && <PlaceStep onNavigate={go} />}
         {step === 'sweep' && <SweepStep tileSrc={tileSrc} onNavigate={go} />}
         {step === 'mosaic' && <MosaicStep />}
+        {step === 'electrodes' && <ElectrodesStep tileSrc={tileSrc} />}
       </div>
     </div>
   );

@@ -1,0 +1,159 @@
+/*
+ * STEP 7 · ELECTRODES — the identification stage. The canvas is the hero again (a READ-ONLY mount
+ * of the core viewer over the placed field); the right rail carries the map job and the readout.
+ * Tokens only — no hex, no one-off colour.
+ */
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  height: 100%;
+  min-height: 480px;
+}
+
+.canvasArea {
+  position: relative;
+  overflow: hidden;
+  background: var(--canvas);
+  min-width: 0;
+  min-height: 0;
+}
+
+.rail {
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  overflow: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.empty {
+  padding: 32px 16px;
+  color: var(--text-dim);
+  font: 600 var(--fs-body) / 1.4 var(--font-sans);
+}
+
+/* The mapped lattice — outline, pad dots, ids — on its own canvas above the tiles. */
+.gridLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ── the DOM overlay over the canvas (the selection marker) ───────────────── */
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  /* a hairline halo in the stage colour so the ring reads over any tile brightness */
+  box-shadow: 0 0 0 1.5px var(--canvas);
+}
+
+.markerLabel {
+  position: absolute;
+  transform: translate(-50%, 0);
+  font: 700 12px / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  text-shadow:
+    0 0 3px var(--canvas),
+    0 0 6px var(--canvas);
+  white-space: nowrap;
+}
+
+/* ── the IDs switch (house switch pattern — a real role="switch" pill) ────── */
+.switchRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  color: var(--text-soft);
+  font: 600 var(--fs-small) / 1 var(--font-sans);
+  cursor: pointer;
+}
+
+.switchOn {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--bg-card);
+}
+
+.switchMark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.switchOn .switchMark {
+  background: var(--accent);
+}
+
+/* ── the map job (mirrors the videomosaic/Place progress block) ───────────── */
+.barWell {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.bar {
+  height: 100%;
+  width: 100%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  transform-origin: left;
+  transition: transform var(--dur) var(--ease);
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.phase {
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  text-transform: lowercase;
+}
+
+.eta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  font-weight: 600;
+  color: var(--data);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The Map button sits UNDER the coverage question (R45.8) — it is the answer's consequence. */
+.mapRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}

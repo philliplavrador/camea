@@ -1,0 +1,64 @@
+/*
+ * THE ELECTRODE READOUT — shared by the snapshot Electrodes step and the videomosaic screen.
+ * Numbers, not prose (R3/R7): every value is mono readout ink, every label a dim micro-cap,
+ * matching the export pane's facts grid. Tokens only — no hex, no one-off colour.
+ */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px 18px;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.factLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 var(--fs-label) / 1 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-faint);
+}
+
+.factValue {
+  margin: 0;
+  font: 600 var(--fs-readout) / 1.2 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--data);
+  overflow-wrap: anywhere;
+}
+
+/* The electrode id is THE answer — one size up from the other readouts. */
+.id {
+  font-size: var(--fs-readout-lg);
+}
+
+/* The dim rule between the selection readout and the grid stats. */
+.divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 0;
+}
+
+.hint {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font: 600 var(--fs-small) / 1.4 var(--font-sans);
+}

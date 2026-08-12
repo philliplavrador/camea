@@ -16,6 +16,7 @@ const STEPS: Array<{ id: MosaicStepId; label: string }> = [
   { id: 'place', label: 'Place' },
   { id: 'sweep', label: 'Sweep' },
   { id: 'mosaic', label: 'Mosaic' },
+  { id: 'electrodes', label: 'Electrodes' },
 ];
 
 export interface WizardNavProps {

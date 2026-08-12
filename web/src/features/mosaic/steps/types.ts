@@ -11,8 +11,16 @@
 // Kept here (a plain .ts), not in a component file, so the step .tsx files export ONLY components
 // (React Fast Refresh — `react-refresh/only-export-components`).
 
-/** The six wizard steps, by id (BEHAVIOUR R4.1). Mirrors the design system's `MOSAIC_STEPS`. */
-export type MosaicStepId = 'load' | 'range' | 'screen' | 'place' | 'sweep' | 'mosaic';
+/** The wizard steps, by id (BEHAVIOUR R4.1 + the optional post-export Electrodes stage,
+ *  2026-08-11). The first six mirror the design system's `MOSAIC_STEPS`. */
+export type MosaicStepId =
+  | 'load'
+  | 'range'
+  | 'screen'
+  | 'place'
+  | 'sweep'
+  | 'mosaic'
+  | 'electrodes';
 
 /**
  * Every step can ask to move to another step. The shell decides whether the target is REACHABLE — a

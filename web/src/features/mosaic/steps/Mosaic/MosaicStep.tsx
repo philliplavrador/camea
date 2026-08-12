@@ -1,7 +1,12 @@
-// STEP 6 · MOSAIC — the EXPORT screen. Choose the workspace output, tick the outputs (16-bit TIFF + its
-// MANDATORY coverage sidecar, display PNG, positions.csv, ground-truth JSON, QC report), and run the
-// export as a JOB. It writes SEVEN files (BEHAVIOUR R37) into a folder the user chooses — never inside
-// the dataset, never inside the repo.
+// STEP 6 · MOSAIC — the EXPORT screen. Name the files, tick the outputs (16-bit TIFF + its MANDATORY
+// coverage sidecar, display PNG, positions.csv, ground-truth JSON, QC report), and run the export as a
+// JOB. It writes SEVEN files (BEHAVIOUR R37).
+//
+// ⭐ **THERE IS NO OUTPUT FOLDER TO CHOOSE (R44, 2026-08-10).** *"camea saves project-specific files
+// to its own repo automatically."* The export lands in this project's own `outputs/`, and the
+// **OutputsPanel** below it is how he looks at what was written and takes a copy of whatever he wants,
+// wherever he wants — the only door to a project's files. `basename` survives, because it names those
+// files and a file copied onto his desktop still has to say what it is.
 //
 // ⭐ THE PROVENANCE STAMP (BEHAVIOUR R28 / W5) is a LIVE WARNING and it STAYS ON THE PAGE — it is a fact
 // about current state, not an explanation to hide behind a `?`. It is DERIVED FROM THE DOCUMENT'S
@@ -21,13 +26,13 @@ import {
   startExport,
   getMachineEvidence,
   pollJobUntilDone,
-  pickDirectory,
   type ExportRequest,
   type ExportResult,
   type MachineEvidenceResponse,
 } from '../../../../api';
 import { useSweepStore, counts as tileCounts } from '../../store';
 import { useDocument } from '../../../../store/documentStore';
+import { OutputsPanel } from '../../../outputs/OutputsPanel';
 import styles from './MosaicStep.module.css';
 
 type RenderMode = ExportRequest['render_mode'];
@@ -105,8 +110,9 @@ export function MosaicStep() {
   const order = useSweepStore((s) => s.order);
   const autosave = useDocument((s) => s.autosave);
 
-  // ── output destination ──
-  const [dir, setDir] = useState('');
+  // ── what the exported files are CALLED. ⛔ Not where they go (R44) — that is this project's own
+  //    `outputs/`, and the user is never asked.
+  const analysisId = useDocument((s) => s.analysisId);
   const [basename, setBasename] = useState('');
   // Seed the basename from the document's own dataset name once (a runtime value, not a hard-coded one).
   useEffect(() => {
@@ -184,15 +190,9 @@ export function MosaicStep() {
     !!doc &&
     !!sessionId &&
     !exporting &&
-    dir.trim() !== '' &&
     basename.trim() !== '' &&
     !nothingSelected &&
     umValid;
-
-  const onBrowse = useCallback(async () => {
-    const picked = await pickDirectory({ title: 'Choose an output folder', start: dir || null });
-    if (picked) setDir(picked);
-  }, [dir]);
 
   const onExport = useCallback(async () => {
     if (!doc || !sessionId) return;
@@ -203,7 +203,6 @@ export function MosaicStep() {
     try {
       const req: ExportRequest = {
         session_id: sessionId,
-        dir: dir.trim(),
         basename: basename.trim(),
         doc,
         outputs,
@@ -224,7 +223,7 @@ export function MosaicStep() {
       setExporting(false);
       setPhase(null);
     }
-  }, [doc, sessionId, dir, basename, outputs, renderMode, includeUnverified, umValue]);
+  }, [doc, sessionId, basename, outputs, renderMode, includeUnverified, umValue]);
 
   if (!doc) {
     return (
@@ -332,29 +331,17 @@ export function MosaicStep() {
           </dl>
         </section>
 
-        {/* ── OUTPUT DESTINATION ── */}
+        {/* ── WHAT THE FILES ARE CALLED. ⛔ No folder box: the export goes into this project's own
+             outputs/ (R44), and the Outputs panel below is how it leaves Camea. ── */}
         <section className={styles.section}>
           <div className={styles.legendRow}>
-            <span className={styles.legend}>Output folder</span>
+            <span className={styles.legend}>File name</span>
             <Help
               body={
-                'A workspace folder you choose. The export is never written inside the dataset or the repository.'
+                'Camea keeps this export with the project. Use the Files list below to look at what ' +
+                'was written and copy any of it wherever you like. This is what those files are called.'
               }
             />
-          </div>
-          <div className={styles.row}>
-            <input
-              type="text"
-              data-testid="mosaic-dir"
-              className={styles.input}
-              placeholder="C:\\path\\to\\workspace"
-              value={dir}
-              onChange={(e) => setDir(e.target.value)}
-              spellCheck={false}
-            />
-            <Button variant="default" data-testid="mosaic-browse" onClick={onBrowse}>
-              Browse…
-            </Button>
           </div>
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="mosaic-basename">
@@ -536,6 +523,18 @@ export function MosaicStep() {
             </div>
           )}
         </section>
+
+        {/* ⭐ **BROWSE AND COPY OUT** (R44) — the same panel every feature mounts, not a copy of it.
+             `result?.doc` changes when an export finishes, which is what refreshes the list. */}
+        {analysisId && (
+          <section className={styles.section}>
+            <OutputsPanel
+              analysisId={analysisId}
+              version={result ? String(result.files.length) + (phase ?? '') : null}
+              title="Files"
+            />
+          </section>
+        )}
 
         {/* ── RESULT — the written files ── */}
         {result && (

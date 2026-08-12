@@ -1,0 +1,351 @@
+/* THE VIDEOMOSAIC FEATURE — one screen. The progress block mirrors PlaceStep's (same bar, same
+   mono readouts) so a job looks like a job everywhere; the facts row mirrors the receipts'. */
+
+.pane {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.loading {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.h1 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h1);
+  font-weight: 650;
+  margin: 0;
+}
+
+/* The source receipt line — a measurement readout, not a sentence. */
+.source {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-readout);
+  color: var(--data);
+  word-break: break-word;
+}
+
+.block {
+  margin-bottom: 4px;
+}
+
+/* ── not built yet: one button, no explainer ─────────────────────────────── */
+.buildPanel {
+  display: flex;
+  justify-content: center;
+  padding: 56px 0;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+/* ── building (mirrors PlaceStep) ────────────────────────────────────────── */
+.progress {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+.barWell {
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.bar {
+  height: 100%;
+  width: 100%;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  /* R8.5 — the bar GLIDES; it does not step. scaleX, not width: same glide, no layout pass.
+     (The three older bars still animate width — migrate all together someday, or never.) */
+  transform-origin: left;
+  transition: transform var(--dur) var(--ease);
+}
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.phase {
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  text-transform: lowercase;
+}
+
+.eta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout-lg);
+  font-weight: 600;
+  color: var(--data);
+  font-variant-numeric: tabular-nums;
+}
+
+.msg {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
+/* ── the stats strip ─────────────────────────────────────────────────────── */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-readout);
+  color: var(--data);
+}
+
+.fact {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.factLabel {
+  color: var(--text-faint);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── the preview: wheel to zoom, drag to pan; a click identifies once the map exists ── */
+.viewerWrap {
+  position: relative;
+}
+
+.viewer {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  overflow: hidden;
+  height: 68vh;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.viewer:active {
+  cursor: grabbing;
+}
+
+/* The transformed picture plane: mosaic px in, screen px out. `transform-origin: 0 0` keeps the
+   maths the same one the click and the overlay use — screen = world × scale + t. */
+.world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+/* The lattice overlay sits in SCREEN space, above the picture and below the marker. */
+.gridLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* While the full-resolution file is on the wire the preview stays up, dimmed — never a blank box. */
+.viewerNote {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg-inset) 88%, transparent);
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fs-small);
+}
+
+/* Once the electrode map exists a plain click IDENTIFIES. */
+.viewer[data-identify] {
+  cursor: crosshair;
+}
+
+/* Both images fill the world plane exactly — the small one paints first, the full one covers it. */
+.preview,
+.previewFull {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.previewFull {
+  opacity: 0;
+}
+
+.previewFull[data-ready] {
+  opacity: 1;
+}
+
+/* The electrode highlight — positioned in SCREEN px from the same view matrix as the overlay. */
+.vmMarker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--bg-inset);
+  pointer-events: none;
+  min-width: 10px;
+  min-height: 10px;
+}
+
+.vmMarkerLabel {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translate(-50%, 4px);
+  font: 700 12px / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  text-shadow:
+    0 0 3px var(--bg-inset),
+    0 0 6px var(--bg-inset);
+  white-space: nowrap;
+}
+
+/* The camera controls, in the corner of the stage: − % + · Fit/100% · IDs. */
+.zoomBar {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--bg-inset) 88%, transparent);
+}
+
+.zoomBtn {
+  padding: 3px 9px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-soft);
+  font: 600 var(--fs-small) / 1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.zoomBtn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.zoomBtnOn {
+  color: var(--bg);
+  background: var(--accent);
+}
+
+.zoomBtnOn:hover {
+  color: var(--bg);
+  background: var(--accent);
+}
+
+.zoomLevel {
+  min-width: 44px;
+  text-align: center;
+  color: var(--text-dim);
+  font: 500 var(--fs-small) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.builtActions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* The Map button sits UNDER the coverage question (R45.8) — it is the answer's consequence. */
+.mapRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* The canvas size, inline on the download — it is the answer to "how big is the real one?" */
+.downloadSize {
+  margin-left: 8px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-small);
+}
+
+/* ── save — the ONE folder question (R43), and where it landed ───────────── */
+.save {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+}
+
+.saveBlurb {
+  margin: 0 0 12px;
+  font-size: var(--fs-body);
+  color: var(--text-soft);
+}
+
+.saveActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.savedRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.savedPath {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--data);
+}
+
+.error {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--danger);
+}

@@ -1,0 +1,11 @@
+/* The coverage question (R45.8). One line of prompt over the two-option control — the same
+ * label/`?` shape a wizard field uses, so the question reads as a question, not a setting. */
+
+.prompt {
+  margin: 0 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font: 600 var(--fs-small) / 1.4 var(--font-sans);
+}
