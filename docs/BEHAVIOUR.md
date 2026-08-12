@@ -146,7 +146,8 @@ want. then tell them about recommended exclusions. then have them run the algori
 build the mosaic."*
 
 **Statements that can fail:**
-- R4.1 The six steps are exactly **Load · Range · Screen · Place · Sweep · Mosaic**, in that order.
+- R4.1 The steps are exactly **Load · Range · Screen · Place · Sweep · Mosaic · Electrodes**, in
+  that order. (Six until 2026-08-11; Electrodes joined as the optional post-build stage — R45.4.)
 - R4.2 The step header is a **progress indicator, not a menu**: a step is *locked* until everything
   before it is ready, and clicking a locked step toasts *"Finish the step before it first."* and does
   nothing. *(sweep.js:2149-2194.)*
@@ -906,6 +907,11 @@ current projects."*
   paths are ever remembered, and the dataset is never written into.
 
 ### R42 — ⭐ TWO PATHS: where the data comes FROM, where the project is saved INTO *(2026-07-25)*
+⚠️⚠️ **LARGELY SUPERSEDED BY R44 (2026-08-10) — read that first.** The *save* half of this ruling is
+retired: Camea keeps projects in its own store and never asks where one goes. R42.2 (no root
+registry, nothing scanned, nothing recommended), R42.3 (a dataset is recognised by SHAPE), R42.4 (the
+receipt) and R42.9 (a project records its `data_dir`) are **unchanged and still current** — they are
+about the DATA path, which the user still names. R42.1/R42.5/R42.6/R42.7/R42.8 are history.
 **His ask, verbatim:** *"simplify this attach dataset thing … instead of having, like, data root or
 whatever … here is the path where I can browse folder. No recommended directories or datasets or
 nothing. Just I wanna put in where I wanna pull the data from and where I wanna save the data into."*
@@ -917,6 +923,10 @@ app-managed store (`settings.workspace`, `GET/PUT /api/workspace`, the first-run
 **Statements that can fail:**
 - R42.1 The last step of **New project** is two path boxes — *Pull data from* and *Save into*
   (`from-field` / `into-field`). **Create** is refused until both resolve.
+  ⚠️ **Amended 2026-08-07 — the DATASET task only.** The **video** task asks for one path (the video)
+  and defers the save folder until after the build: see **R43**. The difference is the work at risk.
+  A dataset project is hours of human verification and needs a crash net in a real place from minute
+  one; a video mosaic is five minutes of unattended CPU with nothing of his in it yet.
 - R42.2 ⛔ **The app keeps no list of folders to scan and recommends none.** Nothing is walked on
   launch. The only paths offered back as completions are ones the user has used before
   (`settings.recent_datasets`) plus the drives the backend reports.
@@ -939,6 +949,223 @@ app-managed store (`settings.workspace`, `GET/PUT /api/workspace`, the first-run
   there alone**. The app does not guess which he meant.
 - R42.9 Reopening a project **cold** still finds its dataset: each project records its `data_dir`, so
   there is nothing to re-scan and nothing remembered *about* the data.
+
+---
+
+### R43 — ⭐ THE VIDEO TASK ASKS FOR **ONE** FOLDER, AND ASKS AFTER THE MOSAIC EXISTS *(2026-08-07)*
+⚠️⚠️ **SUPERSEDED BY R44 (2026-08-10) — read that first.** R43 deleted the *second* directory
+question; R44 deleted the first one too, so there is none left to defer. Drafts, `Project.move_to`'s
+original purpose, `POST /api/videomosaic/save` and the discard-on-abandon rule are all gone. **What
+survives:** the build still starts on Create (R43.2's reasoning), the artifacts are still named after
+the project (R43.5's reasoning — now so a copied-out file says what it is), `build.outputs` still
+records filenames and never paths (R43.7), and the `app_state_dir()` exemption R43 bought is now the
+normal path, because the store lives there.
+**His ask:** *"simplifying the export process — right now it feels like I'm picking an export path
+twice, once before the video mosaic build and once after"*, then: *"can we just handle all the
+exporting and directory selection at the end after the mosaic has already been built"*, and *"the
+project and export should be selected in the same directory picker"*.
+
+**The redundancy this removes.** *Save into* named the project folder before he had seen anything;
+the build wrote `mosaic.png`, `preview.png`, `positions.csv`, `build.json` into `<project>/outputs/`;
+then an **Export** panel demanded a *second* folder in an empty required field, plus a basename, and
+copied those same four files there. Two directory questions and a `shutil.copyfile` loop, for one
+mosaic. **`POST /api/videomosaic/export` is deleted**, not deprecated — the folder he names IS the
+export.
+
+**Statements that can fail:**
+- R43.1 New project for `videomosaic` is **name → task → video → Create**. There is no folder box on
+  that step (`into-field` is absent), and the primary button says **Build mosaic**.
+- R43.2 **Create starts the build.** He lands on the progress panel with nothing left to decide —
+  this feature is automation, so its create flow must not stop to ask something it can ask later.
+  (Starting it is best-effort: if the build POST fails the project still exists and its own screen
+  has a Build button. A create must not be failed by a job.)
+- R43.3 Until it is saved the project is a **draft** in `app_state_dir()/drafts/<id>/`: a real
+  project, **reachable by id** (its build writes to it; `/project/:id` opens it) but **not listed**
+  by `GET /api/projects` and never on the home screen. Advertising a path he did not choose would be
+  a lie about where his work lives. ⚠️ This is why `/project/:id` fetches **one project by id**
+  (`GET /api/projects/{id}`) instead of filtering the listing.
+- R43.4 The finished screen's primary action is the **same `SaveInto` box** the dataset flow mounts —
+  not a copy of it. It therefore carries R42.5/R42.6 unchanged (refused inside a dataset or the repo,
+  refused over another project, the backend's reason **inline**, the typed text kept) and stays
+  headless-drivable (R38). ⛔ **No basename field and no second destination**: nothing is typed here
+  that was typed before.
+- R43.5 Saving **moves the whole project** into that folder (`Project.move_to`) — document,
+  forensics, mosaic. The artifacts sit **directly in it, named after the project**
+  (`<project>.png`, `-preview.png`, `-positions.csv`, `-build.json`); there is **no `outputs/`** for
+  this feature, because opening the folder he picked must show him his mosaic, not another folder.
+  From that moment it is an ordinary project: listed, reopenable, rebuildable.
+- R43.6 An unsaved build is **discarded** — never silently promoted to a path he did not choose.
+  Navigating away from one **asks first**; a draft that outlives its process is collected by the
+  launch sweep (with an age window, so a second Camea instance cannot delete a live build).
+- R43.7 `GET .../outputs/{name}` still takes the **logical** name (`mosaic.png` …) and resolves it
+  through the document's `build.outputs` — which records **filenames, never absolute paths**, because
+  a saved project moves and a recorded path would be a lie the moment it did.
+- R43.8 **Open folder** (`POST /api/fs/reveal`) shows the saved folder in Explorer. Unlike
+  `/api/dialog/*` it needs no pywebview, so `--browser` reveals too; only `--headless` answers 501,
+  and the UI then states the path instead of pretending a window opened.
+
+**The one exemption this bought, and its limit.** `Project.open` refuses a path inside the repo —
+that rule protects *his* work from a `git clean`. `app_state_dir()` is exempt from **that rule only**
+(a dev install may put it beside the checkout; the e2e harness does), because a draft is not his work
+until he saves it. ⛔ `refuse_write` is **not** exempt: the app does not write on the evidence, ever.
+
+---
+
+### R44 — ⭐ CAMEA KEEPS THE PROJECTS. THE APP IS THE ONLY DOOR TO THEM *(2026-08-10)*
+**His ask, verbatim:** *"I want things changed to where camea saves project-specific files to its own
+repo automatically and if users want to browse their project data they have to do it through the app
+itself"*, then, asked how a mosaic reaches a paper: *"click into a project and browse your outputs,
+select the one(s) you want and save it into somewhere"*, and, on the projects already on disk:
+*"migrate it all if possible."*
+
+⚠️ **THIS REVERSES R42 AND MOST OF R43, DELIBERATELY AND BY HIS INSTRUCTION.** R42 (2026-07-25) asked
+for a save folder per project — *"where I wanna pull the data from and where I wanna save the data
+into"* — and R43 (2026-08-07) moved the video task's copy of that question to the end. R44 removes
+the question instead of moving it again. **R42.1, R42.5, R42.6, R42.7, R42.8 and R43.1–R43.8 are
+retired**; what survives from them is stated below and nowhere else.
+
+⭐ **The one path question left is the one the app cannot answer: where is your data?** That folder
+is the user's, it is raw evidence, and ⛔ **I1 (no dataset knowledge) and the write guard are
+untouched** — the app still never writes on the evidence, and still remembers only paths.
+
+**Statements that can fail:**
+- R44.1 **A project lives in Camea's own store** — `%LOCALAPPDATA%/Camea/projects/<analysis_id>/`
+  (`core.project.store_root`, honouring `CAMEA_STATE_DIR`). The **id is the folder name**, so a
+  rename never moves anything and two projects of the same name cannot collide. Inside it, unchanged:
+  `camea-project.json`, `document.camea.json`, `autosave.camea.json`, `outputs/`.
+- R44.2 **New project asks for ONE path.** The dataset task names a data folder; the video task names
+  a video file. There is **no `into-field`**, no folder receipt, and `CreateAnalysisRequest` carries
+  no `folder`. `GET /api/projects/folder` is deleted.
+- R44.3 ⭐ **THE STORE IS THE INDEX.** `settings.projects` is deleted; the home screen reads the
+  store directory. Losing the settings file now costs the user his recent-data completions and
+  nothing else. A store folder whose manifest cannot be read is reported (`projects-unreadable`),
+  never silently dropped, and never fails the listing.
+- R44.4 **Every feature writes what it builds into `<project>/outputs/`.** The mosaic export has no
+  `dir` on the wire (`ExportRequest.dir` deleted; `basename` survives — it names the files). The
+  video build writes there too, still named after the **project** (`<project>.png`, `-preview.png`,
+  `-positions.csv`, `-build.json`), because a file copied onto his desktop must say what it is.
+- R44.5 ⭐ **BROWSING A PROJECT MEANS THE OUTPUTS PANEL** (`outputs-panel`), mounted by both feature
+  screens — the same component, not a copy. It lists what is in `outputs/` **read off the directory,
+  never off the document**, with size, date, and an inline look at images.
+- R44.6 ⭐ **WORK LEAVES CAMEA ONE WAY: A COPY HE ASKED FOR.** Tick outputs → name a folder
+  (`copy-into-field`, typed box + native picker, headless-drivable per R38) →
+  `POST /api/projects/{id}/outputs/copy`. It is a **copy**: the project keeps its files.
+  ⛔ Refused (409) into a dataset or `data/`. ⛔ A name already at the destination refuses the
+  **whole** request, naming the files — never half a copy, never over one of his.
+- R44.7 ⛔ **THERE IS NO DOOR TO EXPLORER.** `POST /api/fs/reveal`, `revealPath` and every "Open
+  folder" button are deleted. The card shows where a project's **data** came from — the path he
+  chose — and never advertises the project's own folder as somewhere to go.
+- R44.8 ⭐ **DELETE MEANS DELETE**, and it confirms. R42.8's Remove-vs-Delete is retired with the
+  user-named folder it protected: the folder is Camea's, so a project taken off the list is one
+  nobody could reach again. The confirmation says it takes files he may not have copied out.
+  `delete_files` is gone from the wire.
+- R44.9 ⭐ **NOTHING IS A DRAFT.** A project is real and listed from the moment it is created, so a
+  video build that is walked away from leaves a project he can reopen or delete. `core/drafts.py`,
+  `POST /api/videomosaic/save` and the "leave and lose it?" prompt are deleted (R43.3/R43.6 retired).
+- R44.10 ⭐ **PRE-R44 PROJECTS COME HOME, ONCE, AND IT IS SAID OUT LOUD** (`core.migrate`, at launch).
+  Every folder in the old `settings.projects`, plus anything left in R43's `drafts/`, moves into the
+  store; R43's flat video artifacts move into `outputs/`. The home screen states what moved
+  (`projects-migrated`) — a move he did not ask for and is not told about is indistinguishable from a
+  project that vanished. 🔴 **Only Camea's own files move** (`Project.own_entries` — the manifest, the
+  document, the autosave, `outputs/`, and the files the document names in `build.outputs`): a thesis
+  PDF he kept beside his mosaic stays in the folder he named. 🔴 An id collision, an unreadable
+  manifest or an unplugged drive **skips that project, reports it, and leaves it exactly where it
+  was**; the old index is kept until nothing fails, so the next launch finishes the job.
+
+**What R42/R43 bought that R44 keeps.** A project is still ONE folder with its files directly inside
+it. The id is still forever. The refusals are still `core.workspace`'s single implementations, and
+`app_state_dir()` is still exempt from the *repo* rule only — ⛔ never from `refuse_write`.
+
+---
+
+### R45 — ⭐ ELECTRODE IDENTITY: MAP THE GRID, THEN CLICK IT *(2026-08-11)*
+**His asks (AskUserQuestion):** both features get it; a click selects **only near a pad centre**
+(*"pad + slim margin"*) and *"if the user misclicks on an adjacent electrode they should be able to
+use up/down left/right arrow keys to go to the correct electrode"*; every grid position is numbered
+(occluded → interpolated, flagged); *"after the mosaic is built you can optionally go through the
+map electrodes process then at the end you should have a final product that is clickable"*.
+
+**Statements that can fail:**
+- R45.1 **The mapping is measured, never assumed.** Pitch, rotation and phase come from the mosaic
+  in front of it (`core/electrodegrid.py`); ⛔ no pitch/count constant in app code (I1 holds — the
+  measured real numbers live only in tests and notes). An image with no lattice **refuses**
+  (`NoGridFound` → a failed job that says why), it never mints an indexing from texture.
+  *(Amended 2026-08-11 by R45.8: the **device** spec — `DeviceSpec` / `MAXWELL`, the one place
+  220 × 120 and 17.5 µm may appear in app code — is the single carved-out exception. It is knowledge
+  the **user asserts** by declaring the whole chip imaged, and even then it only checks and completes
+  a fit that was still measured. Everything else stands: no dataset knowledge, and nothing about a
+  particular acquisition. A device number anywhere else — including UI prose, which reads it from
+  `GET /api/electrodes/device` — is still a violation.)*
+- R45.2 **Ids are `col-row` along the LATTICE axes** — `1-1` top-left, columns rightward, rows
+  downward — even though the real grid sits ~2° off the image axes. Every position inside the array
+  gets an id; a pad the tissue hides is `inferred` with an interpolated centre, never renumbered.
+- R45.3 **The click rule:** a pixel resolves only within `hit_radius_px` (0.30 × pitch) of a centre;
+  the gaps and everything outside the array select nothing (and a miss deselects). Arrow keys step
+  the selection one grid cell (`electrode-id`, `electrode-marker` follow). Esc clears the selection —
+  this is not the sweep; R14 is untouched. **The radius is measured on SCREEN — see R45.7.**
+- R45.4 **It is an OPTIONAL stage after the mosaic is built** — the wizard's seventh step
+  (`wizard-step-electrodes`, gated exactly with Mosaic; R4.1 now reads seven), and a
+  `Map electrodes` button on the video screen. 202 job; artifacts `<name>-electrodes.json/.csv` in
+  `outputs/` (R44.4/R44.5 apply); the doc gains an `electrodes` block.
+- R45.5 ⭐ **A STALE MAP SAYS SO.** The map records what it was computed from (`source_stamp`: the
+  tile positions / the build's `built_at`); edit or rebuild the mosaic and the panel shows
+  `electrode-stale` + Re-run instead of silently highlighting drifted centres.
+- R45.6 **The readout is numbers, not prose** (R3): id, grid coordinate, centre px, clicked px,
+  distance, detected/inferred, and the grid's cols × rows / pitch / angle / counts. The optional
+  IDs overlay (`electrode-ids-toggle`) is off by default and only labels what is legible.
+- R45.7 ⭐ **THE TOLERANCE IS A DISTANCE ON SCREEN, AND THE CAMERA MUST BE ABLE TO REACH THE PADS**
+  *(his report, 2026-08-11: "im unable to get all the electrodes there are missing patches")*.
+  `hit_radius_px` is measured in mosaic pixels, and at fit zoom his 5319×7356 video mosaic draws
+  1024 px wide: the 30.6 px pitch becomes **5.9 CSS px** and the 9.2 px disc **1.8** — a measured
+  **24 % of clicks resolved**, failing in *bands* (the miss depends on sub-pixel phase), which is
+  exactly what "missing patches" looks like. So: the radius **grows as you zoom out**, capped at
+  √½ · pitch — the cell's circumradius, past which a click would be claiming a *neighbour's* ground.
+  Zoomed in, the cap never binds and R45.3 runs verbatim (a gap still selects nothing). Measured
+  after: **144/144 clicks inside the array resolve, 144 distinct ids, 0 outside the array.**
+  The video screen is a **real viewer** (wheel = zoom at the pointer, drag = pan, Fit/100%/±,
+  `vm-zoom-level`) instead of a fit ↔ 100 % toggle, and both screens **draw the map**: the array
+  outline at any zoom, a dot per pad once centres are ≥ 5 px apart, ids at ≥ 34 px while `IDs` is on.
+  ⛔ A viewer that can only be *looked* at is not enough once the picture is a thing you click.
+- R45.8 ⭐ **THE DEVICE IS KNOWN, AND HE SAYS WHETHER IT IS ALL IN FRAME** *(his ruling,
+  2026-08-11)*: *"the standard MaxOne/MaxTwo sensor area is 26,400 electrodes = 220 × 120, with
+  17.5 µm pitch"* · *"Allow the user to select if it's a partially imaged or fully imaged before
+  allowing them to map electrodes. If they select full imaging enforce all the rules I gave. If they
+  pick partial only enforce the 17.5 µm rule."*
+  - **He picks first.** `Map electrodes` is **disabled** until *Whole chip imaged* or *Part of the
+    chip* is chosen (`array_coverage: "full" | "partial"`; the server defaults to `partial`, the
+    mode that assumes nothing). No default may map silently.
+  - **full → STRICTLY ENFORCED** *(his clarification, same day: "if the user select full imaging then
+    I want the rules to be strictly enforced")*. The run ends in exactly one of two states: a map that
+    is **220 × 120 with all 26,400 positions numbered**, or a **refusal** that says what it found.
+    There is no third outcome.
+    ⛔ **AND NO REPAIR PATH — that is the ruling, not an omission.** Two rules for fixing a near miss
+    were built and *both* were caught renumbering the whole array while reporting the right shape: the
+    first chose which edge to add or drop by counting detected pads (which says nothing about a line
+    the fit never indexed — a fit trimmed by one real line at *each* end had both put back on one
+    side); the second asked the pixels, answered correctly, and was still wrong because nothing
+    re-examined the lines already accepted. Repair is a guess about *where the array starts* dressed
+    as arithmetic about *how many lines there are*. A near miss is now simply a refusal.
+    ⭐ **TWO CHECKS, AND CARDINALITY IS ONLY THE FIRST.** Counting cannot tell "the right 26,400" from
+    "26,400 one column to the left" — and that map is constructible: one true edge column too dim to
+    index while the chip's border bar is indexed at the other end cancels in the count exactly. So the
+    exit also asks whether the array *ends where the numbering says*: the strip just outside each edge
+    must not look like electrodes compared with the line just inside it. **Measured** (matched-filter
+    median, outside ÷ inside): **0.15** synthetic background · **0.63** worst edge of his real, correct
+    120 × 220 video mosaic, where the chip's own border structure scores · **0.79** a genuinely shifted
+    map. The threshold is **0.70**, the only value between the last two, and it is a *check*: it can
+    refuse, never renumber.
+  - **partial →** the shape is whatever was imaged, and the readout says so: **`1-1` is the top-left
+    of the IMAGED REGION, not of the chip.**
+  - **Both →** 17.5 µm is the scale: `um_per_px = 17.5 / measured pitch_px`, and every electrode
+    carries `x_um`/`y_um` in the array's own frame (origin at 1-1's lattice position, rotation taken
+    out) in the readout, the JSON and the CSV, **alongside** pixels.
+  - **Verified on his real data:** the 260801 video mosaic maps as **full → 120 × 220, all 26,400
+    numbered, 6.2 s**, corners µm-correct; as **partial → 26,280** (the clipped bottom-left corner
+    stays absent). That difference *is* the ruling working: full says the chip has an electrode
+    everywhere, partial only reports what was seen.
+  - ⛔ The lattice is still **measured** (R45.1). The spec lives in exactly one place (`DeviceSpec` /
+    `MAXWELL`); it checks and completes a fit, it never replaces one, and it only binds when he says
+    the whole chip is in frame. A device number hard-coded anywhere else is a violation.
 
 ---
 

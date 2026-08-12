@@ -78,11 +78,14 @@ are all server routes now.
 | **tiles** | `GET /api/sessions/{id}/tiles/{trial}.png?v=` | → 8-bit PNG, flat-fielded, through the global tone window |
 | *(pixels)* | `GET /api/sessions/{id}/tiles/{trial}.raw` | → 16-bit little-endian, raw camera counts, no tone |
 | | `GET /api/sessions/{id}/thumbs.png?v=` · `.json` | → sprite sheet · `ThumbsResponse` |
-| **projects** | `GET /api/projects/folder?path=` | → `ProjectFolderInfo` — *"can I save here?"*, asked **before** anything is written; `writable` is proved with a probe file |
-| *(one project = one folder he named — R42)* | `GET /api/projects` | → `AnalysisListResponse` — the home screen. Carries `unreadable` (moved / unplugged folders) |
-| | `POST /api/projects` | `CreateAnalysisRequest` (**incl. `folder`**) → `AnalysisSummary` — **the server authors the doc**. `409 refused` inside a dataset or the repo |
-| | `PATCH /api/projects/{id}` | `RenameAnalysisRequest` → `AnalysisSummary` — manifest only; the folder never moves |
-| | `DELETE /api/projects/{id}?delete_files=` | → `OkResponse`. ⭐ **Default forgets** (files stay); `true` removes only Camea's own files |
+| **projects** | `GET /api/projects` | → `AnalysisListResponse` — the home screen, read off **Camea's store** (R44). Carries `unreadable` (a corrupt manifest) and, once, `migration` (the one-time move into the store) |
+| *(one project = one folder, and **Camea owns it** — R44)* | `POST /api/projects` | `CreateAnalysisRequest` (⛔ **no `folder`**) → `AnalysisSummary` — **the server authors the doc**, in `store_root()/<analysis_id>/`. The user is never asked where it goes |
+| | `GET /api/projects/{id}` | → `AnalysisSummary` — ONE project, what `/project/:id` opens with |
+| | `PATCH /api/projects/{id}` | `RenameAnalysisRequest` → `AnalysisSummary` — manifest only; the folder never moves, the id is forever |
+| | `DELETE /api/projects/{id}` | → `OkResponse`. ⭐ **Delete means delete** (R44.8): the project and everything in it, outputs included. `delete_files` is gone with R42.8's Remove |
+| **outputs** | `GET /api/projects/{id}/outputs` | → `OutputListResponse` — ⭐ **the only door to a project's files** (R44.5). Read off the DIRECTORY, never the document. Empty is a normal answer, not a 404 |
+| *(browse it in the app, or not at all)* | `GET /api/projects/{id}/outputs/{name}?download=` | The bytes. `no-store`. `download=true` sets a `Content-Disposition` attachment. ⚠️ `name` goes through `safe_basename` and is re-checked to sit in this project's `outputs/` |
+| | `POST /api/projects/{id}/outputs/copy` | `CopyOutputsRequest` → `CopyOutputsResponse` — ⭐ **the one way work leaves Camea** (R44.6). A **copy**: the project keeps its files. `409 refused` into a dataset, or over a name already at the destination (**the whole request**, naming the files) |
 | **documents** | `GET` · `PUT /api/analyses/{id}/document` | `SaveDocumentRequest` → `DocumentResponse` · `SaveResult` |
 | | `POST /api/analyses/{id}/autosave` | `AutosaveRequest` → `SaveResult` — **a failure is LOUD** |
 | | `POST /api/documents/load` | `LoadDocumentRequest` → `LoadDocumentResponse` — works **cold** |
@@ -91,6 +94,11 @@ are all server routes now.
 | **jobs** | `GET /api/jobs` · `GET /api/jobs/{id}` | → `JobListResponse` · `Job` |
 | | `POST /api/jobs/{id}/cancel` | → `JobCancelResponse` |
 | **dialogs** | `POST /api/dialog/open-directory` · `open-file` · `save-file` | → `DialogPathResponse`. **501 when headless** — and the UI must fall back to something Playwright can answer, or there are no end-to-end tests |
+
+⛔ **`POST /api/fs/reveal` was DELETED on 2026-08-10 (R44.7).** It opened a project folder in
+Explorer, and his ruling is that the app is the only way to browse project data. What replaced it is
+`POST /api/projects/{id}/outputs/copy`: a copy of what he chose, where he chose, deliberately.
+⛔ **`GET /api/projects/folder` went the same day** — there is no save folder to ask about.
 
 ### MOSAIC — the feature. Everything under `/api/mosaic`.
 
@@ -108,8 +116,28 @@ are all server routes now.
 | **5 · Sweep** | `POST /api/mosaic/match/anchor` | `MatchAnchorRequest` → `MatchResult` — ⭐ the primitive. Place, alternatives, rescue and snap are all this one call |
 | | `POST /api/mosaic/match/score` | `MatchScoreRequest` → `ScoreResult` — "you dropped it here; what do the pixels say?" |
 | | `POST /api/mosaic/recheck` | `RecheckRequest` → `202 JobRef` → `RecheckResult` — **global**, and allowed to say **no** |
-| **6 · Mosaic** | `POST /api/mosaic/export` | `ExportRequest` → `202 JobRef` → `ExportResult` — 7 files; the coverage mask is **mandatory** |
+| **6 · Mosaic** | `POST /api/mosaic/export` | `ExportRequest` (⛔ **no `dir`** — R44: it writes into `<project>/outputs/`; `basename` names the files) → `202 JobRef` → `ExportResult` — 7 files; the coverage mask is **mandatory** |
 | | `POST /api/mosaic/qc` | `QcRequest` → `QcReport` — every number states its denominator |
+
+### VIDEOMOSAIC — the second feature. Everything under `/api/videomosaic`.
+
+⭐ **NO folder question at all (R44).** Create takes one path — the video — and makes the project in
+Camea's store; the build writes its artifacts into that project's `outputs/`, named after the
+project. **There is no save route and no export route.** Getting a copy out is core's
+`POST /api/projects/{id}/outputs/copy`, which every feature shares.
+
+⚠️ R43 (2026-08-07) had this feature defer its folder question to the finished screen, as a draft in
+`app_state_dir()/drafts/<id>/`. R44 removed the question instead of moving it again; drafts are gone.
+
+| | route | body → response |
+|---|---|---|
+| **probe** | `POST /api/videomosaic/probe` | `VideoProbeRequest` → `VideoSource` — decodes a real frame, so "probed OK" means it will open. `fps`/`n_frames` are what the container CLAIMS |
+| **create** | `POST /api/videomosaic/projects` | `CreateVideoProjectRequest` (**no `folder`**) → `AnalysisSummary`. The server authors the doc **in the store** (R44) and the project is listed from that moment — there are no drafts |
+| **build** | `POST /api/videomosaic/build` | `VideoBuildRequest` → `202 JobRef` → `VideoMosaicBuildResult`. Cancellable; one `videomosaic` lease. `outputs` are **filenames**, not paths (a saved project moves) |
+| **outputs** | `GET /api/videomosaic/{id}/outputs/{name}?v=` | The **logical** name (`mosaic.png` · `preview.png` · `positions.csv` · `build.json`), resolved through the doc's `build.outputs` to a real file in `<project>/outputs/`. `v` = `built_at`; the response is `no-store`. ⚠️ This is the feature's own `<img src>`; **browsing** a project is core's `GET /api/projects/{id}/outputs` |
+
+⛔ **`POST /api/videomosaic/save` was DELETED on 2026-08-10 (R44.9).** There is nothing to save into:
+the project has been in Camea's store since Create, and its mosaic is in that project's `outputs/`.
 
 ---
 
