@@ -54,9 +54,10 @@ import type {
   RegionsPayload,
   VideoMosaicDocument,
 } from '../../api';
-import { Button, Help, LiveWarning, Panel, cx } from '../../design';
+import { Button, Help, Kbd, LiveWarning, Panel, cx } from '../../design';
 import { forSubmit, normalisePath } from '../home/pathText';
 import { PreviewViewer, type ViewFrame } from './PreviewViewer';
+import { WorkFrame } from './WorkFrame';
 import vm from './VideoMosaicFeature.module.css';
 import styles from './RegionsStep.module.css';
 
@@ -68,6 +69,10 @@ const DRAG_MIN_PX = 24;
 const ANGLE_NOTE_DEG = 2;
 /** How far off-stage a quiet outline may be before it is culled. */
 const CULL_PX = 80;
+/** What `[` and `]` move the overlay by. */
+const FADE_STEP = 10;
+/** Above this the overlay counts as "up", so the flash key swaps to the mosaic instead of to it. */
+const FADE_MID = 50;
 
 const f2 = (v: number): string => v.toFixed(2);
 const f3 = (v: number): string => v.toFixed(3);
@@ -122,6 +127,8 @@ export function RegionsStep({
   const [drop, setDrop] = useState<{ id: string; x: number; y: number } | null>(null);
   const [banner, setBanner] = useState<{ loud: boolean; message: string } | null>(null);
   const [fade, setFade] = useState(60);
+  // ⭐ R47 — Space is HELD, not toggled: the eye stays on the boundary while the two pictures swap.
+  const [flash, setFlash] = useState(false);
   const [fieldsOn, setFieldsOn] = useState(true);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
@@ -253,23 +260,62 @@ export function RegionsStep({
     }
   }, [analysisId, drop, running, selected]);
 
-  // `S` snaps, exactly as it does in the sweep. Bound while this step is mounted, and never while
-  // he is typing in the path, the name or a rename box.
+  // ── the keyboard ────────────────────────────────────────────────────────────────────────────
+  // `S` snaps, exactly as it does in the sweep. ⭐ R47 adds the compare keys: HOLD `Space` to swap
+  // the two pictures, `[` / `]` to nudge the overlay. Bound while this step is mounted, and never
+  // while he is typing in the path, the name or a rename box.
   const snapRef = useRef(snap);
   snapRef.current = snap;
   useEffect(() => {
+    const typing = (e: KeyboardEvent): boolean => {
+      const el = e.target as HTMLElement | null;
+      return /^(INPUT|TEXTAREA|SELECT)$/.test(el?.tagName ?? '') || Boolean(el?.isContentEditable);
+    };
     const onKey = (e: KeyboardEvent): void => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const el = e.target as HTMLElement | null;
-      if (/^(INPUT|TEXTAREA|SELECT)$/.test(el?.tagName ?? '') || el?.isContentEditable) return;
+      if (typing(e)) return;
       if (e.key === 's' || e.key === 'S') {
         e.preventDefault();
         void snapRef.current();
+        return;
+      }
+      if (e.key === ' ') {
+        // ⛔ preventDefault ALWAYS, repeat or not: Space would otherwise re-press whatever button
+        // has focus (Snap, Confirm) for as long as the key is held down.
+        e.preventDefault();
+        if (!e.repeat) setFlash(true);
+        return;
+      }
+      if (e.key === '[') {
+        e.preventDefault();
+        setFade((v) => Math.max(0, v - FADE_STEP));
+        return;
+      }
+      if (e.key === ']') {
+        e.preventDefault();
+        setFade((v) => Math.min(100, v + FADE_STEP));
       }
     };
+    const onKeyUp = (e: KeyboardEvent): void => {
+      if (e.key === ' ') setFlash(false);
+    };
+    // ⚠️ Alt-Tab mid-hold never delivers the keyup — without this the overlay stays flashed on and
+    // the slider silently means nothing.
+    const onBlur = (): void => setFlash(false);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
   }, []);
+
+  // ⭐ R47 — THE FLASH SHOWS THE OTHER PICTURE. To full when the overlay is down, to nothing when
+  // it is already up: a key that always went to 100 % would do nothing at exactly the moment he
+  // has pushed the slider up, which is when he is looking hardest.
+  const shown = flash ? (fade >= FADE_MID ? 0 : 100) : fade;
 
   // ── the user's word: rename, confirm, delete ────────────────────────────────────────────────
   const adopt = useCallback(
@@ -431,15 +477,17 @@ export function RegionsStep({
                   style={{ left, top, width: w, height: h }}
                 >
                   {/* ⭐ HIS ASK — the recording's own picture, faded over the mosaic it claims to
-                      sit on. It is exactly w×h MOSAIC px, so it rides the camera with the box. */}
-                  {still && fade > 0 && (
+                      sit on. It is exactly w×h MOSAIC px, so it rides the camera with the box.
+                      ⚠️ The guard reads `shown`, not `fade`: with the slider at 0 a `fade > 0`
+                      test would leave the image unmounted and the flash key would show nothing. */}
+                  {still && shown > 0 && (
                     <img
                       className={styles.still}
                       data-testid="region-still"
                       alt=""
                       aria-hidden="true"
                       draggable={false}
-                      style={{ opacity: fade / 100 }}
+                      style={{ opacity: shown / 100 }}
                       src={outputUrl(analysisId, still, {
                         v: r.located_at ?? builtAt ?? undefined,
                       })}
@@ -477,7 +525,7 @@ export function RegionsStep({
       analysisId,
       builtAt,
       cornerOf,
-      fade,
+      shown,
       fieldsOn,
       list,
       onGrabDown,
@@ -491,319 +539,346 @@ export function RegionsStep({
 
   return (
     <div className={styles.step} data-testid="regions-step">
-      <PreviewViewer
-        analysisId={analysisId}
-        builtAt={builtAt}
-        canvas={canvas}
-        payload={payload}
-        selection={null}
-        // ⭐ The lattice is DRAWN here but not clickable: no `onPick`, because on this screen a
-        // press is a pan or a drag, never an electrode identification. Seeing the pads while you
-        // aim a rectangle is exactly the context this step wants — the electrodes under it ARE the
-        // answer it produces. (`PreviewViewer` keys the layer off `showGrid`, not off `identify`.)
-        showGrid
-        overlay={overlay}
-        extraTools={
-          <button
-            type="button"
-            role="switch"
-            aria-checked={fieldsOn}
-            className={cx(vm.zoomBtn, fieldsOn && vm.zoomBtnOn)}
-            data-testid="regions-fields-toggle"
-            onClick={() => setFieldsOn((on) => !on)}
-            title="Show the located fields on the mosaic"
-          >
-            Fields
-          </button>
-        }
-      />
-
-      {stale && (
-        <div data-testid="regions-stale">
-          <LiveWarning
-            help={
-              'These rectangles were placed against an earlier build of the mosaic. Camea never ' +
-              'drifts a location onto new pixels, so they are reported as stale instead: drag each ' +
-              'one roughly into place and Snap it, or locate the recording again.'
+      <WorkFrame
+        testId="regions-work"
+        picture={
+          <PreviewViewer
+            analysisId={analysisId}
+            builtAt={builtAt}
+            canvas={canvas}
+            payload={payload}
+            selection={null}
+            // ⭐ The lattice is DRAWN here but not clickable: no `onPick`, because on this screen a
+            // press is a pan or a drag, never an electrode identification. Seeing the pads while
+            // you aim a rectangle is exactly the context this step wants — the electrodes under it
+            // ARE the answer it produces. (`PreviewViewer` keys the layer off `showGrid`.)
+            showGrid
+            overlay={overlay}
+            extraTools={
+              <button
+                type="button"
+                role="switch"
+                aria-checked={fieldsOn}
+                className={cx(vm.zoomBtn, fieldsOn && vm.zoomBtnOn)}
+                data-testid="regions-fields-toggle"
+                onClick={() => setFieldsOn((on) => !on)}
+                title="Show the located fields on the mosaic"
+              >
+                Fields
+              </button>
             }
-          >
-            the mosaic was rebuilt after these were placed — <b>re-snap before trusting them</b>.
-          </LiveWarning>
-        </div>
-      )}
-
-      {loadError && (
-        <div data-testid="regions-load-error">
-          <LiveWarning variant="loud">
-            <strong>Could not read the located recordings.</strong> {loadError}
-          </LiveWarning>
-        </div>
-      )}
-
-      {jobError && (
-        <div data-testid="regions-error">
-          <LiveWarning variant="loud">
-            <strong>Region error.</strong> {jobError}
-          </LiveWarning>
-        </div>
-      )}
-
-      {rowError && (
-        <div data-testid="regions-row-error">
-          <LiveWarning variant="loud">
-            <strong>That change did not save.</strong> {rowError}
-          </LiveWarning>
-        </div>
-      )}
-
-      {/* ── 1 · ADD A RECORDING ──────────────────────────────────────────────────────────────── */}
-      <Panel
-        title="Add a recording"
-        help={
-          'A fixed-field recording is a video of ONE parked field of view. Camea builds a still ' +
-          'from it, measures how much it was magnified relative to the mosaic (from the electrode ' +
-          'lattice visible in both), and searches the whole mosaic for where it sits.\n' +
-          '\n' +
-          'The file is COPIED into the project, so moving or deleting the original later does not ' +
-          'break the region. The name is a label only — leave it empty to use the file name.\n' +
-          '\n' +
-          'Paste a path or press Browse. Either way the path is the only thing asked for: where a ' +
-          'recording came FROM, never where anything is saved.'
-        }
-      >
-        <div className={styles.addRow}>
-          <input
-            className={styles.input}
-            type="text"
-            spellCheck={false}
-            autoComplete="off"
-            aria-label="Recording file path"
-            placeholder="paste the path of a fixed-field recording…"
-            data-testid="regions-path"
-            value={path}
-            disabled={running}
-            onChange={(e) => {
-              setPath(normalisePath(e.target.value));
-              setJobError(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void locate();
-              }
-            }}
           />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void browse()}
-            disabled={running}
-            data-testid="regions-browse"
-          >
-            Browse…
-          </Button>
-        </div>
-        <div className={styles.addRow}>
-          <input
-            className={cx(styles.input, styles.nameInput)}
-            type="text"
-            spellCheck={false}
-            autoComplete="off"
-            aria-label="Recording name (optional)"
-            placeholder="name (optional)"
-            data-testid="regions-name"
-            value={label}
-            disabled={running}
-            onChange={(e) => setLabel(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void locate();
-              }
-            }}
-          />
-          <Button
-            variant="primary"
-            onClick={() => void locate()}
-            disabled={running || forSubmit(path) === ''}
-            data-testid="regions-locate"
-          >
-            Locate on the mosaic
-          </Button>
-        </div>
-      </Panel>
-
-      {running && (
-        <div data-testid="regions-progress">
-          <Panel
-            title={jobKind === 'snap' ? 'Snapping' : 'Locating recording'}
-            className={vm.progress}
-          >
-            <div className={vm.barWell}>
-              <div
-                className={vm.bar}
-                style={{ transform: `scaleX(${Math.max(2, Math.min(100, job.pct ?? 0)) / 100})` }}
-              />
-            </div>
-            <div className={vm.progressRow}>
-              <span className={vm.phase} data-testid="regions-phase">
-                {job.phase ?? 'starting…'}
-                {job.phaseIndex != null && job.nPhases != null
-                  ? ` · ${job.phaseIndex + 1}/${job.nPhases}`
-                  : ''}
-              </span>
-              <span className={vm.eta} data-testid="regions-eta">
-                {job.etaText ?? ''}
-              </span>
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => void cancel()}
-                data-testid="regions-cancel"
-              >
-                Cancel
-              </Button>
-            </div>
-            {job.message && <div className={vm.msg}>{job.message}</div>}
-          </Panel>
-        </div>
-      )}
-
-      {/* ── 2 · THE LIST ─────────────────────────────────────────────────────────────────────── */}
-      <Panel
-        title="Located recordings"
-        help={
-          'One row per recording. NCC is how well its still matches the mosaic where it was put ' +
-          '(1.000 is identical); margin is that score minus the best rival place anywhere on the ' +
-          'mosaic — a thin margin means a rival was nearly as good, which on a repeating electrode ' +
-          'lattice is exactly the failure to watch for.\n' +
-          '\n' +
-          'Click a row to select it on the mosaic; click its name to rename it.'
         }
-      >
-        <div className={styles.list} data-testid="regions-list">
-          {list.length === 0 && (
-            <p className={styles.empty} data-testid="regions-empty">
-              no recordings located yet
-            </p>
-          )}
-          {list.map((r) => {
-            const e = r.electrodes ?? null;
-            const isSel = r.id === selectedId;
-            return (
-              <div
-                key={r.id}
-                className={cx(
-                  styles.item,
-                  isSel && styles.itemSel,
-                  r.status === 'confirmed' && styles.itemOk,
-                )}
-                data-testid="region-row"
-                data-region-id={r.id}
-                data-selected={isSel || undefined}
-                data-status={r.status}
-                onClick={() => setSelectedId(r.id)}
-              >
-                {renaming === r.id ? (
-                  <input
-                    className={cx(styles.input, styles.renameInput)}
-                    type="text"
-                    aria-label="Region name"
-                    data-testid="region-name-input"
-                    autoFocus
-                    value={renameText}
-                    onChange={(ev) => setRenameText(ev.target.value)}
-                    onBlur={() => void commitRename(r)}
-                    onKeyDown={(ev) => {
-                      if (ev.key === 'Enter') {
-                        ev.preventDefault();
-                        void commitRename(r);
-                      } else if (ev.key === 'Escape') {
-                        ev.preventDefault();
-                        setRenaming(null);
-                      }
-                    }}
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className={styles.name}
-                    data-testid="region-name"
-                    title="Rename"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      setSelectedId(r.id);
-                      setRenameText(r.name);
-                      setRenaming(r.id);
-                    }}
-                  >
-                    {r.name}
-                  </button>
-                )}
-
-                <span
-                  className={cx(
-                    styles.chip,
-                    r.status === 'confirmed' ? styles.chipOk : styles.chipOpen,
-                  )}
-                  data-testid="region-status"
-                  data-status={r.status}
+        rail={
+          <>
+            {/* ⭐ R47 — ORDER IS THE POINT OF THIS RAIL. The four things he named come before
+                everything else: which recording, its signature, the overlay slider, and Snap.
+                Adding a recording is a once-per-recording act and waits at the bottom. */}
+            {stale && (
+              <div data-testid="regions-stale">
+                <LiveWarning
+                  help={
+                    'These rectangles were placed against an earlier build of the mosaic. Camea ' +
+                    'never drifts a location onto new pixels, so they are reported as stale ' +
+                    'instead: drag each one roughly into place and Snap it, or locate the ' +
+                    'recording again.'
+                  }
                 >
-                  {r.status}
-                </span>
+                  the mosaic was rebuilt after these were placed —{' '}
+                  <b>re-snap before trusting them</b>.
+                </LiveWarning>
+              </div>
+            )}
 
-                <span className={styles.rowFacts}>
-                  <span className={styles.fact}>
-                    <span className={styles.factLabel}>ncc</span>
-                    <span data-testid="region-ncc">{r.ncc != null ? f4(r.ncc) : '—'}</span>
-                  </span>
-                  <span className={styles.fact}>
-                    <span className={styles.factLabel}>margin</span>
-                    <span data-testid="region-margin" data-thin={r.margin_thin || undefined}>
-                      {r.margin != null ? f3(r.margin) : '—'}
+            {loadError && (
+              <div data-testid="regions-load-error">
+                <LiveWarning variant="loud">
+                  <strong>Could not read the located recordings.</strong> {loadError}
+                </LiveWarning>
+              </div>
+            )}
+
+            {jobError && (
+              <div data-testid="regions-error">
+                <LiveWarning variant="loud">
+                  <strong>Region error.</strong> {jobError}
+                </LiveWarning>
+              </div>
+            )}
+
+            {rowError && (
+              <div data-testid="regions-row-error">
+                <LiveWarning variant="loud">
+                  <strong>That change did not save.</strong> {rowError}
+                </LiveWarning>
+              </div>
+            )}
+
+            {running && (
+              <div data-testid="regions-progress">
+                <Panel
+                  title={jobKind === 'snap' ? 'Snapping' : 'Locating recording'}
+                  className={vm.progress}
+                >
+                  <div className={vm.barWell}>
+                    <div
+                      className={vm.bar}
+                      style={{
+                        transform: `scaleX(${Math.max(2, Math.min(100, job.pct ?? 0)) / 100})`,
+                      }}
+                    />
+                  </div>
+                  <div className={vm.progressRow}>
+                    <span className={vm.phase} data-testid="regions-phase">
+                      {job.phase ?? 'starting…'}
+                      {job.phaseIndex != null && job.nPhases != null
+                        ? ` · ${job.phaseIndex + 1}/${job.nPhases}`
+                        : ''}
                     </span>
-                  </span>
-                  <span className={styles.fact}>
-                    <span className={styles.factLabel}>electrodes</span>
-                    <span data-testid="region-electrodes">{e ? e.count : '—'}</span>
-                  </span>
-                </span>
+                    <span className={vm.eta} data-testid="regions-eta">
+                      {job.etaText ?? ''}
+                    </span>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => void cancel()}
+                      data-testid="regions-cancel"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                  {job.message && <div className={vm.msg}>{job.message}</div>}
+                </Panel>
+              </div>
+            )}
 
+            {/* ── 1 · WHICH RECORDING ─────────────────────────────────────────────────────── */}
+            <Panel
+              title="Recordings"
+              help={
+                'One row per located recording. Click a row to put it under judgement on the ' +
+                'mosaic; click its name to rename it.\n' +
+                '\n' +
+                'NCC is how well its still matches the mosaic where it was put (1.000 is ' +
+                'identical); margin is that score minus the best rival place anywhere on the ' +
+                'mosaic — a thin margin means a rival was nearly as good, which on a repeating ' +
+                'electrode lattice is exactly the failure to watch for.'
+              }
+            >
+              <div className={styles.list} data-testid="regions-list">
+                {list.length === 0 && (
+                  <p className={styles.empty} data-testid="regions-empty">
+                    no recordings located yet
+                  </p>
+                )}
+                {list.map((r) => {
+                  const e = r.electrodes ?? null;
+                  const isSel = r.id === selectedId;
+                  return (
+                    <div
+                      key={r.id}
+                      className={cx(
+                        styles.item,
+                        isSel && styles.itemSel,
+                        r.status === 'confirmed' && styles.itemOk,
+                      )}
+                      data-testid="region-row"
+                      data-region-id={r.id}
+                      data-selected={isSel || undefined}
+                      data-status={r.status}
+                      onClick={() => setSelectedId(r.id)}
+                    >
+                      {/* ⭐ R47 — the row is two lines on a rail. Name, state and Delete read
+                          across the top; the numbers sit under them instead of being squeezed
+                          out of a 360 px column. */}
+                      <div className={styles.itemHead}>
+                        {renaming === r.id ? (
+                          <input
+                            className={cx(styles.input, styles.renameInput)}
+                            type="text"
+                            aria-label="Region name"
+                            data-testid="region-name-input"
+                            autoFocus
+                            value={renameText}
+                            onChange={(ev) => setRenameText(ev.target.value)}
+                            onBlur={() => void commitRename(r)}
+                            onKeyDown={(ev) => {
+                              if (ev.key === 'Enter') {
+                                ev.preventDefault();
+                                void commitRename(r);
+                              } else if (ev.key === 'Escape') {
+                                ev.preventDefault();
+                                setRenaming(null);
+                              }
+                            }}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className={styles.name}
+                            data-testid="region-name"
+                            title="Rename"
+                            onClick={(ev) => {
+                              ev.stopPropagation();
+                              setSelectedId(r.id);
+                              setRenameText(r.name);
+                              setRenaming(r.id);
+                            }}
+                          >
+                            {r.name}
+                          </button>
+                        )}
+
+                        <span
+                          className={cx(
+                            styles.chip,
+                            r.status === 'confirmed' ? styles.chipOk : styles.chipOpen,
+                          )}
+                          data-testid="region-status"
+                          data-status={r.status}
+                        >
+                          {r.status}
+                        </span>
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={styles.del}
+                          data-testid="region-delete"
+                          title="Delete this region, its still and the project's copy of the recording"
+                          disabled={running}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            void remove(r);
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+
+                      <span className={styles.rowFacts}>
+                        <span className={styles.fact}>
+                          <span className={styles.factLabel}>ncc</span>
+                          <span data-testid="region-ncc">{r.ncc != null ? f4(r.ncc) : '—'}</span>
+                        </span>
+                        <span className={styles.fact}>
+                          <span className={styles.factLabel}>margin</span>
+                          <span data-testid="region-margin" data-thin={r.margin_thin || undefined}>
+                            {r.margin != null ? f3(r.margin) : '—'}
+                          </span>
+                        </span>
+                        <span className={styles.fact}>
+                          <span className={styles.factLabel}>electrodes</span>
+                          <span data-testid="region-electrodes">{e ? e.count : '—'}</span>
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </Panel>
+
+            {/* ── 2 · THE SELECTED REGION: the signature, the overlay, the drop ───────────── */}
+            {selected && (
+              <RegionDetail
+                region={selected}
+                moved={moved}
+                dropped={drop != null && drop.id === selected.id}
+                banner={banner}
+                fade={fade}
+                shown={shown}
+                flash={flash}
+                onFade={setFade}
+                busy={running}
+                onSnap={() => void snap()}
+                onRevert={() => setDrop(null)}
+                onStatus={(s) => void setStatus(selected, s)}
+              />
+            )}
+
+            {/* ── 3 · ADD A RECORDING — once per recording, so it waits at the bottom ─────── */}
+            <Panel
+              title="Add a recording"
+              help={
+                'A fixed-field recording is a video of ONE parked field of view. Camea builds a ' +
+                'still from it, measures how much it was magnified relative to the mosaic (from ' +
+                'the electrode lattice visible in both), and searches the whole mosaic for where ' +
+                'it sits.\n' +
+                '\n' +
+                'The file is COPIED into the project, so moving or deleting the original later ' +
+                'does not break the region. The name is a label only — leave it empty to use the ' +
+                'file name.\n' +
+                '\n' +
+                'Paste a path or press Browse. Either way the path is the only thing asked for: ' +
+                'where a recording came FROM, never where anything is saved.'
+              }
+            >
+              <div className={styles.addRow}>
+                <input
+                  className={styles.input}
+                  type="text"
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-label="Recording file path"
+                  placeholder="paste the path of a fixed-field recording…"
+                  data-testid="regions-path"
+                  value={path}
+                  disabled={running}
+                  onChange={(e) => {
+                    setPath(normalisePath(e.target.value));
+                    setJobError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void locate();
+                    }
+                  }}
+                />
                 <Button
                   variant="ghost"
                   size="sm"
-                  className={styles.del}
-                  data-testid="region-delete"
-                  title="Delete this region, its still and the project's copy of the recording"
+                  onClick={() => void browse()}
                   disabled={running}
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    void remove(r);
-                  }}
+                  data-testid="regions-browse"
                 >
-                  Delete
+                  Browse…
                 </Button>
               </div>
-            );
-          })}
-        </div>
-      </Panel>
-
-      {/* ── 3 · THE SELECTED REGION: evidence, the drop, the signature ────────────────────────── */}
-      {selected && (
-        <RegionDetail
-          region={selected}
-          moved={moved}
-          dropped={drop != null && drop.id === selected.id}
-          banner={banner}
-          fade={fade}
-          onFade={setFade}
-          busy={running}
-          onSnap={() => void snap()}
-          onRevert={() => setDrop(null)}
-          onStatus={(s) => void setStatus(selected, s)}
-        />
-      )}
+              <div className={styles.addRow}>
+                <input
+                  className={cx(styles.input, styles.nameInput)}
+                  type="text"
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-label="Recording name (optional)"
+                  placeholder="name (optional)"
+                  data-testid="regions-name"
+                  value={label}
+                  disabled={running}
+                  onChange={(e) => setLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void locate();
+                    }
+                  }}
+                />
+              </div>
+              <div className={styles.addRow}>
+                <Button
+                  variant="primary"
+                  onClick={() => void locate()}
+                  disabled={running || forSubmit(path) === ''}
+                  data-testid="regions-locate"
+                >
+                  Locate on the mosaic
+                </Button>
+              </div>
+            </Panel>
+          </>
+        }
+      />
     </div>
   );
 }
@@ -828,7 +903,11 @@ interface RegionDetailProps {
   moved: number;
   dropped: boolean;
   banner: { loud: boolean; message: string } | null;
+  /** Where the slider sits — what the number under it reads, and what a release returns to. */
   fade: number;
+  /** What is actually drawn: `fade`, or the flash key's swap while Space is held (R47). */
+  shown: number;
+  flash: boolean;
   onFade: (v: number) => void;
   busy: boolean;
   onSnap: () => void;
@@ -842,6 +921,8 @@ function RegionDetail({
   dropped,
   banner,
   fade,
+  shown,
+  flash,
   onFade,
   busy,
   onSnap,
@@ -950,6 +1031,47 @@ function RegionDetail({
             </div>
           )}
 
+          {/* ── ⭐ THE OVERLAY — THE TOOL THIS SCREEN IS JUDGED WITH, so it is first (R47) ──── */}
+          <div className={styles.fadeBlock} data-flash={flash || undefined}>
+            <div className={styles.fadeRow}>
+              <label className={styles.fadeLabel} htmlFor={`region-fade-${r.id}`}>
+                Recording overlay
+                <Help
+                  body={
+                    'The still Camea built from this recording, drawn inside the rectangle at the ' +
+                    'mosaic’s own scale. Slide it up and down: the cells and the electrode ' +
+                    'lattice should walk straight through the boundary. If they jump, the ' +
+                    'location is wrong however good the score looks.\n' +
+                    '\n' +
+                    'Hold SPACE to swap between the two pictures without letting go of the ' +
+                    'slider — the fastest way to see a boundary jump. [ and ] nudge it by ' +
+                    '10% each.'
+                  }
+                />
+              </label>
+              <input
+                id={`region-fade-${r.id}`}
+                className={styles.slider}
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={fade}
+                data-testid="region-fade"
+                onChange={(ev) => onFade(Number(ev.target.value))}
+                disabled={!r.still}
+              />
+              <span className={styles.fadeValue} data-testid="region-fade-value">
+                {shown}%
+              </span>
+            </div>
+            {r.still && (
+              <p className={styles.fadeHint}>
+                hold <Kbd>Space</Kbd> to swap · <Kbd>[</Kbd> <Kbd>]</Kbd> to nudge
+              </p>
+            )}
+          </div>
+
           {/* ── the drop, and the one button that commits it ──────────────────────────────── */}
           <div className={styles.snapRow}>
             <span
@@ -986,113 +1108,102 @@ function RegionDetail({
             </Button>
           </div>
 
-          {/* ── ⭐ THE FADE (his ask): the recording's own still, over the mosaic ───────────── */}
-          <div className={styles.fadeRow}>
-            <label className={styles.fadeLabel} htmlFor={`region-fade-${r.id}`}>
-              Recording overlay
+          {/* ⭐ R47 — THE EVIDENCE IS ONE LINE UNTIL YOU ASK FOR IT. Seven facts in a grid is the
+              screen's densest block and none of it is what you reach for while judging a
+              placement: the two numbers that matter read across the top, and the rest — the
+              still kind, the zoom, how far the last snap pulled, the local margin — is one
+              click away. ⛔ Nothing is DELETED behind the fold; it is all still on the page. */}
+          <div className={styles.evidence}>
+            {/* ⛔ The `?` is a sibling of the fold, NOT inside its <summary>. A <button> nested in
+                a <summary> is toggled by its own click, so the one explanation surface the app has
+                (R3.2 — focusable, Enter-able) would open the disclosure instead of explaining. */}
+            <div className={styles.evidenceLine}>
+              <span className={styles.fact}>
+                <span className={styles.factLabel}>ncc</span>
+                <span data-testid="region-detail-ncc">{r.ncc != null ? f4(r.ncc) : '—'}</span>
+              </span>
+              <span className={styles.fact}>
+                <span className={styles.factLabel}>margin</span>
+                <span data-testid="region-detail-margin" data-thin={r.margin_thin || undefined}>
+                  {r.margin != null ? f3(r.margin) : '—'}
+                </span>
+              </span>
               <Help
                 body={
-                  'The still Camea built from this recording, drawn inside the rectangle at the ' +
-                  'mosaic’s own scale. Slide it up and down: the cells and the electrode ' +
-                  'lattice should walk straight through the boundary. If they jump, the location ' +
-                  'is wrong however good the score looks.'
+                  'NCC — masked normalised cross-correlation of the still against the mosaic ' +
+                  'where it was placed: 1.000 is identical, 0 is unrelated. It is the server’s ' +
+                  'number on the real pixels, never a browser-side estimate.\n' +
+                  '\n' +
+                  'MARGIN — best minus runner-up across the WHOLE mosaic. It is the only evidence ' +
+                  'that the repeating electrode comb was beaten rather than merely outscored, so ' +
+                  'a big margin is worth more than a big NCC.'
                 }
               />
-            </label>
-            <input
-              id={`region-fade-${r.id}`}
-              className={styles.slider}
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={fade}
-              data-testid="region-fade"
-              onChange={(ev) => onFade(Number(ev.target.value))}
-              disabled={!r.still}
-            />
-            <span className={styles.fadeValue}>{fade}%</span>
-          </div>
+            </div>
 
-          <dl className={styles.dFacts}>
-            <Fact
-              label="Still"
-              help={
-                'Which projection of the recording won the match. median — the field at rest; ' +
-                'max — the brightest each pixel ever got, so only firing cells show; std — how ' +
-                'much each pixel varied. Whether the neurons are visible at rest is a property of ' +
-                'the preparation, so all of them are tried and the best is kept.'
-              }
-            >
-              <span data-testid="region-still-kind">{r.still_kind || '—'}</span>
-            </Fact>
-            <Fact
-              label="Zoom"
-              help={
-                'Multiply recording pixels by this to get mosaic pixels. MEASURED means it came ' +
-                "from the two lattices' pitches; searched means no lattice was readable and a " +
-                'ladder of factors was tried instead.'
-              }
-            >
-              <span data-testid="region-zoom" data-measured={zoom?.measured || undefined}>
-                {zoom
-                  ? `${zoom.scale.toFixed(3)}× · ${zoom.measured ? 'measured' : 'searched'}`
-                  : '—'}
-              </span>
-            </Fact>
-            <Fact
-              label="NCC"
-              help={
-                'Masked normalised cross-correlation of the still against the mosaic where it was ' +
-                'placed: 1.000 is identical, 0 is unrelated. It is the server’s number on the ' +
-                'real pixels, never a browser-side estimate.'
-              }
-            >
-              <span data-testid="region-detail-ncc">{r.ncc != null ? f4(r.ncc) : '—'}</span>
-            </Fact>
-            <Fact
-              label="Margin"
-              help={
-                'Best minus runner-up across the WHOLE mosaic. It is the only evidence that the ' +
-                'repeating electrode comb was beaten rather than merely outscored — a big margin ' +
-                'is worth more than a big NCC.'
-              }
-            >
-              <span data-testid="region-detail-margin" data-thin={r.margin_thin || undefined}>
-                {r.margin != null ? f3(r.margin) : '—'}
-              </span>
-            </Fact>
-            <Fact
-              label="Placed by"
-              help={
-                'machine — the locating search put it here. hand+snap — you dragged it and the ' +
-                'server re-searched a window around your drop. Either way the position on file is ' +
-                'one the server measured.'
-              }
-            >
-              <span data-testid="region-placed-by">{r.placed_by || '—'}</span>
-            </Fact>
-            {r.moved_px != null && (
-              <Fact
-                label="Snap moved"
-                help={'How far the last snap pulled the rectangle from where you dropped it.'}
-              >
-                <span data-testid="region-moved">{f2(r.moved_px)} px</span>
-              </Fact>
-            )}
-            {r.snap_margin != null && (
-              <Fact
-                label="Local margin"
-                help={
-                  'The runner-up INSIDE the snap window — a neighbouring shoulder, not a rival ' +
-                  'place on the mosaic. It says the snap settled cleanly; it does not replace the ' +
-                  'global margin above.'
-                }
-              >
-                <span data-testid="region-snap-margin">{f3(r.snap_margin)}</span>
-              </Fact>
-            )}
-          </dl>
+            <details className={styles.details}>
+              <summary className={styles.summary} data-testid="region-evidence-toggle">
+                everything measured
+              </summary>
+              <dl className={styles.dFacts}>
+                <Fact
+                  label="Still"
+                  help={
+                    'Which projection of the recording won the match. median — the field at rest; ' +
+                    'max — the brightest each pixel ever got, so only firing cells show; std — how ' +
+                    'much each pixel varied. Whether the neurons are visible at rest is a property ' +
+                    'of the preparation, so all of them are tried and the best is kept.'
+                  }
+                >
+                  <span data-testid="region-still-kind">{r.still_kind || '—'}</span>
+                </Fact>
+                <Fact
+                  label="Zoom"
+                  help={
+                    'Multiply recording pixels by this to get mosaic pixels. MEASURED means it ' +
+                    "came from the two lattices' pitches; searched means no lattice was readable " +
+                    'and a ladder of factors was tried instead.'
+                  }
+                >
+                  <span data-testid="region-zoom" data-measured={zoom?.measured || undefined}>
+                    {zoom
+                      ? `${zoom.scale.toFixed(3)}× · ${zoom.measured ? 'measured' : 'searched'}`
+                      : '—'}
+                  </span>
+                </Fact>
+                <Fact
+                  label="Placed by"
+                  help={
+                    'machine — the locating search put it here. hand+snap — you dragged it and ' +
+                    'the server re-searched a window around your drop. Either way the position on ' +
+                    'file is one the server measured.'
+                  }
+                >
+                  <span data-testid="region-placed-by">{r.placed_by || '—'}</span>
+                </Fact>
+                {r.moved_px != null && (
+                  <Fact
+                    label="Snap moved"
+                    help={'How far the last snap pulled the rectangle from where you dropped it.'}
+                  >
+                    <span data-testid="region-moved">{f2(r.moved_px)} px</span>
+                  </Fact>
+                )}
+                {r.snap_margin != null && (
+                  <Fact
+                    label="Local margin"
+                    help={
+                      'The runner-up INSIDE the snap window — a neighbouring shoulder, not a rival ' +
+                      'place on the mosaic. It says the snap settled cleanly; it does not replace ' +
+                      'the global margin above.'
+                    }
+                  >
+                    <span data-testid="region-snap-margin">{f3(r.snap_margin)}</span>
+                  </Fact>
+                )}
+              </dl>
+            </details>
+          </div>
 
           {/* ── ⭐ 4 · THE ELECTRODES UNDERNEATH — the answer ───────────────────────────────── */}
           <div className={styles.electrodes} data-testid="region-electrode-block">
@@ -1116,20 +1227,24 @@ function RegionDetail({
                       }
                     />
                   </span>
-                  {ids.length > 0 && (
-                    <span className={styles.eRange} data-testid="region-electrode-range">
-                      {ids[0]} … {ids[ids.length - 1]}
-                    </span>
-                  )}
-                  <span className={styles.eSplit} data-testid="region-electrode-split">
-                    {e.detected} detected · {e.inferred} inferred
-                  </span>
                 </div>
+                {/* ⭐ R47 — THE COUNT IS THE ANSWER; the breakdown is the working. The rail shows
+                    how many electrodes this recording covers, and the span of ids, the seen /
+                    inferred split and every id itself live one click down. ⛔ Still all present —
+                    a number this feature exists to produce is never hidden, only folded. */}
                 {ids.length > 0 && (
                   <details className={styles.details}>
                     <summary className={styles.summary} data-testid="region-electrode-list-toggle">
-                      all {ids.length} ids
+                      which ones
                     </summary>
+                    <div className={styles.eBreakdown}>
+                      <span className={styles.eRange} data-testid="region-electrode-range">
+                        {ids[0]} … {ids[ids.length - 1]}
+                      </span>
+                      <span className={styles.eSplit} data-testid="region-electrode-split">
+                        {e.detected} detected · {e.inferred} inferred
+                      </span>
+                    </div>
                     <div className={styles.ids} data-testid="region-electrode-list">
                       {ids.join('  ')}
                     </div>

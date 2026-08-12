@@ -12,10 +12,10 @@
  * everywhere, and two copies of a progress bar drift.
  */
 
+/* ⭐ R47 — the step IS the frame now (picture + rail), so it takes the height it is given. */
 .step {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  height: 100%;
+  min-height: 0;
 }
 
 /* ── add a recording ──────────────────────────────────────────────────────── */
@@ -76,16 +76,26 @@
   font: 500 var(--fs-readout) / 1.4 var(--font-mono);
 }
 
+/* ⭐ R47 — two lines on a rail: name/state/delete across the top, the numbers beneath. Three facts
+   and a button on ONE line inside a 360 px column is a jumble, and the row is how he picks which
+   recording is under judgement — it has to stay readable. */
 .item {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 5px;
   padding: 7px 10px;
   border: 1px solid var(--border);
   border-left: 3px solid var(--unverified);
   border-radius: var(--radius);
   background: var(--bg-card);
   cursor: pointer;
+}
+
+.itemHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .item:hover {
@@ -150,8 +160,8 @@
 
 .rowFacts {
   display: flex;
-  flex: none;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 4px 14px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: var(--fs-readout);
@@ -246,7 +256,60 @@
   font-weight: 700;
 }
 
+/* ── ⭐ R47 · THE EVIDENCE, FOLDED ─────────────────────────────────────────── */
+/* Two numbers on the rail, the rest of the working one click down. */
+
+.evidence {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+/* The two numbers that decide a placement, always readable — and the `?` beside them, OUTSIDE the
+   disclosure so pressing it explains instead of folding. */
+.evidenceLine {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.evidenceLine .fact {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-readout);
+  color: var(--data);
+}
+
+.evidence .dFacts {
+  margin-top: 10px;
+}
+
 /* ── the fade ─────────────────────────────────────────────────────────────── */
+/* ⭐ R47 — the block he reaches for. It sits at the top of the selected region's panel and lights
+   up while Space is held, so the swap is visibly a mode and not a mystery. */
+
+.fadeBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.fadeBlock[data-flash] {
+  border-color: var(--accent);
+}
+
+.fadeHint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  color: var(--text-faint);
+  font: 500 var(--fs-micro) / 1.6 var(--font-sans);
+}
 
 .fadeRow {
   display: flex;
@@ -266,13 +329,13 @@
 
 .slider {
   flex: 1;
-  min-width: 120px;
-  max-width: 320px;
+  min-width: 80px;
   accent-color: var(--accent);
 }
 
 .fadeValue {
   min-width: 42px;
+  text-align: right;
   font: 600 var(--fs-readout) / 1 var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--data);
@@ -313,6 +376,14 @@
   font: 500 var(--fs-readout) / 1.3 var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
+}
+
+/* The working behind the count (R47): the span of ids and the seen/inferred split, folded. */
+.eBreakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 6px 0 2px;
 }
 
 .details {

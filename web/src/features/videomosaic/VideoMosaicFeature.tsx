@@ -37,8 +37,8 @@ import type {
   ElectrodeMapPayload,
   VideoMosaicDocument,
 } from '../../api';
-import { Button, ButtonLink, Panel, LiveWarning } from '../../design';
-import { OutputsPanel } from '../outputs/OutputsPanel';
+import { Button, ButtonLink, Help, Panel, LiveWarning } from '../../design';
+import { OutputsDrawer } from '../outputs/OutputsDrawer';
 import { CoverageChoice } from '../electrodes/CoverageChoice';
 import { useCoverageHelp } from '../electrodes/device';
 import { ElectrodePanel, type ElectrodeSelection } from '../electrodes/ElectrodePanel';
@@ -47,6 +47,7 @@ import { fmtDuration, fmtFps } from './format';
 import { PipelineNav, PIPELINE_STEPS, type PipelineStepId } from './PipelineNav';
 import { PreviewViewer } from './PreviewViewer';
 import { RegionsStep } from './RegionsStep';
+import { WorkFrame } from './WorkFrame';
 import { useToast } from '../../app';
 import styles from './VideoMosaicFeature.module.css';
 
@@ -101,6 +102,8 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  // ⭐ R47 — the outputs panel is a drawer now, not three copies stacked under three steps.
+  const [filesOpen, setFilesOpen] = useState(false);
 
   const job = useJob(jobId);
   const running = jobId != null && !job.isTerminal;
@@ -358,12 +361,26 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
   return (
     <div className={styles.pane} data-testid="videomosaic">
       <header className={styles.head}>
-        <h1 className={styles.h1}>{summary.name}</h1>
-        {src && (
-          <p className={styles.source} data-testid="vm-source">
-            {src.name} · {src.width}×{src.height} · {fmtFps(src.fps)} fps ·{' '}
-            {fmtDuration(src.duration_s)}
-          </p>
+        <div className={styles.headText}>
+          <h1 className={styles.h1}>{summary.name}</h1>
+          {src && (
+            <p className={styles.source} data-testid="vm-source">
+              {src.name} · {src.width}×{src.height} · {fmtFps(src.fps)} fps ·{' '}
+              {fmtDuration(src.duration_s)}
+            </p>
+          )}
+        </div>
+        {/* ⭐ R44 stands — the app is still the only door to project data. R47 just makes it ONE
+            door, reachable from every step, in the way on none of them. */}
+        {view && (
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="vm-files"
+            onClick={() => setFilesOpen(true)}
+          >
+            Files
+          </Button>
         )}
       </header>
 
@@ -371,7 +388,7 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
 
       {/* ── 1 · SURVEY — the video the mosaic is built from ────────────────────────────────── */}
       {current === 'survey' && (
-        <div data-testid="vm-step-survey">
+        <div className={styles.stepScroll} data-testid="vm-step-survey">
           <Panel
             title="Survey recording"
             help={
@@ -387,12 +404,14 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
                   <span className={styles.factLabel}>file</span>
                   {src.name}
                 </span>
+                {/* "frame" beside "frames" read as the same word twice — one is a SIZE and the
+                    other a COUNT, and at a glance neither said which. */}
                 <span className={styles.fact}>
-                  <span className={styles.factLabel}>frame</span>
+                  <span className={styles.factLabel}>frame size</span>
                   {src.width}×{src.height}
                 </span>
                 <span className={styles.fact}>
-                  <span className={styles.factLabel}>frames</span>
+                  <span className={styles.factLabel}>frame count</span>
                   {src.n_frames}
                 </span>
                 <span className={styles.fact}>
@@ -426,9 +445,15 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
       )}
 
       {/* ── 2 · MOSAIC — build it, then look at it ─────────────────────────────────────────── */}
+      {/* ⭐ R47 — once it is built, the mosaic IS the screen: the picture takes the frame and the
+          stats, the rebuild and the way on move to the rail beside it. Before that there is no
+          picture to frame, so the build button and the progress bar keep their centred column. */}
       {current === 'mosaic' && (
-        <div data-testid="vm-step-mosaic">
-          {buildError && (
+        <div
+          className={!running && view ? styles.stepFill : styles.stepScroll}
+          data-testid="vm-step-mosaic"
+        >
+          {!running && !view && buildError && (
             <LiveWarning variant="loud" className={styles.block}>
               <strong>Build error.</strong> {buildError}
             </LiveWarning>
@@ -444,6 +469,19 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
               >
                 Build mosaic
               </Button>
+              {/* One button and one `?` — R3's shape exactly. The screen does not lecture, but the
+                  answer to "what is about to happen?" is a hover away for anyone who wants it. */}
+              <Help
+                body={
+                  'Stitches the survey video into one picture of the whole chip. Camea picks the ' +
+                  'frames worth keeping, registers each against its neighbours, and renders them ' +
+                  'onto a single canvas.\n' +
+                  '\n' +
+                  'Nothing is placed by hand and nothing is asked of you while it runs — it takes ' +
+                  'minutes on a long recording, reports where it has got to, and can be ' +
+                  'cancelled. You can rebuild afterwards as often as you like.'
+                }
+              />
             </div>
           )}
 
@@ -483,164 +521,201 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
           )}
 
           {!running && view && (
-            <>
-              <StatsStrip doc={doc} view={view} />
-              <PreviewViewer
-                analysisId={analysisId}
-                builtAt={view.builtAt}
-                canvas={view.canvas}
-                payload={null}
-                selection={null}
-                showGrid={false}
-              />
-              <div className={styles.builtActions}>
-                <Button variant="ghost" onClick={() => void build()} data-testid="vm-rebuild">
-                  Rebuild
-                </Button>
-                {/* The whole mosaic, at full canvas resolution — the browser streams it to disk
-                    without decoding, so this costs the same however big the canvas gets. */}
-                <ButtonLink
-                  variant="ghost"
-                  href={videoOutputUrl(analysisId, 'mosaic.png', view.builtAt)}
-                  download={`${downloadName(summary.name)}.png`}
-                  data-testid="vm-download"
-                >
-                  Download full resolution
-                  {view.canvas && (
-                    <span className={styles.downloadSize}>
-                      {view.canvas.w}×{view.canvas.h}
-                    </span>
+            <WorkFrame
+              picture={
+                <PreviewViewer
+                  analysisId={analysisId}
+                  builtAt={view.builtAt}
+                  canvas={view.canvas}
+                  payload={null}
+                  selection={null}
+                  showGrid={false}
+                />
+              }
+              rail={
+                <>
+                  {buildError && (
+                    <LiveWarning variant="loud">
+                      <strong>Build error.</strong> {buildError}
+                    </LiveWarning>
                   )}
-                </ButtonLink>
-                <Button
-                  variant="primary"
-                  onClick={() => setStep('electrodes')}
-                  data-testid="vm-to-electrodes"
-                >
-                  Map electrodes
-                </Button>
-              </div>
-            </>
+                  <Panel
+                    title="The build"
+                    help={
+                      'What the stitcher did with the survey video. keyframes — how many frames it ' +
+                      'kept as tiles, and how many it could not place. links ok / rejected — pairs ' +
+                      'of tiles it tried to register against each other; a rejected link is one ' +
+                      'whose match was not good enough to trust, which is a refusal, not a failure. ' +
+                      'canvas — the size of the finished picture in pixels. coverage — how much of ' +
+                      'that canvas actually has pixels on it.'
+                    }
+                  >
+                    <StatsStrip doc={doc} view={view} />
+                  </Panel>
+                  <div className={styles.railActions}>
+                    <Button
+                      variant="primary"
+                      onClick={() => setStep('electrodes')}
+                      data-testid="vm-to-electrodes"
+                    >
+                      Map electrodes
+                    </Button>
+                    {/* The whole mosaic, at full canvas resolution — the browser streams it to
+                        disk without decoding, so this costs the same however big it gets. */}
+                    <ButtonLink
+                      variant="ghost"
+                      href={videoOutputUrl(analysisId, 'mosaic.png', view.builtAt)}
+                      download={`${downloadName(summary.name)}.png`}
+                      data-testid="vm-download"
+                    >
+                      Download full resolution
+                      {view.canvas && (
+                        <span className={styles.downloadSize}>
+                          {view.canvas.w}×{view.canvas.h}
+                        </span>
+                      )}
+                    </ButtonLink>
+                    <Button variant="ghost" onClick={() => void build()} data-testid="vm-rebuild">
+                      Rebuild
+                    </Button>
+                  </div>
+                </>
+              }
+            />
           )}
         </div>
       )}
 
       {/* ── 3 · ELECTRODES — number the lattice, then click it ─────────────────────────────── */}
       {current === 'electrodes' && view && (
-        <div data-testid="vm-step-electrodes">
-          <PreviewViewer
-            analysisId={analysisId}
-            builtAt={view.builtAt}
-            canvas={view.canvas}
-            payload={emap}
-            selection={sel}
-            onPick={(x, y, scale) => {
-              // A hit selects; a miss DESELECTS — a wrong highlight must not linger (his rule).
-              // The zoom goes with the click: the tolerance is a screen distance (R45.7).
-              const hit = eIndex ? lookupElectrode(eIndex, x, y, scale) : null;
-              setSel(hit ? { hit, clickX: x, clickY: y } : null);
-            }}
-          />
+        <div className={styles.stepFill} data-testid="vm-step-electrodes">
+          <WorkFrame
+            picture={
+              <PreviewViewer
+                analysisId={analysisId}
+                builtAt={view.builtAt}
+                canvas={view.canvas}
+                payload={emap}
+                selection={sel}
+                onPick={(x, y, scale) => {
+                  // A hit selects; a miss DESELECTS — a wrong highlight must not linger (his
+                  // rule). The zoom goes with the click: the tolerance is a screen distance (R45.7).
+                  const hit = eIndex ? lookupElectrode(eIndex, x, y, scale) : null;
+                  setSel(hit ? { hit, clickX: x, clickY: y } : null);
+                }}
+              />
+            }
+            rail={
+              <>
+                {mapping && (
+                  <div data-testid="vm-electrodes-progress">
+                    <Panel title="Mapping electrodes" className={styles.progress}>
+                      <div className={styles.barWell}>
+                        <div
+                          className={styles.bar}
+                          style={{
+                            transform: `scaleX(${
+                              Math.max(2, Math.min(100, mapJob.pct ?? 0)) / 100
+                            })`,
+                          }}
+                        />
+                      </div>
+                      <div className={styles.progressRow}>
+                        <span className={styles.phase}>{mapJob.phase ?? 'starting…'}</span>
+                        <span className={styles.eta}>{mapJob.etaText ?? ''}</span>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => void cancelEmap()}
+                          data-testid="vm-electrodes-cancel"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </Panel>
+                  </div>
+                )}
 
-          {mapping && (
-            <div data-testid="vm-electrodes-progress">
-              <Panel title="Mapping electrodes" className={styles.progress}>
-                <div className={styles.barWell}>
-                  <div
-                    className={styles.bar}
-                    style={{
-                      transform: `scaleX(${Math.max(2, Math.min(100, mapJob.pct ?? 0)) / 100})`,
-                    }}
+                {/* ⭐ **THE REFUSAL IS SHOWN WHOLE** (R45.8 strict). Under "whole chip imaged" the
+                    fit ends in a map or a REFUSAL, and the refusal is the useful half: it names the
+                    shape it found, the shape the device wants, and tells him to answer "part of the
+                    chip" if that is what this mosaic is. So it renders verbatim — never trimmed to
+                    a code, never a generic "mapping failed" — and the coverage question stays on
+                    the page beneath it, so the fix he is being told to make is one click away. */}
+                {mapError && (
+                  <div data-testid="vm-electrodes-map-error">
+                    <LiveWarning variant="loud">
+                      <strong>Electrode mapping error.</strong> {mapError}
+                    </LiveWarning>
+                  </div>
+                )}
+
+                {/* The way on comes FIRST on the rail once the map is good — R47: the next thing to
+                    do should not be below a readout you have to scroll past. */}
+                {emap && !emap.stale && (
+                  <div className={styles.railActions}>
+                    <Button
+                      variant="primary"
+                      onClick={() => setStep('regions')}
+                      data-testid="vm-to-regions"
+                    >
+                      Locate recordings
+                    </Button>
+                  </div>
+                )}
+
+                {emap && (
+                  <ElectrodePanel
+                    payload={emap}
+                    selection={sel}
+                    stale={emap.stale}
+                    coverage={
+                      <CoverageChoice value={coverage} onChange={setCoverage} disabled={mapping} />
+                    }
+                    action={
+                      <Button
+                        variant={emap.stale ? 'primary' : 'ghost'}
+                        size="sm"
+                        data-testid="vm-map-electrodes"
+                        disabled={mapping || running || coverage == null}
+                        onClick={() => void startEmap()}
+                      >
+                        Re-run
+                      </Button>
+                    }
                   />
-                </div>
-                <div className={styles.progressRow}>
-                  <span className={styles.phase}>{mapJob.phase ?? 'starting…'}</span>
-                  <span className={styles.eta}>{mapJob.etaText ?? ''}</span>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => void cancelEmap()}
-                    data-testid="vm-electrodes-cancel"
+                )}
+
+                {/* ⭐ THE QUESTION COMES FIRST (R45.8). It has its own panel rather than a bare
+                    button in the action row, because the two options need room to say what they
+                    cost. */}
+                {emapMissing && !mapping && (
+                  <Panel
+                    title="Map electrodes"
+                    help={
+                      'Fits the MEA lattice to the built mosaic — pitch, rotation and phase ' +
+                      'measured from THESE pixels, never assumed. Afterwards a click on the ' +
+                      'picture identifies the electrode under it.\n' +
+                      '\n' +
+                      coverageHelp
+                    }
                   >
-                    Cancel
-                  </Button>
-                </div>
-              </Panel>
-            </div>
-          )}
-
-          {/* ⭐ **THE REFUSAL IS SHOWN WHOLE** (R45.8 strict). Under "whole chip imaged" the fit
-              ends in a map or a REFUSAL, and the refusal is the useful half: it names the shape it
-              found, the shape the device wants, and tells him to answer "part of the chip" if that
-              is what this mosaic is. So it renders verbatim — never trimmed to a code, never a
-              generic "mapping failed" — and the coverage question stays on the page beneath it, so
-              the fix he is being told to make is one click away. */}
-          {mapError && (
-            <div data-testid="vm-electrodes-map-error">
-              <LiveWarning variant="loud">
-                <strong>Electrode mapping error.</strong> {mapError}
-              </LiveWarning>
-            </div>
-          )}
-
-          {emap && (
-            <ElectrodePanel
-              payload={emap}
-              selection={sel}
-              stale={emap.stale}
-              coverage={
-                <CoverageChoice value={coverage} onChange={setCoverage} disabled={mapping} />
-              }
-              action={
-                <Button
-                  variant={emap.stale ? 'primary' : 'ghost'}
-                  size="sm"
-                  data-testid="vm-map-electrodes"
-                  disabled={mapping || running || coverage == null}
-                  onClick={() => void startEmap()}
-                >
-                  Re-run
-                </Button>
-              }
-            />
-          )}
-
-          {/* ⭐ THE QUESTION COMES FIRST (R45.8). It has its own panel rather than a bare button in
-              the action row, because the two options need room to say what they cost. */}
-          {emapMissing && !mapping && (
-            <Panel
-              title="Map electrodes"
-              help={
-                'Fits the MEA lattice to the built mosaic — pitch, rotation and phase measured from THESE pixels, never assumed. Afterwards a click on the preview identifies the electrode under it.\n' +
-                '\n' +
-                coverageHelp
-              }
-            >
-              <CoverageChoice value={coverage} onChange={setCoverage} disabled={mapping} />
-              <div className={styles.mapRow}>
-                <Button
-                  variant="primary"
-                  onClick={() => void startEmap()}
-                  data-testid="vm-map-electrodes"
-                  disabled={mapping || running || coverage == null}
-                >
-                  Map electrodes
-                </Button>
-              </div>
-            </Panel>
-          )}
-
-          {emap && !emap.stale && (
-            <div className={styles.builtActions}>
-              <Button
-                variant="primary"
-                onClick={() => setStep('regions')}
-                data-testid="vm-to-regions"
-              >
-                Locate recordings
-              </Button>
-            </div>
-          )}
+                    <CoverageChoice value={coverage} onChange={setCoverage} disabled={mapping} />
+                    <div className={styles.mapRow}>
+                      <Button
+                        variant="primary"
+                        onClick={() => void startEmap()}
+                        data-testid="vm-map-electrodes"
+                        disabled={mapping || running || coverage == null}
+                      >
+                        Map electrodes
+                      </Button>
+                    </div>
+                  </Panel>
+                )}
+              </>
+            }
+          />
         </div>
       )}
 
@@ -655,10 +730,16 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
         />
       )}
 
-      {/* ⭐ Browse what this project built, and take a copy of what you want (R44). The SAME panel
-          every feature mounts — not a copy of it. */}
-      {view && current !== 'survey' && (
-        <OutputsPanel analysisId={analysisId} version={view.builtAt} title="Files" />
+      {/* ⭐ Browse what this project built, and take a copy of what you want (R44) — the SAME panel
+          every feature mounts, not a copy of it. R47 moved it off the bottom of three steps and
+          behind the header's Files button: one door, asked for. */}
+      {view && (
+        <OutputsDrawer
+          analysisId={analysisId}
+          version={view.builtAt}
+          open={filesOpen}
+          onClose={() => setFilesOpen(false)}
+        />
       )}
     </div>
   );

@@ -1301,6 +1301,55 @@ top of it. ⛔ **Camea stops there.** No MEA voltage ingestion, no trace pairing
 
 ---
 
+### R47 — ⭐ THE TOOLS LIVE BESIDE THE PICTURE *(2026-08-12)*
+**His words:** *"right now it's really annoying because it's hard to check whether the region placed
+correctly, because the opacity slider is hard to access — the user has to scroll all the way down.
+I need all the tools to be accessible while the user is looking at the image."* And, the same day:
+*"make each screen less cluttered and more intuitive. use hover tool tips for explanations."*
+
+⭐ **THE CAUSE WAS STRUCTURAL, NOT COSMETIC.** Every picture step was a 1100 px scrolling column
+with a 68 vh viewer on top and its controls a screenful below. Sliding the overlay up and down is
+*how a placement is checked* — the cells and the lattice either walk through the rectangle's
+boundary or they jump — so the control and the pixels it tests have to be on screen at the same
+instant. A layout that separates them does not make the judgement harder; it makes it *unavailable*.
+
+**Statements that can fail:**
+- R47.1 ⭐ **PICTURE LEFT, TOOLS RIGHT, AND THE PAGE DOES NOT SCROLL.** The three picture steps
+  (Mosaic · Electrodes · Regions) mount one `WorkFrame`: the stage takes the frame, the rail is
+  clamped to `clamp(320px, 26vw, 420px)`, and **the rail is the only scroller on the screen**. Not
+  "scrolled to the top" — the document has *no* scroll to do, so a tool cannot be scrolled away
+  from. Below 1000 px the rail drops beneath the picture rather than crushing it.
+- R47.2 ⭐ **THE FOUR TOOLS ARE ALWAYS IN THE VIEWPORT**, and their order is his: which recording ·
+  its signature (Confirm/Unconfirm) · the overlay slider · Snap. *Add a recording* is a
+  once-per-recording act and waits at the bottom of the rail.
+- R47.3 ⭐ **HOLD `Space` TO SWAP THE TWO PICTURES.** Held, not toggled — the eye never leaves the
+  boundary. It drives the overlay to **the far end from where the slider sits** (to 100 % when it is
+  below 50, to 0 % when at or above), because a key that always went to full would do nothing at
+  exactly the moment he has pushed the slider up. ⛔ **Releasing restores the slider** — a hold is
+  not an edit — and a `blur` releases it too, or an Alt-Tab mid-hold would strand the overlay on.
+  `[` and `]` nudge by 10. The rendered value drives the `<img>` mount guard, never `fade`, or a
+  slider at 0 would leave nothing to flash.
+- R47.4 **THE PIPELINE BAR SAYS WHAT EACH STEP IS FOR** — *check the video · build the picture ·
+  number the pads · place your recordings*. R3 strips explanations off every screen and is right to,
+  but it left nothing saying what the screen was *for*: a name is not a job. ⛔ Not a `?` — a `Help`
+  trigger is a `<button>` and the step is a `<button>`.
+- R47.5 **THE EVIDENCE IS ONE LINE UNTIL ASKED.** NCC and margin read on the rail; the still kind,
+  the zoom, `placed_by`, the snap distance and the local margin fold behind a disclosure. The
+  electrode **count** stays on the rail; the id span, the detected/inferred split and every id fold
+  under *which ones*. ⛔ **Nothing is deleted** — a number this feature exists to produce is folded,
+  never removed.
+- R47.6 **FILES IS ONE DOOR, OPENED BY ASKING.** `OutputsPanel` was mounted under three steps at
+  once; it is now a drawer behind one header button, portalled to `<body>` (the pane is
+  `overflow: hidden`), closed by Escape or the scrim, returning focus to the button. **R44 is
+  untouched** — the app is still the only way to browse project data, it is just not three doors.
+- R47.7 🔴 **THE LIVE WARNINGS STAY ON THE PAGE.** UNCERTAIN, a searched zoom, a turned lattice, a
+  stale mosaic and a refusal are about *current state*, not explanations — R3.8 governs them and no
+  amount of decluttering may fold one behind a `?` or a disclosure.
+
+*Backed by `web/tests/e2e/regions.spec.ts` (R47.1–R47.5), which owns the pipeline stub these need.*
+
+---
+
 ## 2. THE SIX STEPS
 
 The step header is a progress indicator, not a menu (R4.2). The exact gate is in R4.3.

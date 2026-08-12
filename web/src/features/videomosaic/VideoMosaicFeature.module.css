@@ -1,13 +1,40 @@
 /* THE VIDEOMOSAIC FEATURE — one screen. The progress block mirrors PlaceStep's (same bar, same
    mono readouts) so a job looks like a job everywhere; the facts row mirrors the receipts'. */
 
+/* ⭐ R47 — THE PANE IS A FRAME, NOT A COLUMN. The picture fills the window and the page itself
+   never scrolls: header · pipeline · step area, with the step area taking whatever is left. Only
+   the rail inside `.work` scrolls, which is the whole point — a tool that can be scrolled past is
+   a tool that is not there when you are looking at the picture.
+   The height chain above is already in place: base.css gives html/body/#root 100%, AppShell's
+   `.main` is the flex remainder. This just claims it. */
 .pane {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 28px 32px 48px;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px 20px;
+  overflow: hidden;
+}
+
+/* A step with no picture (Survey, an unbuilt Mosaic) keeps a readable measure and scrolls itself —
+   five facts must not stretch across a 32-inch monitor. */
+.stepScroll {
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  padding-bottom: 24px;
+}
+
+/* A step whose subject IS the picture fills the frame instead. */
+.stepFill {
+  min-height: 0;
+  height: 100%;
 }
 
 .loading {
@@ -20,8 +47,22 @@
 
 .head {
   display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.headText {
+  display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+}
+
+/* The Files button sits at the far end of the header — reachable from every step, in the way on
+   none of them (R47). */
+.head > :last-child:not(.headText) {
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .h1 {
@@ -45,10 +86,12 @@
   margin-bottom: 4px;
 }
 
-/* ── not built yet: one button, no explainer ─────────────────────────────── */
+/* ── not built yet: one button, and a `?` for anyone who wants it (R3) ───── */
 .buildPanel {
   display: flex;
+  align-items: center;
   justify-content: center;
+  gap: 10px;
   padding: 56px 0;
   border: 1px dashed var(--border);
   border-radius: var(--radius-lg);
@@ -135,18 +178,65 @@
   letter-spacing: 0.04em;
 }
 
+/* ── ⭐ R47 · THE WORK FRAME — picture left, tools right ──────────────────────
+   The rail is the only thing on the screen that scrolls. It is clamped rather than fixed so a
+   wide monitor spends its pixels on the picture, which is what is actually being judged. */
+.work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 420px);
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+
+.stage {
+  min-width: 0;
+  min-height: 0;
+}
+
+.rail {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 2px; /* room for the scrollbar so panel borders are not clipped */
+  padding-bottom: 24px;
+}
+
+/* Too narrow for two panes: the rail drops beneath the picture rather than crushing it. Both
+   panes then scroll together, which is the old behaviour — degraded, not broken. */
+@media (max-width: 1000px) {
+  .work {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(280px, 55%) auto;
+    overflow-y: auto;
+  }
+
+  .rail {
+    overflow-y: visible;
+  }
+}
+
 /* ── the preview: wheel to zoom, drag to pan; a click identifies once the map exists ── */
 .viewerWrap {
   position: relative;
+  height: 100%;
+  min-height: 0;
 }
 
+/* ⭐ R47 — the stage takes the frame it is given (it was a flat 68vh while this screen was a
+   scrolling column). `PreviewViewer` measures itself with a ResizeObserver, so a bigger box just
+   fits bigger — no camera maths changes. */
 .viewer {
   position: relative;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-inset);
   overflow: hidden;
-  height: 68vh;
+  height: 100%;
+  min-height: 240px;
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -289,6 +379,16 @@
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+/* On a rail the actions stack: it is 320–420 px wide, and three buttons in a row there wrap into
+   an unreadable jumble. The primary one is first, so the way on is the first thing the eye lands
+   on when it leaves the picture. */
+.railActions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
 }
 
 /* The Map button sits UNDER the coverage question (R45.8) — it is the answer's consequence. */
