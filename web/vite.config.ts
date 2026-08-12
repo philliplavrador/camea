@@ -41,7 +41,23 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
-    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+    // ⭐ `src/legacy/**` is the RETIRED snapshot mosaic builder (moved out of `src/features/mosaic`
+    // on 2026-08-11 — see `src/legacy/mosaic/MosaicFeature.tsx` and `src/camea/legacy/__init__.py`).
+    // Its 11 unit suites are EXCLUDED, not deleted: the feature still ships and still opens every
+    // project already built with it, but nobody is changing it, so it stops costing the default run.
+    // `CAMEA_LEGACY` is the opt-in — the frontend's answer to `uv run pytest -m legacy`:
+    //     npm test                                   -> skips them
+    //     $env:CAMEA_LEGACY=1; npx vitest run        -> runs EVERYTHING, legacy included (PowerShell)
+    //     CAMEA_LEGACY=1 npx vitest run              -> the same, from bash
+    // ⚠️ A bare `vitest run src/legacy` is NOT enough: a CLI path does not override a config
+    // `exclude`, so the env var is the only switch that works.
+    // ⛔ Do not delete the files. If the snapshot task ever comes back, drop this one entry.
+    exclude: [
+      'e2e/**',
+      'node_modules/**',
+      'dist/**',
+      ...(process.env.CAMEA_LEGACY ? [] : ['src/legacy/**']),
+    ],
     css: false,
   },
 });

@@ -21,7 +21,11 @@ async function toVideoStep(page: Page, name: string): Promise<void> {
   await page.getByTestId('new-project').click();
   await page.getByTestId('np-name').fill(name);
   await page.getByTestId('np-name').press('Enter');
-  await page.locator('[data-testid="task-card"][data-task="videomosaic"]').click();
+  // ⭐ The TASK step is skipped while video is the only task (the snapshot builder was retired
+  // 2026-08-11 — see `NewProjectFlow.TASKS`). Click the card only when it is actually offered, so
+  // this helper keeps working in both worlds and needs no edit when a second task returns.
+  const card = page.locator('[data-testid="task-card"][data-task="videomosaic"]');
+  if ((await card.count()) > 0) await card.click();
   await expect(page.getByTestId('np-video-path')).toBeVisible({ timeout: SHORT });
 }
 
