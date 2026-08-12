@@ -23,6 +23,14 @@ import { FIXTURE, PATHS, SHORT } from './fixture';
 export const STEPS = ['load', 'range', 'screen', 'place', 'sweep', 'mosaic', 'electrodes'] as const;
 export type StepName = (typeof STEPS)[number];
 
+/**
+ * ⭐ THE VIDEO PIPELINE (R46.1) — *"it should be all one pipeline with a progress bar at the top"*.
+ * A DIFFERENT set from the snapshot wizard's `STEPS` above, with its own nav (`TID.pipelineStep`):
+ * a step is LOCKED until the one before it is done, and the gate is read off the DOCUMENT.
+ */
+export const PIPELINE = ['survey', 'mosaic', 'electrodes', 'regions'] as const;
+export type PipelineStepName = (typeof PIPELINE)[number];
+
 /** The frozen backend routes the specs inspect or stub. (docs/openapi.json — never hand-write a body.) */
 export const ROUTES = {
   datasets: '/api/datasets',
@@ -50,6 +58,9 @@ export const ROUTES = {
   regions: '/api/videomosaic/regions', // POST …/locate and …/snap → 202 job (kind `locate_region`);
   //                                     PATCH renames/confirms. GET …/{id}/regions → the list +
   //                                     `stale`. R46 — where each fixed-field recording sits.
+  videomosaic: '/api/videomosaic', //    the video feature's prefix, for the PER-PROJECT reads the
+  //                                     Regions spec stubs: `…/{id}/regions`, `…/{id}/electrodes`,
+  //                                     `…/{id}/outputs/{name}` (the preview the camera draws).
 } as const;
 
 /** THE TESTID REGISTRY. Grouped by screen; see README.md for the human-readable table. */
@@ -293,6 +304,9 @@ export const TID = {
   // Survey → Mosaic → Electrodes → Regions. A step is LOCKED until the one before it is done, and
   // the gate is read off the DOCUMENT, never off where the user has clicked.
   pipelineSteps: 'pipeline-steps', //        the <ol>; aria-label "Pipeline steps"
+  pipelineStep: (n: PipelineStepName) => `pipeline-step-${n}`, // the nav BUTTONS (the `vm-step-*`
+  //                                         ids below are the step BODIES). Each carries
+  //                                         data-locked, data-active, aria-current — R46.1.
   vmStepSurvey: 'vm-step-survey',
   vmStepMosaic: 'vm-step-mosaic',
   vmStepElectrodes: 'vm-step-electrodes',
