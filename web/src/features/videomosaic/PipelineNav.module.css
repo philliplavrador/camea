@@ -19,7 +19,7 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 5px 12px;
+  padding: 5px 12px 6px;
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
   background: transparent;
@@ -36,6 +36,33 @@
 .step:hover {
   background: var(--bg-card);
   color: var(--text);
+}
+
+/* ⭐ R47 — the name over the job. The action line is quiet by default and lifts on the current
+   step, so a glance at the nav answers "where am I and what am I meant to do" at once. */
+.text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+}
+
+.action {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1.15;
+  color: var(--text-faint);
+  text-transform: lowercase;
+}
+
+.on .action {
+  color: var(--accent);
+}
+
+.done .action {
+  color: var(--text-faint);
 }
 
 .n {
@@ -57,7 +84,11 @@
   color: #06211a;
 }
 
-.on {
+/* ⚠️ `:hover` out-specifies a bare class, so without the second selector here sweeping the mouse
+   across the bar ERASES the "you are here" pill — on the one control whose entire job is to say
+   where you are. */
+.on,
+.on:hover {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--text);
 }
