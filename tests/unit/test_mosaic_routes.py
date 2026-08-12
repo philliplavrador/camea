@@ -30,7 +30,13 @@ from fastapi.testclient import TestClient
 from camea.core.dataset import Dataset, LogEntry
 from camea.core.frames import Tone, FrameStore
 from camea.core.jobs import JOBS
-from camea.features.mosaic import routes
+from camea.legacy.mosaic import routes
+
+# ⭐ RETIRED, NOT REMOVED (2026-08-11). The snapshot mosaic builder moved to `camea.legacy.mosaic`
+# and is no longer offered for new projects, so its suites are deselected from the fast run —
+# `uv run pytest -q` skips this file, `uv run pytest -m legacy -q` still runs it, and it still
+# passes. It is deselected because nobody is changing this feature, NOT because it is broken.
+pytestmark = pytest.mark.legacy
 
 TILE = routes.TILE
 
@@ -407,7 +413,7 @@ def test_the_build_solves_the_document_s_list_not_the_run(client, session, solve
     assert spawned["kwargs"]["trials"] == active
     assert 13 not in spawned["kwargs"]["trials"] and 31 not in spawned["kwargs"]["trials"]
     assert spawned["kwargs"]["config"]["pass_split"] == 40
-    assert spawned["target"] == "camea.features.mosaic.solve.build_worker"
+    assert spawned["target"] == "camea.legacy.mosaic.solve.build_worker"
     # 🔴 It holds the GPU lease, and it runs in a CHILD PROCESS — `t33.place` has no cooperative
     # cancel, so `terminate()` is the only cancel there is.
     assert spawned["exclusive"] == "gpu"

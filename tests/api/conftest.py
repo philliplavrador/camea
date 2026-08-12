@@ -209,7 +209,7 @@ def client(state_dir) -> TestClient:
     from camea.api.app import create_app
     from camea.core.document import DOCUMENTS
     from camea.core.jobs import JOBS
-    from camea.features.mosaic import routes as mosaic_routes
+    from camea.legacy.mosaic import routes as mosaic_routes
     from camea.settings import SETTINGS
 
     routes_core.SESSIONS.clear()

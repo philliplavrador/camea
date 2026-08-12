@@ -40,8 +40,53 @@ const BACKEND_PORT = 8000;
  */
 const SLOW = /@slow/;
 
+/**
+ * ⭐ **THE RETIRED SNAPSHOT LANE** (2026-08-11). The snapshot mosaic builder moved to
+ * `web/src/legacy/mosaic` and was taken off the New-project screen, so these specs are IGNORED by
+ * default — they are not deleted, and neither is the feature: an existing snapshot project still
+ * opens through the FeatureGate.
+ *
+ * ⚠️ They are also, right now, **unrunnable as written**: every one of them reaches the wizard
+ * through `Home.openFixture()` / `enterMosaic()`, which picks the snapshot TASK CARD — and that card
+ * is gone. Restoring the task to `NewProjectFlow.TASKS` is what makes them green again; deleting
+ * this list on its own is not.
+ *
+ * ⚠️ **`home-browser.spec.ts` is a known coverage gap.** It is the PROJECT MANAGER's spec (a live
+ * screen), but its vehicle for having a project to list is the snapshot task, so it goes with the
+ * lane. Its home-screen assertions want re-basing onto the video task — that is follow-up work, not
+ * something this retirement did.
+ *
+ * `CAMEA_LEGACY` is the opt-in switch — the e2e twin of `uv run pytest -m legacy`:
+ *     npx playwright test                                   -> the live lane only
+ *     $env:CAMEA_LEGACY=1; npx playwright test              -> everything, retired lane included
+ * (A bare `playwright test tests/e2e/sweep-keymap.spec.ts` is NOT enough: an explicit path does not
+ * override `testIgnore`.)
+ */
+const RETIRED_SNAPSHOT_SPECS = [
+  'difference-mode.spec.ts',
+  'electrodes.spec.ts',
+  'export-import.spec.ts',
+  'help-tooltip.spec.ts',
+  'home-browser.spec.ts',
+  'live-warnings.spec.ts',
+  'no-dataset-knowledge.spec.ts',
+  'perf-status.spec.ts',
+  'place-eta.spec.ts',
+  'prefetch-evidence.spec.ts',
+  'provenance-export.spec.ts',
+  'range-scope.spec.ts',
+  'save-resume.spec.ts',
+  'screen-step.spec.ts',
+  'smoke-path.spec.ts',
+  'solver-fallback.spec.ts',
+  'sweep-canvas.spec.ts',
+  'sweep-keymap.spec.ts',
+  'wizard-steps.spec.ts',
+];
+
 export default defineConfig({
   testDir: './tests/e2e',
+  testIgnore: process.env.CAMEA_LEGACY ? [] : RETIRED_SNAPSHOT_SPECS,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

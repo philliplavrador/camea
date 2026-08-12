@@ -3,7 +3,7 @@
 `submit_process` exists for exactly one reason — the work it runs cannot be cancelled cooperatively,
 so cancel is `proc.terminate()` — and a mock cannot test that. So these are genuine module-level
 functions, imported by dotted path in a fresh `spawn` interpreter, exactly as
-`camea.features.mosaic.solve.build_worker` will be.
+`camea.legacy.mosaic.solve.build_worker` will be.
 
 ⚠️ Module-level and side-effect-free: `spawn` re-imports this module in the child.
 """

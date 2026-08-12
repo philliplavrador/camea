@@ -31,6 +31,12 @@ from .conftest import (
     run_job,
 )
 
+# ⭐ RETIRED, NOT REMOVED (2026-08-11). The snapshot mosaic builder moved to `camea.legacy.mosaic`
+# and is no longer offered for new projects, so its suites are deselected from the fast run —
+# `uv run pytest -q` skips this file, `uv run pytest -m legacy -q` still runs it, and it still
+# passes. It is deselected because nobody is changing this feature, NOT because it is broken.
+pytestmark = pytest.mark.legacy
+
 # =================================================================================================
 # Step 2 · Range
 # =================================================================================================
@@ -186,7 +192,7 @@ def test_there_is_no_blank_threshold_constant_in_the_source(client):
     """⛔ v1 carried `60.11` — 260620d's own measured number — in the source "as a fallback". That is
     dataset knowledge. It is deleted, not ported: the threshold is computed from the frames in front
     of it, every time."""
-    from camea.features.mosaic import routes
+    from camea.legacy.mosaic import routes
 
     assert not hasattr(routes, "BLANK_THRESHOLD")
     assert routes.BLANK_PCT == 2.0                           # a POLICY (a percentile), not a value
@@ -367,7 +373,7 @@ def test_the_match_preconditions_are_400s_not_500s(client, synth, body, why):
 @pytest.fixture()
 def seeded(client, synth):
     """A session, a document, and a finished build in the register. -> `(sid, aid, doc, build_id)`."""
-    from camea.features.mosaic import routes as mosaic_routes
+    from camea.legacy.mosaic import routes as mosaic_routes
 
     sid = open_session(client, synth.path, synth.trials)["session_id"]
     aid = client.post("/api/projects",
@@ -452,7 +458,7 @@ def test_seed_REFUSES_rather_than_guess_a_translation(client, seeded):
     """If none of the human's tiles are in the build, the two frames cannot be tied together. The
     server refuses. **Guessing would slide his whole field.**"""
     sid, aid, doc, bid = seeded
-    from camea.features.mosaic import routes as mosaic_routes
+    from camea.legacy.mosaic import routes as mosaic_routes
 
     mosaic_routes._BUILDS[bid]["positions"] = {}             # a build that placed nothing he holds
     doc["tiles"]["11"].update({"state": "anchored", "status": "anchor", "x": 5.0, "y": 5.0,

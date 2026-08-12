@@ -19,7 +19,13 @@ import json
 import pytest
 
 from camea.core import document as core
-from camea.features.mosaic import document as M
+from camea.legacy.mosaic import document as M
+
+# ⭐ RETIRED, NOT REMOVED (2026-08-11). The snapshot mosaic builder moved to `camea.legacy.mosaic`
+# and is no longer offered for new projects, so its suites are deselected from the fast run —
+# `uv run pytest -q` skips this file, `uv run pytest -m legacy -q` still runs it, and it still
+# passes. It is deselected because nobody is changing this feature, NOT because it is broken.
+pytestmark = pytest.mark.legacy
 
 # =================================================================================================
 # fixtures

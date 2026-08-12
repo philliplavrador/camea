@@ -1,4 +1,4 @@
-"""The engine adapter — `camea.features.mosaic.solve`.
+"""The engine adapter — `camea.legacy.mosaic.solve`.
 
 Six things are pinned here, and every one of them is a bug this project has already paid for:
 
@@ -30,7 +30,17 @@ import pytest
 
 from camea.core.frames import FrameStore, Tone
 from camea.engine import t33
-from camea.features.mosaic import solve
+from camea.legacy.mosaic import solve
+
+# ⭐ RETIRED, NOT REMOVED (2026-08-11). The snapshot mosaic builder moved to `camea.legacy.mosaic`
+# and is no longer offered for new projects, so its suites are deselected from the fast run —
+# `uv run pytest -q` skips this file, `uv run pytest -m legacy -q` still runs it, and it still
+# passes. It is deselected because nobody is changing this feature, NOT because it is broken.
+#
+# ⚠️ `test_solve_is_the_ONLY_module_under_src_that_imports_t27_or_t33` lives here, and it is a
+# whole-`src/` invariant, not a feature test. It is deselected with the rest — if a NEW second
+# entry point into the engine is ever added, `uv run pytest -m legacy` is what catches it.
+pytestmark = pytest.mark.legacy
 
 TILE = solve.TILE
 SRC = Path(__file__).resolve().parents[2] / "src" / "camea"
@@ -592,7 +602,7 @@ def test_the_spawn_target_is_importable_by_its_DOTTED_PATH():
     mod_name, _, fn_name = solve.BUILD_TARGET.rpartition(".")
     fn = getattr(importlib.import_module(mod_name), fn_name)      # <- `jobs._process_entry`, verbatim
     assert callable(fn)
-    assert fn.__module__ == "camea.features.mosaic.solve"
+    assert fn.__module__ == "camea.legacy.mosaic.solve"
     assert fn.__name__ == "build_worker"
     # `_process_entry` calls it as `fn(queue=q, **kwargs)` — `queue` MUST be a keyword parameter.
     assert "queue" in inspect.signature(fn).parameters
@@ -621,7 +631,7 @@ def test_solve_carries_no_dataset_knowledge():
     why we do not import them"* comment, which is the note that keeps the next agent from putting them
     back. A grep would forbid the warning along with the sin.
     """
-    tree = ast.parse((SRC / "features" / "mosaic" / "solve.py").read_text(encoding="utf-8"))
+    tree = ast.parse((SRC / "legacy" / "mosaic" / "solve.py").read_text(encoding="utf-8"))
     forbidden = {"EXCLUDED", "BLANK", "BLURRY", "usable_trials", "BLANK_THRESHOLD", "DATA_DIR"}
 
     for node in ast.walk(tree):
@@ -655,13 +665,13 @@ def test_solve_is_the_ONLY_module_under_src_that_imports_t27_or_t33():
                 for s in ("from camea.engine import t27", "from camea.engine import t33",
                           "import camea.engine.t27", "import camea.engine.t33"))
     )
-    assert hits == ["features/mosaic/solve.py"], hits
+    assert hits == ["legacy/mosaic/solve.py"], hits
 
 
 def test_solve_does_not_import_the_api_layer():
     """The arrow is one-way: `api -> features -> core -> engine`. A feature that imports `camea.api`
     is a cycle, and it is how the contract stops being the contract."""
-    src = (SRC / "features" / "mosaic" / "solve.py").read_text(encoding="utf-8")
+    src = (SRC / "legacy" / "mosaic" / "solve.py").read_text(encoding="utf-8")
     assert "camea.api" not in src
 
 

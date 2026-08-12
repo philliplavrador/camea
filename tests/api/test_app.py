@@ -75,7 +75,7 @@ def test_every_non_2xx_is_an_error_envelope(client):
 
 
 def test_the_mosaic_routers_error_class_renders_the_same_envelope(client, synth):
-    """`features.mosaic.routes.ApiError` is a DIFFERENT class from `routes_core.ApiError`. The
+    """`legacy.mosaic.routes.ApiError` is a DIFFERENT class from `routes_core.ApiError`. The
     handler in `api/app.py` keys on the `code` attribute, not the type — so a feature never has to
     import the API layer to raise a proper error."""
     r = client.post("/api/mosaic/run", json={"session_id": "nope"})

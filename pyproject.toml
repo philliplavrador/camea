@@ -90,8 +90,22 @@ markers = [
     # nothing is worse than a red one. (The fast suite is unaffected: `-m 'not slow'`
     # deselects the guard before its fixtures are ever asked for.)
     "slow: needs the real data mirror + a GPU; not run in CI",
+
+    # ⭐ THE RETIRED SNAPSHOT MOSAIC BUILDER (`camea.legacy.mosaic`, retired 2026-08-11).
+    # It is NOT broken and it is NOT deleted — the product moved to video, so its suites simply stop
+    # costing the fast run ~40 s on a feature nobody is changing. Every one of them still passes:
+    #
+    #     uv run pytest -m legacy -q      # run the retired suites on purpose
+    #     uv run pytest -q                # the fast run — deselects them (see `addopts` below)
+    #
+    # Marked module-level (`pytestmark = pytest.mark.legacy`) in exactly the five modules that test
+    # the SNAPSHOT FEATURE ITSELF. ⛔ Nothing that covers `camea.core` or `camea.engine` carries this
+    # marker — the 312/312 guard and the core suites are untouched, and `tests/api/test_app.py`
+    # deliberately keeps running because it is what proves the retired router is still MOUNTED.
+    "legacy: the retired snapshot mosaic builder (camea.legacy.mosaic); still green, not run by default",
 ]
-addopts = "-m 'not slow'"
+# The fast run = everything except the 312/312 guard and the retired snapshot feature.
+addopts = "-m 'not slow and not legacy'"
 
 [tool.ruff]
 line-length = 100

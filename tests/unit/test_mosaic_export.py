@@ -1,4 +1,4 @@
-"""The mosaic exporter — `camea.features.mosaic.export`.
+"""The mosaic exporter — `camea.legacy.mosaic.export`.
 
 Every assertion here is one the project has already paid for. In order of what they cost:
 
@@ -32,8 +32,14 @@ import pytest
 
 from camea.core import document as cdoc
 from camea.core.frames import FrameStore, Tone
-from camea.features.mosaic import export
-from camea.features.mosaic.document import STATE_TO_STATUS
+from camea.legacy.mosaic import export
+from camea.legacy.mosaic.document import STATE_TO_STATUS
+
+# ⭐ RETIRED, NOT REMOVED (2026-08-11). The snapshot mosaic builder moved to `camea.legacy.mosaic`
+# and is no longer offered for new projects, so its suites are deselected from the fast run —
+# `uv run pytest -q` skips this file, `uv run pytest -m legacy -q` still runs it, and it still
+# passes. It is deselected because nobody is changing this feature, NOT because it is broken.
+pytestmark = pytest.mark.legacy
 
 
 # =================================================================================================
@@ -435,7 +441,7 @@ def test_qc_moved_rows_are_worst_first_and_carry_the_evidence(seeded_doc):
 def test_qc_thin_margin_threshold_comes_from_the_matcher(seeded_doc):
     """⚠️ v1 had this number in THREE places. A QC report that flags a different set of tiles from
     the one the matcher warned about is worse than no report."""
-    from camea.features.mosaic.solve import MARGIN_THIN
+    from camea.legacy.mosaic.solve import MARGIN_THIN
 
     seeded_doc["tiles"]["12"]["margin"] = 0.081   # the shipped build's worst run margin
     seeded_doc["tiles"]["13"]["margin"] = 0.47    # typical
