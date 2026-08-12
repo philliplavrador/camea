@@ -47,6 +47,9 @@ export const ROUTES = {
   //                                     instead of retyping them (R45.8 — one place owns them, and
   //                                     it is the same place that enforces them).
   jobs: '/api/jobs', //                  GET /api/jobs/{id} — the 500 ms poll every long op rides
+  regions: '/api/videomosaic/regions', // POST …/locate and …/snap → 202 job (kind `locate_region`);
+  //                                     PATCH renames/confirms. GET …/{id}/regions → the list +
+  //                                     `stale`. R46 — where each fixed-field recording sits.
 } as const;
 
 /** THE TESTID REGISTRY. Grouped by screen; see README.md for the human-readable table. */
@@ -285,6 +288,74 @@ export const TID = {
   vmZoomToggle: 'vm-zoom-toggle', //           Fit ↔ 100% — shown once plain click means identify
   vmElectrodeMarker: 'vm-electrode-marker', // the video highlight ring; data-electrode
   vmElectrodeIdsToggle: 'vm-electrode-ids-toggle', // role=switch; the video screen's IDs overlay
+
+  // ── The pipeline header (R46.1) ───────────────────────────────────────────
+  // Survey → Mosaic → Electrodes → Regions. A step is LOCKED until the one before it is done, and
+  // the gate is read off the DOCUMENT, never off where the user has clicked.
+  pipelineSteps: 'pipeline-steps', //        the <ol>; aria-label "Pipeline steps"
+  vmStepSurvey: 'vm-step-survey',
+  vmStepMosaic: 'vm-step-mosaic',
+  vmStepElectrodes: 'vm-step-electrodes',
+  vmToMosaic: 'vm-to-mosaic', //             the forward button on each step — the pipeline walked
+  vmToElectrodes: 'vm-to-electrodes',
+  vmToRegions: 'vm-to-regions',
+
+  // ── 4 · Regions — where a fixed-field calcium recording sits (R46) ────────
+  // ⭐ The deliverable: a located rectangle NAMES THE ELECTRODES UNDER IT, which is what pairs an
+  // MEA channel with the neuron whose calcium trace sits on top of it.
+  regionsStep: 'regions-step', //            the step root
+  regionsPath: 'regions-path', //            the typeable video path — ⚠️ R38: headless has no native
+  regionsBrowse: 'regions-browse', //        picker, so the typed box is the only drivable door
+  regionsName: 'regions-name', //            optional label; defaults to the file name
+  regionsLocate: 'regions-locate', //        starts the 202 locate job
+  regionsProgress: 'regions-progress', //    the job block (bar + phase + cancel)
+  regionsPhase: 'regions-phase',
+  regionsEta: 'regions-eta',
+  regionsCancel: 'regions-cancel',
+  regionsError: 'regions-error', //          the refusal, VERBATIM (no mosaic / no electrode map /
+  //                                         could not be placed) — never trimmed to a code
+  regionsLoadError: 'regions-load-error',
+  regionsList: 'regions-list', //            one row per located recording
+  regionsEmpty: 'regions-empty',
+  regionsStale: 'regions-stale', //          live warning: the mosaic was rebuilt (R46.10)
+  regionsFieldsToggle: 'regions-fields-toggle', // show every rectangle, or only the selected one
+  regionRow: 'region-row', //                data-region-id; data-status
+  regionName: 'region-name', //              click to rename
+  regionNameInput: 'region-name-input',
+  regionStatus: 'region-status', //          unconfirmed | confirmed (R46.6)
+  regionConfirm: 'region-confirm', //        ⭐ the human's signature — nothing promotes itself
+  regionUnconfirm: 'region-unconfirm',
+  regionDelete: 'region-delete',
+  regionPanel: 'region-panel', //            the readout for the selected region (R3: numbers)
+  regionRect: 'region-rect', //              the outline on the mosaic; data-region-id, data-selected
+  regionDrag: 'region-drag', //              the draggable body of the SELECTED rectangle
+  regionDropped: 'region-dropped', //        "dragged, not yet snapped" state
+  regionSnap: 'region-snap', //              re-runs the bounded local match at the settled scale
+  regionRevert: 'region-revert',
+  regionSnapBanner: 'region-snap-banner', // the measured distance + NCC, like the sweep's snap
+  regionSnapMargin: 'region-snap-margin',
+  regionMoved: 'region-moved',
+  regionStill: 'region-still', //            ⭐ the recording's own picture, faded into the rectangle
+  regionFade: 'region-fade', //              its opacity slider (R46.8)
+  regionStillKind: 'region-still-kind', //   which projection won: median | max | std (R46.5)
+  regionZoom: 'region-zoom', //              the scale
+  regionZoomSearched: 'region-zoom-searched', // ⚠️ shown when it was SEARCHED, not measured (R46.2)
+  regionNcc: 'region-ncc',
+  regionMargin: 'region-margin', //          best − runner-up: the alias evidence
+  regionDetailNcc: 'region-detail-ncc',
+  regionDetailMargin: 'region-detail-margin',
+  regionUncertain: 'region-uncertain', //    the flagged-not-hidden warning (R46.7)
+  regionAngleWarning: 'region-angle-warning', // the lattice angles disagree; rotation is not solved
+  regionPlacedBy: 'region-placed-by', //     machine | hand | hand+snap
+  regionElectrodes: 'region-electrodes', //  ⭐ THE ANSWER
+  regionElectrodeCount: 'region-electrode-count',
+  regionElectrodeRange: 'region-electrode-range',
+  regionElectrodeBlock: 'region-electrode-block',
+  regionElectrodeSplit: 'region-electrode-split',
+  regionElectrodeList: 'region-electrode-list',
+  regionElectrodeListToggle: 'region-electrode-list-toggle',
+  regionElectrodesNone: 'region-electrodes-none',
+  regionsRowError: 'regions-row-error',
 
   // ── Help (R3/R7) ──────────────────────────────────────────────────────────
   help: 'help', //                          the 14 px `?`; role=button, tabindex=0; data-empty hides it
