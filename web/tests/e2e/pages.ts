@@ -307,12 +307,23 @@ export const TID = {
   pipelineStep: (n: PipelineStepName) => `pipeline-step-${n}`, // the nav BUTTONS (the `vm-step-*`
   //                                         ids below are the step BODIES). Each carries
   //                                         data-locked, data-active, aria-current — R46.1.
+  pipelineAction: (n: PipelineStepName) => `pipeline-action-${n}`, // ⭐ R47 — what the step is FOR,
+  //                                         in three words, under its name.
   vmStepSurvey: 'vm-step-survey',
   vmStepMosaic: 'vm-step-mosaic',
   vmStepElectrodes: 'vm-step-electrodes',
   vmToMosaic: 'vm-to-mosaic', //             the forward button on each step — the pipeline walked
   vmToElectrodes: 'vm-to-electrodes',
   vmToRegions: 'vm-to-regions',
+
+  // ── ⭐ R47 · the work frame — picture left, tools right, nothing else scrolls ──
+  vmRail: 'vm-rail', //                      the tool rail; the ONE scroller on a picture step
+  vmFiles: 'vm-files', //                    opens the outputs drawer (R44's door, asked for)
+  outputsDrawer: 'outputs-drawer', //        role=dialog; Escape closes it
+  outputsScrim: 'outputs-scrim',
+  outputsClose: 'outputs-close',
+  outputsPanel: 'outputs-panel', //          R44's browse-and-copy panel, wherever it is mounted
+  outputRow: 'output-row', //                data-name; one per file actually on disk
 
   // ── 4 · Regions — where a fixed-field calcium recording sits (R46) ────────
   // ⭐ The deliverable: a located rectangle NAMES THE ELECTRODES UNDER IT, which is what pairs an
@@ -349,8 +360,11 @@ export const TID = {
   regionSnapBanner: 'region-snap-banner', // the measured distance + NCC, like the sweep's snap
   regionSnapMargin: 'region-snap-margin',
   regionMoved: 'region-moved',
+  regionsWork: 'regions-work', //            ⭐ R47 — the two-pane frame the step is now built on
   regionStill: 'region-still', //            ⭐ the recording's own picture, faded into the rectangle
   regionFade: 'region-fade', //              its opacity slider (R46.8)
+  regionFadeValue: 'region-fade-value', //   what is DRAWN — swaps while Space is held (R47)
+  regionEvidenceToggle: 'region-evidence-toggle', // ncc + margin on the rail; the rest folded (R47)
   regionStillKind: 'region-still-kind', //   which projection won: median | max | std (R46.5)
   regionZoom: 'region-zoom', //              the scale
   regionZoomSearched: 'region-zoom-searched', // ⚠️ shown when it was SEARCHED, not measured (R46.2)

@@ -81,8 +81,15 @@ test('@slow video build: zero manual placement, and NO folder question at all', 
     // Create started the build: he lands on progress with nothing left to decide (R43.2).
     await expect(page.getByTestId('vm-progress')).toBeVisible({ timeout: 30_000 });
 
-    // done: stats strip + preview render; every keyframe was placed by the machine
-    await expect(page.getByTestId('vm-rebuild')).toBeVisible({ timeout: 240_000 });
+    // done: the preview renders. ⚠️ A finished build LANDS ON ELECTRODES — the pipeline opens on
+    // the furthest step the document has earned (R46.1), so the mosaic's own controls are one
+    // click back. (This assertion used to sit here bare and had been red since the pipeline shell
+    // landed; the build screen is reached, not arrived at.)
+    await expect(page.getByTestId('vm-preview')).toBeVisible({ timeout: 240_000 });
+    await page.getByTestId('pipeline-step-mosaic').click();
+
+    // stats strip + preview render; every keyframe was placed by the machine
+    await expect(page.getByTestId('vm-rebuild')).toBeVisible({ timeout: SHORT });
     await expect(page.getByTestId('vm-stats')).toBeVisible();
     await expect(page.getByTestId('vm-preview')).toBeVisible();
     await expect
@@ -99,7 +106,10 @@ test('@slow video build: zero manual placement, and NO folder question at all', 
     await expect(page.getByTestId('vm-save')).toHaveCount(0);
     await expect(page.getByTestId('vm-open-folder')).toHaveCount(0);
 
-    // ⭐ **BROWSE YOUR OUTPUTS** — the panel is the only door to a project's files.
+    // ⭐ **BROWSE YOUR OUTPUTS** — still the only door to a project's files (R44), now opened by
+    // asking rather than stacked under every step (R47).
+    await expect(page.getByTestId('outputs-panel')).toHaveCount(0);
+    await page.getByTestId('vm-files').click();
     const panel = page.getByTestId('outputs-panel');
     await expect(panel).toBeVisible({ timeout: SHORT });
     const rows = panel.getByTestId('output-row');

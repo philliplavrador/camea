@@ -792,4 +792,128 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(byId(page, TID.regionsEmpty)).toHaveCount(0);
     await expect(byId(page, TID.regionElectrodeCount)).toHaveText('42');
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+  // ⭐ R47 — THE TOOLS LIVE BESIDE THE PICTURE.
+  //
+  // His complaint, 2026-08-12: *"it's hard to check whether the region placed correctly because the
+  // opacity slider is hard to access — the user has to scroll all the way down. I need all the
+  // tools to be accessible while the user is looking at the image."*
+  //
+  // These live here rather than in a spec of their own because the pipeline stub above IS the
+  // harness they need — a built mosaic, a numbered lattice and a located region.
+  // ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  test('R47.1: the tools are beside the picture — reachable with the page never scrolled', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openRegions(page, { regions: [craftedRegion({ id: 'r-1', name: 'activity' })] });
+
+    // 1 · the frame exists, and the RAIL is the only thing that scrolls
+    await expect(byId(page, TID.regionsWork)).toBeVisible({ timeout: SHORT });
+    await expect(byId(page, TID.vmRail)).toBeVisible();
+
+    // 2 · ⭐ THE POINT — every tool he named is in the viewport with nothing scrolled anywhere.
+    for (const id of [TID.regionFade, TID.regionSnap, TID.regionConfirm, TID.regionsList]) {
+      await expect(byId(page, id)).toBeInViewport();
+    }
+
+    // 3 · the page itself does not scroll. Not "is scrolled to the top" — has NO scroll to do, so
+    // a tool cannot be scrolled away from in the first place.
+    const overflow = await page.evaluate(() => {
+      const d = document.documentElement;
+      return { docScroll: d.scrollHeight - d.clientHeight, y: window.scrollY };
+    });
+    expect(overflow.docScroll).toBeLessThanOrEqual(0);
+    expect(overflow.y).toBe(0);
+
+    // 4 · and the picture got the room: the stage is the wider half of the frame.
+    const stage = await byId(page, TID.vmViewer).boundingBox();
+    const rail = await byId(page, TID.vmRail).boundingBox();
+    expect(stage!.width).toBeGreaterThan(rail!.width);
+    expect(stage!.height).toBeGreaterThan(400);
+  });
+
+  test('R47.2: hold Space to swap the two pictures; releasing puts it back', async ({ page }) => {
+    await openRegions(page, { regions: [craftedRegion({ id: 'r-1', name: 'activity' })] });
+    const still = byId(page, TID.regionStill);
+    const opacity = () => still.evaluate((el) => Number(getComputedStyle(el).opacity));
+
+    // the slider starts LOW, so the flash goes to the recording — full overlay
+    await setRange(page, TID.regionFade, 10);
+    await expect.poll(opacity, { timeout: SHORT }).toBeCloseTo(0.1, 2);
+
+    await page.keyboard.down(' ');
+    await expect(byId(page, TID.regionFadeValue)).toHaveText('100%');
+    await expect.poll(opacity, { timeout: SHORT }).toBeCloseTo(1, 2);
+
+    // ⛔ RELEASING RESTORES. The slider is where it was — a hold is not an edit.
+    await page.keyboard.up(' ');
+    await expect(byId(page, TID.regionFadeValue)).toHaveText('10%');
+    await expect(byId(page, TID.regionFade)).toHaveValue('10');
+    await expect.poll(opacity, { timeout: SHORT }).toBeCloseTo(0.1, 2);
+
+    // ⭐ AND IT SWAPS THE OTHER WAY. With the overlay already up, the flash shows the MOSAIC —
+    // a key that always went to 100% would do nothing exactly when he is looking hardest.
+    await setRange(page, TID.regionFade, 90);
+    await page.keyboard.down(' ');
+    await expect(byId(page, TID.regionFadeValue)).toHaveText('0%');
+    await expect(still).toHaveCount(0); // nothing drawn at all, not a 0-opacity ghost
+    await page.keyboard.up(' ');
+    await expect(byId(page, TID.regionFadeValue)).toHaveText('90%');
+
+    // [ and ] nudge it by 10 without touching the mouse
+    await page.keyboard.press('[');
+    await expect(byId(page, TID.regionFade)).toHaveValue('80');
+    await page.keyboard.press(']');
+    await expect(byId(page, TID.regionFade)).toHaveValue('90');
+  });
+
+  test('R47.3: the evidence is one line until asked; nothing is deleted behind the fold', async ({
+    page,
+  }) => {
+    await openRegions(page, { regions: [craftedRegion({ id: 'r-1' })] });
+
+    // the two numbers that decide a placement read on the rail…
+    await expect(byId(page, TID.regionDetailNcc)).toBeVisible();
+    await expect(byId(page, TID.regionDetailMargin)).toBeVisible();
+
+    // …and the working is folded, not gone
+    const zoom = byId(page, TID.regionZoom);
+    await expect(zoom).toBeHidden();
+    await byId(page, TID.regionEvidenceToggle).click();
+    await expect(zoom).toBeVisible();
+    await expect(byId(page, TID.regionStillKind)).toBeVisible();
+    await expect(byId(page, TID.regionPlacedBy)).toBeVisible();
+  });
+
+  test('R47.4: the pipeline bar says what each step is for', async ({ page }) => {
+    await openRegions(page);
+    for (const [step, says] of [
+      ['survey', /check the video/i],
+      ['mosaic', /build the picture/i],
+      ['electrodes', /number the pads/i],
+      ['regions', /place your recordings/i],
+    ] as const) {
+      await expect(byId(page, TID.pipelineAction(step))).toHaveText(says);
+    }
+  });
+
+  test('R47.5: Files is ONE door, opened by asking — and Escape closes it (R44 intact)', async ({
+    page,
+  }) => {
+    await openRegions(page);
+
+    // ⛔ not stacked under the step any more
+    await expect(byId(page, TID.outputsPanel)).toHaveCount(0);
+
+    await byId(page, TID.vmFiles).click();
+    await expect(byId(page, TID.outputsDrawer)).toBeVisible({ timeout: SHORT });
+    await expect(byId(page, TID.outputsPanel)).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(byId(page, TID.outputsDrawer)).toHaveCount(0);
+    await expect(byId(page, TID.outputsPanel)).toHaveCount(0);
+  });
 });
