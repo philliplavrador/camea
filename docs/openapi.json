@@ -2752,6 +2752,212 @@
           }
         }
       }
+    },
+    "/api/videomosaic/regions/locate": {
+      "post": {
+        "summary": "Post Locate Region",
+        "description": "`POST /api/videomosaic/regions/locate` -> **202 `JobRef`**. Add a fixed-field recording\nand find where on the built mosaic it was taken.\n\n\u2b50 The zoom is MEASURED, not searched: the electrode lattice appears in both pictures and the\nratio of the two pitches is the magnification ratio. Several stills (median / max / std) are\nbuilt from one decode and each is matched, because whether the neurons are bright at rest or\nonly when firing is a property of the preparation.\n\n\u26a0\ufe0f Refuses without a built mosaic, and without an electrode map \u2014 the pipeline is step by\nstep (his ruling), and a location whose electrodes cannot be named is half an answer.",
+        "operationId": "post_locate_region_api_videomosaic_regions_locate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocateRegionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRef"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/videomosaic/regions/snap": {
+      "post": {
+        "summary": "Post Snap Region",
+        "description": "`POST /api/videomosaic/regions/snap` -> **202 `JobRef`**. *\"I dragged it here, now snap\nit\"* \u2014 a bounded local re-search seeded where the user dropped the rectangle.\n\n\u2b50 Correct beats fast (R23): the committed number is the server's masked NCC on the real\npixels, not a browser-side guess. About a second, and his ruling accepts that.",
+        "operationId": "post_snap_region_api_videomosaic_regions_snap_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapRegionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRef"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/videomosaic/regions": {
+      "patch": {
+        "summary": "Patch Region",
+        "description": "Rename a region, or confirm it. Both are the user's word, so both are synchronous.\n\n\u2b50 **Confirm is the human's signature.** A located region is `unconfirmed` until he says\notherwise; nothing here ever promotes itself, which is I3 (nothing is auto-anchored) applied\nto a rectangle instead of a tile.",
+        "operationId": "patch_region_api_videomosaic_regions_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegionUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegionRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/videomosaic/{analysis_id}/regions/{region_id}": {
+      "delete": {
+        "summary": "Delete Region",
+        "description": "Forget a located region. Its still and its copy of the video go with it \u2014 the project\nholds the files, so removing the region removes what it brought in.",
+        "operationId": "delete_region_api_videomosaic__analysis_id__regions__region_id__delete",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          },
+          {
+            "name": "region_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Region Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegionsPayload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/videomosaic/{analysis_id}/regions": {
+      "get": {
+        "summary": "Get Regions",
+        "description": "Every located region + `stale` (rebuild the mosaic and every location is stale).",
+        "operationId": "get_regions_api_videomosaic__analysis_id__regions_get",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegionsPayload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5351,6 +5557,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/ElectrodeMapResult"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LocateRegionResult"
                   }
                 ],
                 "discriminator": {
@@ -5359,6 +5568,7 @@
                     "build": "#/components/schemas/BuildResult",
                     "electrode_map": "#/components/schemas/ElectrodeMapResult",
                     "export": "#/components/schemas/ExportResult",
+                    "locate_region": "#/components/schemas/LocateRegionResult",
                     "open": "#/components/schemas/OpenJobResult",
                     "recheck": "#/components/schemas/RecheckResult",
                     "recompute": "#/components/schemas/RecomputeResult",
@@ -5551,6 +5761,67 @@
           "doc"
         ],
         "title": "LoadDocumentResponse"
+      },
+      "LocateRegionRequest": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "The video file to add. \u2b50 The ONE path question allowed inside a project (R44): where the recording came from. It is COPIED into the project, which then owns it."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Optional label; defaults to the file's name.",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "path"
+        ],
+        "title": "LocateRegionRequest",
+        "description": "`POST /api/videomosaic/regions/locate` \u2014 add a recording and place it."
+      },
+      "LocateRegionResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "locate_region",
+            "title": "Kind",
+            "default": "locate_region"
+          },
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "region": {
+            "$ref": "#/components/schemas/RegionRecord"
+          },
+          "doc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Document"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "region"
+        ],
+        "title": "LocateRegionResult",
+        "description": "`job.result` of a `locate_region` job. The videomosaic document is SERVER-owned, so it is\nalready saved when this appears \u2014 the UI adopts `doc` or refetches; it never authors."
       },
       "LogEntry": {
         "properties": {
@@ -7057,6 +7328,508 @@
         "title": "Refusal",
         "description": "\u26d4 **BLANK FRAMES ARE REFUSED, NOT SCORED. There is no `force` flag and there will not be\none.** Two blank frames 136 trials apart correlate **+0.43 at zero shift** (honest noise floor\n0.115) because what they share is *fixed-pattern sensor structure*, which does not move with the\nstage. **They register confidently and wrongly.**\n\n* **`target` is blank** \u2192 REFUSE. `candidates: []`, `best: null`. This is the real hazard.\n* **an `anchor` is blank** \u2192 **DROPPED from the composite** (`MatchResult.dropped_anchors`).\n  **Not fatal.** \ud83d\udd34 The rule that made a blank anchor an error dead-ended the app: the moment the\n  user anchored the first near-threshold trial, every subsequent `Space` and snap refused\n  **forever** and the sweep died at the next tile.\n* **every anchor is blank** \u2192 `reason: \"no_anchors\"`.\n\n**A human may still place a blank tile by hand** \u2014 a human eye is allowed to do what the\ncorrelator must not. It gets **no NCC**, because there is no honest one."
       },
+      "RegionCandidate": {
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "title": "Rank"
+          },
+          "x": {
+            "type": "number",
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y"
+          },
+          "ncc": {
+            "type": "number",
+            "title": "Ncc"
+          },
+          "npix": {
+            "type": "integer",
+            "title": "Npix"
+          },
+          "subpixel": {
+            "type": "boolean",
+            "title": "Subpixel",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "rank",
+          "x",
+          "y",
+          "ncc",
+          "npix"
+        ],
+        "title": "RegionCandidate",
+        "description": "One place the recording could sit. `x`/`y` are TOP-LEFT corners (R19), never centres."
+      },
+      "RegionElectrodes": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "detected": {
+            "type": "integer",
+            "title": "Detected"
+          },
+          "inferred": {
+            "type": "integer",
+            "title": "Inferred"
+          },
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ids",
+            "description": "`col-row`, the electrode map's own ids."
+          },
+          "cols": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Cols"
+          },
+          "rows": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Rows"
+          },
+          "map": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Map",
+            "description": "The map FILENAME these ids came from."
+          },
+          "array_coverage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Array Coverage"
+          },
+          "um_per_px": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Um Per Px"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "detected",
+          "inferred",
+          "ids"
+        ],
+        "title": "RegionElectrodes",
+        "description": "The electrodes whose centres fall inside the rectangle \u2014 the point of the whole feature."
+      },
+      "RegionRecord": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Editable label; defaults to the video's file name."
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VideoSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "still": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Still",
+            "description": "FILENAME in outputs/ of the winning still, already resampled to MOSAIC SCALE \u2014 the picture the UI fades into the rectangle, and the template a re-snap matches with. One file, both jobs."
+          },
+          "x": {
+            "type": "number",
+            "title": "X",
+            "default": 0.0
+          },
+          "y": {
+            "type": "number",
+            "title": "Y",
+            "default": 0.0
+          },
+          "w": {
+            "type": "number",
+            "title": "W",
+            "default": 0.0
+          },
+          "h": {
+            "type": "number",
+            "title": "H",
+            "default": 0.0
+          },
+          "still_kind": {
+            "type": "string",
+            "title": "Still Kind",
+            "description": "Which projection of the recording won: median / max / std.",
+            "default": ""
+          },
+          "zoom": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegionZoom"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ncc": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ncc"
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin",
+            "description": "best - runner-up on the GLOBAL surface. The only evidence that the aperture killed the electrode-comb aliases rather than outscoring them."
+          },
+          "margin_thin": {
+            "type": "boolean",
+            "title": "Margin Thin",
+            "default": false
+          },
+          "confident": {
+            "type": "boolean",
+            "title": "Confident",
+            "default": false
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/RegionCandidate"
+            },
+            "type": "array",
+            "title": "Candidates"
+          },
+          "tried": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tried",
+            "description": "Every still x scale that was attempted, with its score \u2014 so a poor result can be diagnosed instead of merely disbelieved."
+          },
+          "electrodes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegionElectrodes"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "unconfirmed",
+              "confirmed"
+            ],
+            "title": "Status",
+            "default": "unconfirmed"
+          },
+          "placed_by": {
+            "type": "string",
+            "title": "Placed By",
+            "description": "machine | hand | hand+snap",
+            "default": "machine"
+          },
+          "located_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Located At"
+          },
+          "source_stamp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Stamp",
+            "description": "The build's `built_at` this was placed against. Rebuild the mosaic and the location is STALE \u2014 it never silently drifts."
+          },
+          "moved_px": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Moved Px"
+          },
+          "snap_margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snap Margin"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed Ms"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "RegionRecord",
+        "description": "`doc[\"regions\"][i]` \u2014 one located recording, with its evidence."
+      },
+      "RegionUpdateRequest": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "region_id": {
+            "type": "string",
+            "title": "Region Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "unconfirmed",
+                  "confirmed"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "region_id"
+        ],
+        "title": "RegionUpdateRequest",
+        "description": "`PATCH /api/videomosaic/regions` \u2014 rename, or confirm. Both are the user's word."
+      },
+      "RegionZoom": {
+        "properties": {
+          "scale": {
+            "type": "number",
+            "title": "Scale",
+            "description": "Multiply recording px by this to get mosaic px."
+          },
+          "measured": {
+            "type": "boolean",
+            "title": "Measured",
+            "description": "True when the ratio was MEASURED from the electrode lattice in both pictures. False means no lattice could be read and a ladder of zoom factors was searched instead \u2014 a guess the UI must not present as a measurement."
+          },
+          "pitch_recording_px": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pitch Recording Px"
+          },
+          "pitch_mosaic_px": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pitch Mosaic Px"
+          },
+          "angle_recording_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Angle Recording Deg"
+          },
+          "angle_mosaic_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Angle Mosaic Deg"
+          },
+          "angle_delta_deg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Angle Delta Deg",
+            "description": "Degrees the recording's lattice is turned relative to the mosaic's, folded into (-45, 45]. Rotation is NOT solved (same rig, same orientation) \u2014 this is reported so a reseated chip is visible instead of silently mis-placed."
+          },
+          "note": {
+            "type": "string",
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "scale",
+          "measured"
+        ],
+        "title": "RegionZoom",
+        "description": "How much the recording was shrunk/grown to sit on the mosaic, and where that came from."
+      },
+      "RegionsPayload": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/RegionRecord"
+            },
+            "type": "array",
+            "title": "Regions"
+          },
+          "built_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Built From"
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale",
+            "description": "True when the mosaic was rebuilt after these were placed.",
+            "default": false
+          },
+          "outputs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Outputs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id"
+        ],
+        "title": "RegionsPayload",
+        "description": "`GET /api/videomosaic/{id}/regions`."
+      },
       "RejectedMatch": {
         "properties": {
           "x": {
@@ -7976,6 +8749,49 @@
           "message"
         ],
         "title": "SkippedFrame"
+      },
+      "SnapRegionRequest": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "region_id": {
+            "type": "string",
+            "title": "Region Id"
+          },
+          "x": {
+            "type": "number",
+            "title": "X",
+            "description": "Where the user dropped the rectangle's TOP-LEFT, mosaic px."
+          },
+          "y": {
+            "type": "number",
+            "title": "Y"
+          },
+          "radius": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Radius",
+            "description": "Local search half-width in mosaic px. Clamped server-side: a local search has no whole-plane view, so a wide one is an alias generator."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "region_id",
+          "x",
+          "y"
+        ],
+        "title": "SnapRegionRequest",
+        "description": "`POST /api/videomosaic/regions/snap` \u2014 *\"I dragged it here, now snap it.\"*"
       },
       "SnapshotBlock": {
         "properties": {
@@ -9206,6 +10022,14 @@
               }
             ],
             "description": "The fitted electrode-grid summary (2026-08-11); stale when its source_stamp no longer equals build.built_at. None until Map electrodes runs."
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/RegionRecord"
+            },
+            "type": "array",
+            "title": "Regions",
+            "description": "Fixed-field calcium recordings located on this mosaic (2026-08-11), newest last. Empty until Locate regions runs."
           }
         },
         "additionalProperties": true,

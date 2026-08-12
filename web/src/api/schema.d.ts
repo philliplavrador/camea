@@ -1501,6 +1501,124 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/videomosaic/regions/locate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Locate Region
+         * @description `POST /api/videomosaic/regions/locate` -> **202 `JobRef`**. Add a fixed-field recording
+         *     and find where on the built mosaic it was taken.
+         *
+         *     ⭐ The zoom is MEASURED, not searched: the electrode lattice appears in both pictures and the
+         *     ratio of the two pitches is the magnification ratio. Several stills (median / max / std) are
+         *     built from one decode and each is matched, because whether the neurons are bright at rest or
+         *     only when firing is a property of the preparation.
+         *
+         *     ⚠️ Refuses without a built mosaic, and without an electrode map — the pipeline is step by
+         *     step (his ruling), and a location whose electrodes cannot be named is half an answer.
+         */
+        post: operations["post_locate_region_api_videomosaic_regions_locate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/regions/snap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Snap Region
+         * @description `POST /api/videomosaic/regions/snap` -> **202 `JobRef`**. *"I dragged it here, now snap
+         *     it"* — a bounded local re-search seeded where the user dropped the rectangle.
+         *
+         *     ⭐ Correct beats fast (R23): the committed number is the server's masked NCC on the real
+         *     pixels, not a browser-side guess. About a second, and his ruling accepts that.
+         */
+        post: operations["post_snap_region_api_videomosaic_regions_snap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Region
+         * @description Rename a region, or confirm it. Both are the user's word, so both are synchronous.
+         *
+         *     ⭐ **Confirm is the human's signature.** A located region is `unconfirmed` until he says
+         *     otherwise; nothing here ever promotes itself, which is I3 (nothing is auto-anchored) applied
+         *     to a rectangle instead of a tile.
+         */
+        patch: operations["patch_region_api_videomosaic_regions_patch"];
+        trace?: never;
+    };
+    "/api/videomosaic/{analysis_id}/regions/{region_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Region
+         * @description Forget a located region. Its still and its copy of the video go with it — the project
+         *     holds the files, so removing the region removes what it brought in.
+         */
+        delete: operations["delete_region_api_videomosaic__analysis_id__regions__region_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/{analysis_id}/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Regions
+         * @description Every located region + `stale` (rebuild the mosaic and every location is stale).
+         */
+        get: operations["get_regions_api_videomosaic__analysis_id__regions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2805,7 +2923,7 @@ export interface components {
              * Result
              * @description null until state == 'done'. Discriminated on `kind`.
              */
-            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"]) | null;
+            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"]) | null;
             /** @description Set iff state == 'failed'. */
             error?: components["schemas"]["JobError"] | null;
         };
@@ -2870,6 +2988,41 @@ export interface components {
              * @description The old schema_version, if the file was migrated on the way in.
              */
             migrated_from?: string | null;
+        };
+        /**
+         * LocateRegionRequest
+         * @description `POST /api/videomosaic/regions/locate` — add a recording and place it.
+         */
+        LocateRegionRequest: {
+            /** Analysis Id */
+            analysis_id: string;
+            /**
+             * Path
+             * @description The video file to add. ⭐ The ONE path question allowed inside a project (R44): where the recording came from. It is COPIED into the project, which then owns it.
+             */
+            path: string;
+            /**
+             * Name
+             * @description Optional label; defaults to the file's name.
+             * @default
+             */
+            name: string;
+        };
+        /**
+         * LocateRegionResult
+         * @description `job.result` of a `locate_region` job. The videomosaic document is SERVER-owned, so it is
+         *     already saved when this appears — the UI adopts `doc` or refetches; it never authors.
+         */
+        LocateRegionResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "locate_region";
+            /** Analysis Id */
+            analysis_id: string;
+            region: components["schemas"]["RegionRecord"];
+            doc?: components["schemas"]["Document"] | null;
         };
         /** LogEntry */
         LogEntry: {
@@ -3604,6 +3757,227 @@ export interface components {
             message: string;
         };
         /**
+         * RegionCandidate
+         * @description One place the recording could sit. `x`/`y` are TOP-LEFT corners (R19), never centres.
+         */
+        RegionCandidate: {
+            /** Rank */
+            rank: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Ncc */
+            ncc: number;
+            /** Npix */
+            npix: number;
+            /**
+             * Subpixel
+             * @default false
+             */
+            subpixel: boolean;
+        };
+        /**
+         * RegionElectrodes
+         * @description The electrodes whose centres fall inside the rectangle — the point of the whole feature.
+         */
+        RegionElectrodes: {
+            /** Count */
+            count: number;
+            /** Detected */
+            detected: number;
+            /** Inferred */
+            inferred: number;
+            /**
+             * Ids
+             * @description `col-row`, the electrode map's own ids.
+             */
+            ids: string[];
+            /** Cols */
+            cols?: number[];
+            /** Rows */
+            rows?: number[];
+            /**
+             * Map
+             * @description The map FILENAME these ids came from.
+             */
+            map?: string | null;
+            /** Array Coverage */
+            array_coverage?: string | null;
+            /** Um Per Px */
+            um_per_px?: number | null;
+        };
+        /**
+         * RegionRecord
+         * @description `doc["regions"][i]` — one located recording, with its evidence.
+         */
+        RegionRecord: {
+            /** Id */
+            id: string;
+            /**
+             * Name
+             * @description Editable label; defaults to the video's file name.
+             */
+            name: string;
+            source?: components["schemas"]["VideoSource"] | null;
+            /**
+             * Still
+             * @description FILENAME in outputs/ of the winning still, already resampled to MOSAIC SCALE — the picture the UI fades into the rectangle, and the template a re-snap matches with. One file, both jobs.
+             */
+            still?: string | null;
+            /**
+             * X
+             * @default 0
+             */
+            x: number;
+            /**
+             * Y
+             * @default 0
+             */
+            y: number;
+            /**
+             * W
+             * @default 0
+             */
+            w: number;
+            /**
+             * H
+             * @default 0
+             */
+            h: number;
+            /**
+             * Still Kind
+             * @description Which projection of the recording won: median / max / std.
+             * @default
+             */
+            still_kind: string;
+            zoom?: components["schemas"]["RegionZoom"] | null;
+            /** Ncc */
+            ncc?: number | null;
+            /**
+             * Margin
+             * @description best - runner-up on the GLOBAL surface. The only evidence that the aperture killed the electrode-comb aliases rather than outscoring them.
+             */
+            margin?: number | null;
+            /**
+             * Margin Thin
+             * @default false
+             */
+            margin_thin: boolean;
+            /**
+             * Confident
+             * @default false
+             */
+            confident: boolean;
+            /** Candidates */
+            candidates?: components["schemas"]["RegionCandidate"][];
+            /**
+             * Tried
+             * @description Every still x scale that was attempted, with its score — so a poor result can be diagnosed instead of merely disbelieved.
+             */
+            tried?: {
+                [key: string]: unknown;
+            }[];
+            electrodes?: components["schemas"]["RegionElectrodes"] | null;
+            /**
+             * Status
+             * @default unconfirmed
+             * @enum {string}
+             */
+            status: "unconfirmed" | "confirmed";
+            /**
+             * Placed By
+             * @description machine | hand | hand+snap
+             * @default machine
+             */
+            placed_by: string;
+            /** Located At */
+            located_at?: string | null;
+            /**
+             * Source Stamp
+             * @description The build's `built_at` this was placed against. Rebuild the mosaic and the location is STALE — it never silently drifts.
+             */
+            source_stamp?: string | null;
+            /** Moved Px */
+            moved_px?: number | null;
+            /** Snap Margin */
+            snap_margin?: number | null;
+            /** Elapsed Ms */
+            elapsed_ms?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RegionUpdateRequest
+         * @description `PATCH /api/videomosaic/regions` — rename, or confirm. Both are the user's word.
+         */
+        RegionUpdateRequest: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Region Id */
+            region_id: string;
+            /** Name */
+            name?: string | null;
+            /** Status */
+            status?: ("unconfirmed" | "confirmed") | null;
+        };
+        /**
+         * RegionZoom
+         * @description How much the recording was shrunk/grown to sit on the mosaic, and where that came from.
+         */
+        RegionZoom: {
+            /**
+             * Scale
+             * @description Multiply recording px by this to get mosaic px.
+             */
+            scale: number;
+            /**
+             * Measured
+             * @description True when the ratio was MEASURED from the electrode lattice in both pictures. False means no lattice could be read and a ladder of zoom factors was searched instead — a guess the UI must not present as a measurement.
+             */
+            measured: boolean;
+            /** Pitch Recording Px */
+            pitch_recording_px?: number | null;
+            /** Pitch Mosaic Px */
+            pitch_mosaic_px?: number | null;
+            /** Angle Recording Deg */
+            angle_recording_deg?: number | null;
+            /** Angle Mosaic Deg */
+            angle_mosaic_deg?: number | null;
+            /**
+             * Angle Delta Deg
+             * @description Degrees the recording's lattice is turned relative to the mosaic's, folded into (-45, 45]. Rotation is NOT solved (same rig, same orientation) — this is reported so a reseated chip is visible instead of silently mis-placed.
+             */
+            angle_delta_deg?: number | null;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * RegionsPayload
+         * @description `GET /api/videomosaic/{id}/regions`.
+         */
+        RegionsPayload: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Regions */
+            regions?: components["schemas"]["RegionRecord"][];
+            /** Built From */
+            built_from?: string | null;
+            /**
+             * Stale
+             * @description True when the mosaic was rebuilt after these were placed.
+             * @default false
+             */
+            stale: boolean;
+            /** Outputs */
+            outputs?: {
+                [key: string]: string;
+            };
+        };
+        /**
          * RejectedMatch
          * @description What the matcher wanted, on a tile the app **diverted** to the solver's answer. It is the
          *     *evidence for* the divert and the QC report needs it in full.
@@ -4004,6 +4378,28 @@ export interface components {
             h?: number | null;
             /** Message */
             message: string;
+        };
+        /**
+         * SnapRegionRequest
+         * @description `POST /api/videomosaic/regions/snap` — *"I dragged it here, now snap it."*
+         */
+        SnapRegionRequest: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Region Id */
+            region_id: string;
+            /**
+             * X
+             * @description Where the user dropped the rectangle's TOP-LEFT, mosaic px.
+             */
+            x: number;
+            /** Y */
+            y: number;
+            /**
+             * Radius
+             * @description Local search half-width in mosaic px. Clamped server-side: a local search has no whole-plane view, so a wide one is an alias generator.
+             */
+            radius?: number | null;
         };
         /**
          * SnapshotBlock
@@ -4472,6 +4868,11 @@ export interface components {
             };
             /** @description The fitted electrode-grid summary (2026-08-11); stale when its source_stamp no longer equals build.built_at. None until Map electrodes runs. */
             electrodes?: components["schemas"]["ElectrodeMapBlock"] | null;
+            /**
+             * Regions
+             * @description Fixed-field calcium recordings located on this mosaic (2026-08-11), newest last. Empty until Locate regions runs.
+             */
+            regions?: components["schemas"]["RegionRecord"][];
         } & {
             [key: string]: unknown;
         };
@@ -6516,6 +6917,168 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ElectrodeMapPayload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_locate_region_api_videomosaic_regions_locate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocateRegionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_snap_region_api_videomosaic_regions_snap_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapRegionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_region_api_videomosaic_regions_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegionUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegionRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_region_api_videomosaic__analysis_id__regions__region_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+                region_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegionsPayload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_regions_api_videomosaic__analysis_id__regions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegionsPayload"];
                 };
             };
             /** @description Validation Error */

@@ -1947,6 +1947,9 @@ class VideoMosaicDocument(Document):
     electrodes: "ElectrodeMapBlock | None" = Field(
         default=None, description="The fitted electrode-grid summary (2026-08-11); stale when "
         "its source_stamp no longer equals build.built_at. None until Map electrodes runs.")
+    regions: list["RegionRecord"] = Field(
+        default_factory=list, description="Fixed-field calcium recordings located on this "
+        "mosaic (2026-08-11), newest last. Empty until Locate regions runs.")
 
 
 class VideoCanvasSize(Res):
@@ -2162,6 +2165,154 @@ class ElectrodeMapResult(Res):
 
 
 # =================================================================================================
+# REGION RECORDINGS — where a fixed-field calcium video sits on the mosaic *(2026-08-11)*
+# =================================================================================================
+#
+# The experiment: a culture on an MEA chip is filmed region by region with calcium imaging while
+# the chip records voltages, and finally swept whole to build the mosaic. Locating a fixed-region
+# recording on that mosaic — and naming the electrodes under it — is what pairs an MEA channel
+# with the neuron whose calcium trace sits on top of it.
+#
+# ⭐ Every number a user needs to judge a placement rides on the record: which still won, the
+# measured zoom and whether it WAS measured, the NCC, the margin over the runner-up, and the
+# alternatives. A placement is `unconfirmed` until he says otherwise.
+
+class RegionZoom(Res):
+    """How much the recording was shrunk/grown to sit on the mosaic, and where that came from."""
+
+    scale: float = Field(description="Multiply recording px by this to get mosaic px.")
+    measured: bool = Field(
+        description="True when the ratio was MEASURED from the electrode lattice in both "
+        "pictures. False means no lattice could be read and a ladder of zoom factors was "
+        "searched instead — a guess the UI must not present as a measurement.")
+    pitch_recording_px: float | None = None
+    pitch_mosaic_px: float | None = None
+    angle_recording_deg: float | None = None
+    angle_mosaic_deg: float | None = None
+    angle_delta_deg: float | None = Field(
+        default=None, description="Degrees the recording's lattice is turned relative to the "
+        "mosaic's, folded into (-45, 45]. Rotation is NOT solved (same rig, same orientation) "
+        "— this is reported so a reseated chip is visible instead of silently mis-placed.")
+    note: str = ""
+
+
+class RegionCandidate(Res):
+    """One place the recording could sit. `x`/`y` are TOP-LEFT corners (R19), never centres."""
+
+    rank: int
+    x: float
+    y: float
+    ncc: float
+    npix: int
+    subpixel: bool = False
+
+
+class RegionElectrodes(Res):
+    """The electrodes whose centres fall inside the rectangle — the point of the whole feature."""
+
+    count: int
+    detected: int
+    inferred: int
+    ids: list[str] = Field(description="`col-row`, the electrode map's own ids.")
+    cols: list[int] = Field(default_factory=list)
+    rows: list[int] = Field(default_factory=list)
+    map: str | None = Field(default=None, description="The map FILENAME these ids came from.")
+    array_coverage: str | None = None
+    um_per_px: float | None = None
+
+
+class RegionRecord(Open):
+    """`doc[\"regions\"][i]` — one located recording, with its evidence."""
+
+    id: str
+    name: str = Field(description="Editable label; defaults to the video's file name.")
+    source: VideoSource | None = None
+    still: str | None = Field(
+        default=None, description="FILENAME in outputs/ of the winning still, already resampled "
+        "to MOSAIC SCALE — the picture the UI fades into the rectangle, and the template a "
+        "re-snap matches with. One file, both jobs.")
+    x: float = 0.0
+    y: float = 0.0
+    w: float = 0.0
+    h: float = 0.0
+    still_kind: str = Field(
+        default="", description="Which projection of the recording won: median / max / std.")
+    zoom: RegionZoom | None = None
+    ncc: float | None = None
+    margin: float | None = Field(
+        default=None, description="best - runner-up on the GLOBAL surface. The only evidence "
+        "that the aperture killed the electrode-comb aliases rather than outscoring them.")
+    margin_thin: bool = False
+    confident: bool = False
+    candidates: list[RegionCandidate] = Field(default_factory=list)
+    tried: list[dict] = Field(
+        default_factory=list, description="Every still x scale that was attempted, with its "
+        "score — so a poor result can be diagnosed instead of merely disbelieved.")
+    electrodes: RegionElectrodes | None = None
+    status: Literal["unconfirmed", "confirmed"] = "unconfirmed"
+    placed_by: str = Field(default="machine", description="machine | hand | hand+snap")
+    located_at: str | None = None
+    source_stamp: str | None = Field(
+        default=None, description="The build's `built_at` this was placed against. Rebuild the "
+        "mosaic and the location is STALE — it never silently drifts.")
+    moved_px: float | None = None
+    snap_margin: float | None = None
+    elapsed_ms: float | None = None
+
+
+class LocateRegionRequest(Req):
+    """`POST /api/videomosaic/regions/locate` — add a recording and place it."""
+
+    analysis_id: str
+    path: str = Field(description="The video file to add. ⭐ The ONE path question allowed "
+                      "inside a project (R44): where the recording came from. It is COPIED into "
+                      "the project, which then owns it.")
+    name: str = Field(default="", description="Optional label; defaults to the file's name.")
+
+
+class SnapRegionRequest(Req):
+    """`POST /api/videomosaic/regions/snap` — *"I dragged it here, now snap it."*"""
+
+    analysis_id: str
+    region_id: str
+    x: float = Field(description="Where the user dropped the rectangle's TOP-LEFT, mosaic px.")
+    y: float
+    radius: int | None = Field(
+        default=None, description="Local search half-width in mosaic px. Clamped server-side: a "
+        "local search has no whole-plane view, so a wide one is an alias generator.")
+
+
+class RegionUpdateRequest(Req):
+    """`PATCH /api/videomosaic/regions` — rename, or confirm. Both are the user's word."""
+
+    analysis_id: str
+    region_id: str
+    name: str | None = None
+    status: Literal["unconfirmed", "confirmed"] | None = None
+
+
+class RegionsPayload(Res):
+    """`GET /api/videomosaic/{id}/regions`."""
+
+    analysis_id: str
+    regions: list[RegionRecord] = Field(default_factory=list)
+    built_from: str | None = None
+    stale: bool = Field(
+        default=False, description="True when the mosaic was rebuilt after these were placed.")
+    outputs: dict[str, str] = Field(default_factory=dict)
+
+
+class LocateRegionResult(Res):
+    """`job.result` of a `locate_region` job. The videomosaic document is SERVER-owned, so it is
+    already saved when this appears — the UI adopts `doc` or refetches; it never authors."""
+
+    kind: Literal["locate_region"] = "locate_region"
+    analysis_id: str
+    region: RegionRecord
+    doc: Document | None = None
+
+
+# =================================================================================================
 # The job-result union — declared last, because it names every feature's result.
 # =================================================================================================
 #
@@ -2172,7 +2323,7 @@ class ElectrodeMapResult(Res):
 
 JobResult = Annotated[
     Union[OpenJobResult, BuildResult, ExportResult, RecheckResult, RecomputeResult,
-          VideoMosaicBuildResult, ElectrodeMapResult],
+          VideoMosaicBuildResult, ElectrodeMapResult, LocateRegionResult],
     Field(discriminator="kind"),
 ]
 
@@ -2213,6 +2364,16 @@ __all__ = [
     "VideoMosaicDocument",
     "VideoCanvasSize",
     "VideoMosaicBuildResult",
+    # region recordings (videomosaic)
+    "LocateRegionRequest",
+    "LocateRegionResult",
+    "RegionCandidate",
+    "RegionElectrodes",
+    "RegionRecord",
+    "RegionUpdateRequest",
+    "RegionZoom",
+    "RegionsPayload",
+    "SnapRegionRequest",
     # electrodes (both features)
     "ElectrodeDevice",
     "ElectrodeMapRequest",
