@@ -18,14 +18,7 @@
 // down every second (R8) — `useJob` owns the countdown; this only renders `etaText`.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApiError,
   getDocument,
@@ -44,19 +37,17 @@ import type {
   ElectrodeMapPayload,
   VideoMosaicDocument,
 } from '../../api';
-import { Button, ButtonLink, Panel, LiveWarning, cx } from '../../design';
+import { Button, ButtonLink, Panel, LiveWarning } from '../../design';
 import { OutputsPanel } from '../outputs/OutputsPanel';
 import { CoverageChoice } from '../electrodes/CoverageChoice';
 import { useCoverageHelp } from '../electrodes/device';
 import { ElectrodePanel, type ElectrodeSelection } from '../electrodes/ElectrodePanel';
-import { GridOverlay, IDS_MIN_STEP_PX } from '../electrodes/GridOverlay';
-import {
-  buildElectrodeIndex,
-  electrodeAt,
-  hitRadiusAt,
-  lookupElectrode,
-} from '../electrodes/lookup';
+import { buildElectrodeIndex, electrodeAt, lookupElectrode } from '../electrodes/lookup';
 import { fmtDuration, fmtFps } from './format';
+import { PipelineNav, PIPELINE_STEPS, type PipelineStepId } from './PipelineNav';
+import { PreviewViewer } from './PreviewViewer';
+import { RegionsStep } from './RegionsStep';
+import { useToast } from '../../app';
 import styles from './VideoMosaicFeature.module.css';
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -135,6 +126,29 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
   // buildView handles a null doc, so the built-at stamp is safe to derive before the guards below.
   const view = buildView(doc);
   const builtAt = view?.builtAt ?? null;
+
+  // ── the pipeline ───────────────────────────────────────────────────────────────────────────
+  // ⭐ His ask, 2026-08-11: one pipeline with a progress bar at the top, walked step by step.
+  // Each step is a genuine precondition of the next — there is no mosaic to map electrodes on
+  // before the survey is built, and a located region whose electrodes cannot be named is half an
+  // answer — so `reachable` is derived from the DOCUMENT, never from where the user has clicked.
+  const toast = useToast();
+  const mapped = Boolean(doc?.electrodes?.built_at);
+  const reachable = 1 + (doc?.source ? 1 : 0) + (view ? 1 : 0) + (mapped ? 1 : 0);
+  const [step, setStep] = useState<PipelineStepId | null>(null);
+  // Opening a project lands on the furthest step that is ready: the work is where you left it,
+  // and a finished pipeline opens on its answer rather than on its first screen.
+  const current: PipelineStepId = step ?? PIPELINE_STEPS[Math.max(0, reachable - 1)];
+  const go = useCallback(
+    (id: PipelineStepId, locked: boolean): void => {
+      if (locked) {
+        toast.push('Finish the step before it first.', { tone: 'default' });
+        return;
+      }
+      setStep(id);
+    },
+    [toast],
+  );
 
   // The saved document is the truth on mount; a finished build replaces it below.
   useEffect(() => {
@@ -353,51 +367,167 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
         )}
       </header>
 
-      {buildError && (
-        <LiveWarning variant="loud" className={styles.block}>
-          <strong>Build error.</strong> {buildError}
-        </LiveWarning>
-      )}
+      <PipelineNav current={current} reachable={reachable} onStep={go} />
 
-      {!running && !view && (
-        <div className={styles.buildPanel}>
-          <Button variant="primary" size="lg" onClick={() => void build()} data-testid="vm-build">
-            Build mosaic
-          </Button>
-        </div>
-      )}
-
-      {running && (
-        <div data-testid="vm-progress">
-          <Panel title="Building" className={styles.progress}>
-            <div className={styles.barWell}>
-              <div
-                className={styles.bar}
-                style={{ transform: `scaleX(${Math.max(2, Math.min(100, job.pct ?? 0)) / 100})` }}
-              />
-            </div>
-            <div className={styles.progressRow}>
-              <span className={styles.phase} data-testid="vm-phase">
-                {job.phase ?? 'starting…'}
-                {job.phaseIndex != null && job.nPhases != null
-                  ? ` · ${job.phaseIndex + 1}/${job.nPhases}`
-                  : ''}
-              </span>
-              <span className={styles.eta} data-testid="vm-eta">
-                {job.etaText ?? ''}
-              </span>
-              <Button variant="danger" size="sm" onClick={() => void cancel()} data-testid="vm-cancel">
-                Cancel
-              </Button>
-            </div>
-            {job.message && <div className={styles.msg}>{job.message}</div>}
+      {/* ── 1 · SURVEY — the video the mosaic is built from ────────────────────────────────── */}
+      {current === 'survey' && (
+        <div data-testid="vm-step-survey">
+          <Panel
+            title="Survey recording"
+            help={
+              'The calcium video that sweeps the whole MEA. Its frames are what the mosaic is ' +
+              'stitched from, so everything downstream is measured in its pixels.\n\n' +
+              'It lives in the project — Camea keeps its own copy, so moving or deleting the ' +
+              'original does not break the project.'
+            }
+          >
+            {src ? (
+              <div className={styles.stats}>
+                <span className={styles.fact}>
+                  <span className={styles.factLabel}>file</span>
+                  {src.name}
+                </span>
+                <span className={styles.fact}>
+                  <span className={styles.factLabel}>frame</span>
+                  {src.width}×{src.height}
+                </span>
+                <span className={styles.fact}>
+                  <span className={styles.factLabel}>frames</span>
+                  {src.n_frames}
+                </span>
+                <span className={styles.fact}>
+                  <span className={styles.factLabel}>rate</span>
+                  {fmtFps(src.fps)} fps
+                </span>
+                <span className={styles.fact}>
+                  <span className={styles.factLabel}>length</span>
+                  {fmtDuration(src.duration_s)}
+                </span>
+              </div>
+            ) : (
+              <LiveWarning variant="loud">
+                <strong>This project has no survey video.</strong> It cannot build a mosaic until
+                one is added.
+              </LiveWarning>
+            )}
+            {src && (
+              <div className={styles.mapRow}>
+                <Button
+                  variant="primary"
+                  onClick={() => setStep('mosaic')}
+                  data-testid="vm-to-mosaic"
+                >
+                  Continue
+                </Button>
+              </div>
+            )}
           </Panel>
         </div>
       )}
 
-      {!running && view && (
-        <>
-          <StatsStrip doc={doc} view={view} />
+      {/* ── 2 · MOSAIC — build it, then look at it ─────────────────────────────────────────── */}
+      {current === 'mosaic' && (
+        <div data-testid="vm-step-mosaic">
+          {buildError && (
+            <LiveWarning variant="loud" className={styles.block}>
+              <strong>Build error.</strong> {buildError}
+            </LiveWarning>
+          )}
+
+          {!running && !view && (
+            <div className={styles.buildPanel}>
+              <Button
+                variant="primary"
+                size="lg"
+                onClick={() => void build()}
+                data-testid="vm-build"
+              >
+                Build mosaic
+              </Button>
+            </div>
+          )}
+
+          {running && (
+            <div data-testid="vm-progress">
+              <Panel title="Building" className={styles.progress}>
+                <div className={styles.barWell}>
+                  <div
+                    className={styles.bar}
+                    style={{
+                      transform: `scaleX(${Math.max(2, Math.min(100, job.pct ?? 0)) / 100})`,
+                    }}
+                  />
+                </div>
+                <div className={styles.progressRow}>
+                  <span className={styles.phase} data-testid="vm-phase">
+                    {job.phase ?? 'starting…'}
+                    {job.phaseIndex != null && job.nPhases != null
+                      ? ` · ${job.phaseIndex + 1}/${job.nPhases}`
+                      : ''}
+                  </span>
+                  <span className={styles.eta} data-testid="vm-eta">
+                    {job.etaText ?? ''}
+                  </span>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() => void cancel()}
+                    data-testid="vm-cancel"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+                {job.message && <div className={styles.msg}>{job.message}</div>}
+              </Panel>
+            </div>
+          )}
+
+          {!running && view && (
+            <>
+              <StatsStrip doc={doc} view={view} />
+              <PreviewViewer
+                analysisId={analysisId}
+                builtAt={view.builtAt}
+                canvas={view.canvas}
+                payload={null}
+                selection={null}
+                showGrid={false}
+              />
+              <div className={styles.builtActions}>
+                <Button variant="ghost" onClick={() => void build()} data-testid="vm-rebuild">
+                  Rebuild
+                </Button>
+                {/* The whole mosaic, at full canvas resolution — the browser streams it to disk
+                    without decoding, so this costs the same however big the canvas gets. */}
+                <ButtonLink
+                  variant="ghost"
+                  href={videoOutputUrl(analysisId, 'mosaic.png', view.builtAt)}
+                  download={`${downloadName(summary.name)}.png`}
+                  data-testid="vm-download"
+                >
+                  Download full resolution
+                  {view.canvas && (
+                    <span className={styles.downloadSize}>
+                      {view.canvas.w}×{view.canvas.h}
+                    </span>
+                  )}
+                </ButtonLink>
+                <Button
+                  variant="primary"
+                  onClick={() => setStep('electrodes')}
+                  data-testid="vm-to-electrodes"
+                >
+                  Map electrodes
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── 3 · ELECTRODES — number the lattice, then click it ─────────────────────────────── */}
+      {current === 'electrodes' && view && (
+        <div data-testid="vm-step-electrodes">
           <PreviewViewer
             analysisId={analysisId}
             builtAt={view.builtAt}
@@ -439,12 +569,12 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
             </div>
           )}
 
-          {/* ⭐ **THE REFUSAL IS SHOWN WHOLE** (R45.8 strict). Under "whole chip imaged" the fit ends
-              in a map or a REFUSAL, and the refusal is the useful half: it names the shape it found,
-              the shape the device wants, and tells him to answer "part of the chip" if that is what
-              this mosaic is. So it renders verbatim — never trimmed to a code, never a generic
-              "mapping failed" — and the coverage question stays on the page beneath it, so the fix
-              he is being told to make is one click away. */}
+          {/* ⭐ **THE REFUSAL IS SHOWN WHOLE** (R45.8 strict). Under "whole chip imaged" the fit
+              ends in a map or a REFUSAL, and the refusal is the useful half: it names the shape it
+              found, the shape the device wants, and tells him to answer "part of the chip" if that
+              is what this mosaic is. So it renders verbatim — never trimmed to a code, never a
+              generic "mapping failed" — and the coverage question stays on the page beneath it, so
+              the fix he is being told to make is one click away. */}
           {mapError && (
             <div data-testid="vm-electrodes-map-error">
               <LiveWarning variant="loud">
@@ -500,30 +630,35 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
             </Panel>
           )}
 
-          <div className={styles.builtActions}>
-            <Button variant="ghost" onClick={() => void build()} data-testid="vm-rebuild">
-              Rebuild
-            </Button>
-            {/* The whole mosaic, at full canvas resolution — the browser streams it to disk without
-                decoding, so this costs the same however big the canvas gets. */}
-            <ButtonLink
-              variant="ghost"
-              href={videoOutputUrl(analysisId, 'mosaic.png', view.builtAt)}
-              download={`${downloadName(summary.name)}.png`}
-              data-testid="vm-download"
-            >
-              Download full resolution
-              {view.canvas && (
-                <span className={styles.downloadSize}>
-                  {view.canvas.w}×{view.canvas.h}
-                </span>
-              )}
-            </ButtonLink>
-          </div>
-          {/* ⭐ Browse what this project built, and take a copy of what you want (R44). The SAME
-              panel every feature mounts — not a copy of it. */}
-          <OutputsPanel analysisId={analysisId} version={view.builtAt} title="Files" />
-        </>
+          {emap && !emap.stale && (
+            <div className={styles.builtActions}>
+              <Button
+                variant="primary"
+                onClick={() => setStep('regions')}
+                data-testid="vm-to-regions"
+              >
+                Locate recordings
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 4 · REGIONS — where each fixed-field recording was taken ───────────────────────── */}
+      {current === 'regions' && view && (
+        <RegionsStep
+          analysisId={analysisId}
+          builtAt={view.builtAt}
+          canvas={view.canvas}
+          payload={emap}
+          onDocChanged={(d: VideoMosaicDocument) => setDoc(d)}
+        />
+      )}
+
+      {/* ⭐ Browse what this project built, and take a copy of what you want (R44). The SAME panel
+          every feature mounts — not a copy of it. */}
+      {view && current !== 'survey' && (
+        <OutputsPanel analysisId={analysisId} version={view.builtAt} title="Files" />
       )}
     </div>
   );
@@ -568,336 +703,3 @@ function StatsStrip({ doc, view }: { doc: VideoMosaicDocument; view: BuildView }
     </div>
   );
 }
-
-// ── The preview — a real zoom/pan viewer over the built mosaic ────────────────────────────────
-//
-// ⭐ 100 % MEANS 100 % OF THE MOSAIC (2026-08-07). This viewer used to show `preview.png` in both
-// states — 2048 px on the long side, 7.3 % of the pixels of a 5331×7552 build — so "view at 100%"
-// was a 3.7× lie and the real file, sitting on disk behind a working route the whole time, was
-// never once requested. Zooming now fetches `mosaic.png`. The browser was never the bottleneck:
-// Chrome decodes the full 40 Mpx file in ~80 ms against a 2²⁹-pixel ceiling. The small preview
-// still serves the fit view, so the screen paints instantly after a build; the full file is
-// fetched the moment the zoom passes the point where the preview would blur, and layered ON TOP so
-// the picture never blanks.
-//
-// ⭐ **WHEEL TO ZOOM, DRAG TO PAN (2026-08-11).** It used to be a scroll box with a fit ↔ 100 %
-// toggle, and that was enough while the screen was only ever *looked* at. Identification made it a
-// working surface: at fit, his 5319×7356 mosaic draws 1024 px wide, so an electrode is 5.9 CSS px
-// and pointing at one is not a thing a hand can do. Now the camera is continuous between fit and
-// 8×, the click identifies whatever the current zoom can honestly resolve (R45.7), and the mapped
-// lattice is DRAWN — outline when zoomed out, pad dots as they become separable, ids when there is
-// room for text. "Which electrode is this?" is answerable by eye before you even click.
-
-interface ViewState {
-  scale: number; // CSS px per mosaic px
-  tx: number; //   screen x of mosaic x=0
-  ty: number;
-}
-
-/** Zoom ceiling — 8 mosaic px per CSS px is well past the point where the pixels themselves show. */
-const MAX_SCALE = 8;
-/** `preview.png` is ~2048 px on the long side; past this the full file is worth its bytes. */
-const FULL_RES_ABOVE = 0.34;
-/** A press that travels further than this is a pan, not an identification click. */
-const CLICK_SLOP_PX = 4;
-
-function PreviewViewer({
-  analysisId,
-  builtAt,
-  canvas,
-  payload,
-  selection,
-  onPick,
-}: {
-  analysisId: string;
-  builtAt: string | null;
-  canvas: { w: number; h: number } | null;
-  payload: ElectrodeMapPayload | null;
-  selection: ElectrodeSelection | null;
-  onPick: (x: number, y: number, scale: number) => void;
-}) {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const [box, setBox] = useState({ w: 0, h: 0 });
-  const [view, setView] = useState<ViewState | null>(null);
-  const [idsOn, setIdsOn] = useState(false);
-  const [fullReady, setFullReady] = useState(false);
-  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
-
-  // The map exists AND the build told us the canvas: a plain click identifies. Without the canvas
-  // size the preview's own pixels are the only frame there is, and the map's coordinates would not
-  // mean anything in it — so identification stays off rather than answering with a guess.
-  const identify = payload != null && canvas != null;
-
-  // ── the camera ────────────────────────────────────────────────────────────────────────────────
-  // The mosaic's own size drives the camera. It comes from the build block; if a build ever lands
-  // without one, the preview's natural size stands in — a viewer with no picture is not an option.
-  const world = canvas ?? natural;
-  const fitScale = world && box.w > 0 ? Math.min(box.w / world.w, box.h / world.h) : 0;
-
-  /** Keep the picture on the stage: centred while it is smaller than the box, inside it when not. */
-  const clampView = useCallback(
-    (v: ViewState): ViewState => {
-      if (!world) return v;
-      const w = world.w * v.scale;
-      const h = world.h * v.scale;
-      const axis = (t: number, drawn: number, avail: number): number =>
-        drawn <= avail ? (avail - drawn) / 2 : Math.min(0, Math.max(avail - drawn, t));
-      return { scale: v.scale, tx: axis(v.tx, w, box.w), ty: axis(v.ty, h, box.h) };
-    },
-    [world, box.w, box.h],
-  );
-
-  const setScaleAt = useCallback(
-    (next: number, sx: number, sy: number) => {
-      setView((v) => {
-        if (!v || !world) return v;
-        const s = Math.min(MAX_SCALE, Math.max(fitScale, next));
-        if (s === v.scale) return v;
-        const k = s / v.scale;
-        return clampView({ scale: s, tx: sx - (sx - v.tx) * k, ty: sy - (sy - v.ty) * k });
-      });
-    },
-    [world, clampView, fitScale],
-  );
-
-  const fitNow = useCallback(() => {
-    if (!world || box.w === 0) return;
-    setView(clampView({ scale: fitScale, tx: 0, ty: 0 }));
-  }, [world, box.w, clampView, fitScale]);
-
-  // Measure the stage; fit the first time it and the canvas are both known.
-  useEffect(() => {
-    const el = boxRef.current;
-    if (!el) return;
-    const measure = (): void => setBox({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    // A new build invalidates the loaded pixels and the camera alike.
-    setFullReady(false);
-    setView(null);
-  }, [builtAt]);
-
-  useEffect(() => {
-    if (view == null) fitNow();
-    else setView((v) => (v ? clampView(v) : v)); // a resize must not strand the picture off-stage
-  }, [view == null, fitNow, clampView]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Wheel = zoom at the pointer. A native non-passive listener: React's is passive, so it could not
-  // preventDefault and the page would scroll away underneath the zoom.
-  useEffect(() => {
-    const el = boxRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent): void => {
-      e.preventDefault();
-      const r = el.getBoundingClientRect();
-      const step = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY; // lines vs pixels
-      setView((v) =>
-        v
-          ? ((): ViewState => {
-              const s = Math.min(MAX_SCALE, Math.max(fitScale, v.scale * Math.exp(-step * 0.0022)));
-              const k = s / v.scale;
-              const sx = e.clientX - r.left;
-              const sy = e.clientY - r.top;
-              return clampView({ scale: s, tx: sx - (sx - v.tx) * k, ty: sy - (sy - v.ty) * k });
-            })()
-          : v,
-      );
-    };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, [clampView, fitScale]);
-
-  // Drag = pan. A press that did not travel is a click, and a click identifies. The pointer is
-  // CAPTURED for the drag, so a pan that runs off the stage keeps panning and still ends cleanly.
-  const drag = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean } | null>(null);
-  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    if (!view || e.button !== 0) return;
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-    drag.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty, moved: false };
-  };
-  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    const d = drag.current;
-    if (!d) return;
-    const dx = e.clientX - d.x;
-    const dy = e.clientY - d.y;
-    if (!d.moved && Math.hypot(dx, dy) <= CLICK_SLOP_PX) return;
-    d.moved = true;
-    setView((v) => (v ? clampView({ scale: v.scale, tx: d.tx + dx, ty: d.ty + dy }) : v));
-  };
-  const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    const d = drag.current;
-    drag.current = null;
-    e.currentTarget.releasePointerCapture?.(e.pointerId);
-    if (!d || d.moved || !view || !identify) return;
-    const el = boxRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    onPick(
-      (e.clientX - r.left - view.tx) / view.scale,
-      (e.clientY - r.top - view.ty) / view.scale,
-      view.scale,
-    );
-  };
-
-  const wantFull = (view?.scale ?? 0) > FULL_RES_ABOVE || fullReady;
-  const loading = wantFull && !fullReady;
-  const zoomPct = view ? Math.round(view.scale * 100) : null;
-  const atFit = view != null && fitScale > 0 && Math.abs(view.scale - fitScale) < 1e-6;
-  const marker =
-    payload && selection && view
-      ? {
-          left: selection.hit.centerX * view.scale + view.tx,
-          top: selection.hit.centerY * view.scale + view.ty,
-          d: Math.max(12, hitRadiusAt(payload, view.scale) * view.scale * 2),
-        }
-      : null;
-
-  return (
-    <div className={styles.viewerWrap}>
-      <div
-        className={styles.viewer}
-        data-testid="vm-viewer"
-        ref={boxRef}
-        data-fit={atFit || undefined}
-        data-loading={loading || undefined}
-        data-identify={identify || undefined}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={() => (drag.current = null)}
-        onDoubleClick={(e) => {
-          const el = boxRef.current;
-          if (!el || !view) return;
-          const r = el.getBoundingClientRect();
-          setScaleAt(view.scale * 2, e.clientX - r.left, e.clientY - r.top);
-        }}
-        title={
-          identify
-            ? 'Click an electrode to identify it · wheel to zoom · drag to pan'
-            : 'Wheel to zoom · drag to pan'
-        }
-      >
-        <div
-          className={styles.world}
-          style={
-            view && world
-              ? {
-                  width: world.w,
-                  height: world.h,
-                  transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`,
-                }
-              : { width: 'auto', height: 'auto' }
-          }
-        >
-          {/* The small file paints immediately and stays as the base; the full one layers over it
-              once decoded, so zooming never blanks the picture. */}
-          <img
-            className={styles.preview}
-            data-testid="vm-preview"
-            alt="Mosaic preview"
-            src={videoOutputUrl(analysisId, 'preview.png', builtAt)}
-            onLoad={(e) =>
-              setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
-            }
-            draggable={false}
-          />
-          {wantFull && (
-            <img
-              className={styles.previewFull}
-              data-testid="vm-preview-full"
-              data-ready={fullReady || undefined}
-              alt=""
-              aria-hidden="true"
-              src={videoOutputUrl(analysisId, 'mosaic.png', builtAt)}
-              onLoad={() => setFullReady(true)}
-              draggable={false}
-            />
-          )}
-        </div>
-
-        {payload && view && identify && (
-          <GridOverlay
-            payload={payload}
-            scale={view.scale}
-            tx={view.tx}
-            ty={view.ty}
-            width={box.w}
-            height={box.h}
-            idsOn={idsOn}
-            className={styles.gridLayer}
-          />
-        )}
-
-        {marker && selection && (
-          <div
-            className={styles.vmMarker}
-            data-testid="vm-electrode-marker"
-            data-electrode={selection.hit.electrode}
-            style={{
-              left: marker.left,
-              top: marker.top,
-              width: marker.d,
-              height: marker.d,
-            }}
-          >
-            <span className={styles.vmMarkerLabel}>{selection.hit.electrode}</span>
-          </div>
-        )}
-
-        {loading && <div className={styles.viewerNote}>loading full resolution…</div>}
-      </div>
-
-      <div className={styles.zoomBar}>
-        <button
-          type="button"
-          className={styles.zoomBtn}
-          data-testid="vm-zoom-out"
-          onClick={() => setScaleAt((view?.scale ?? 1) / 1.6, box.w / 2, box.h / 2)}
-          title="Zoom out"
-        >
-          −
-        </button>
-        <span className={styles.zoomLevel} data-testid="vm-zoom-level">
-          {zoomPct != null ? `${zoomPct}%` : '—'}
-        </span>
-        <button
-          type="button"
-          className={styles.zoomBtn}
-          data-testid="vm-zoom-in"
-          onClick={() => setScaleAt((view?.scale ?? 1) * 1.6, box.w / 2, box.h / 2)}
-          title="Zoom in"
-        >
-          +
-        </button>
-        <button
-          type="button"
-          className={styles.zoomBtn}
-          data-testid="vm-zoom-toggle"
-          onClick={() => (atFit ? setScaleAt(1, box.w / 2, box.h / 2) : fitNow())}
-          title={atFit ? 'View the full-resolution mosaic' : 'Fit the whole mosaic'}
-        >
-          {atFit ? '100%' : 'Fit'}
-        </button>
-        {identify && (
-          <button
-            type="button"
-            role="switch"
-            aria-checked={idsOn}
-            className={cx(styles.zoomBtn, idsOn && styles.zoomBtnOn)}
-            data-testid="vm-electrode-ids-toggle"
-            onClick={() => setIdsOn((v) => !v)}
-            title={`Label every visible electrode (from ${IDS_MIN_STEP_PX} px between centres — zoom in)`}
-          >
-            IDs
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
