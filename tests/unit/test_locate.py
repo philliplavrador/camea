@@ -120,6 +120,28 @@ def test_measure_zoom_reports_a_measurement_not_a_guess(scene):
         "same rig, same orientation — the measured angles must agree")
 
 
+def test_a_harmonic_in_one_picture_does_not_win_the_vote(scene):
+    """🔴 SEEN ON REAL VIDEO. The std-dev picture of a compressed recording reported **8.0 px**
+    for a true 32 px comb — a harmonic — and did so with the STRONGEST spectral peak of the
+    three. "Take the strongest" would have set the zoom four times too small; "require
+    unanimity" would have let that one voice veto a median and a max agreeing exactly. The
+    winner is the pitch the most pictures agree on; strength only breaks a tie."""
+    pm = 30.105
+    real = scene["frames"]
+    stills = locate.still_stack(real)
+    # the two honest pictures agree; a planted third insists on a quarter-period, very loudly
+    fake = np.zeros((400, 400), np.float32)
+    yy, xx = np.mgrid[0:400, 0:400]
+    q = locate.measure_zoom(stills["median"], pm).pitch_recording or 73.1
+    fake += 100.0 * np.cos(2 * np.pi * xx / (q / 4)) * np.cos(2 * np.pi * yy / (q / 4))
+
+    z = locate.measure_zoom({**stills, "loud": fake}, pm)
+
+    assert z.measured is True, z.note
+    assert z.pitch_recording == pytest.approx(q, rel=0.05), (
+        f"the harmonic won: {z.pitch_recording} instead of {q}")
+
+
 def test_a_picture_with_no_lattice_says_so_instead_of_inventing_a_zoom():
     """A recording of bare tissue has no ruler in it. That is an answer, not a failure — and
     it must fall back to a search rather than report a made-up measurement."""
@@ -266,6 +288,29 @@ def test_a_dragged_rectangle_snaps_back_to_the_truth(placed):
     assert out.best is not None, out.refused
     assert out.best.x == pytest.approx(TRUTH_X, abs=3.0)
     assert out.best.y == pytest.approx(TRUTH_Y, abs=3.0)
+
+
+def test_the_snap_window_covers_the_drag(placed):
+    """🔴 FOUND BY DRIVING THE REAL APP. At fit zoom a 5319x7356 mosaic draws at ~0.079 CSS px
+    per mosaic px, so a 40 px nudge of the mouse moves the rectangle **506 mosaic px**. With the
+    old fixed ±96 px window the snap could not reach back and landed 450 px from the truth at
+    NCC 0.51 — a confident-looking correction that was simply wrong. The window must be scaled
+    by the gesture, not by what sounds generous in mosaic pixels. (R45.7's lesson again.)"""
+    assert locate.snap_radius_for(0) == locate.SNAP_RADIUS
+    assert locate.snap_radius_for(506) > 506, "the search must reach back over the drag"
+    assert locate.snap_radius_for(10_000) == locate.SNAP_RADIUS_MAX
+
+    loc = placed["loc"]
+    tpl, tmsk = locate.prepare_template(placed["stills"][loc.still_kind], loc.zoom.scale)
+    dropped = (TRUTH_X + 300, TRUTH_Y - 210)          # a big, ordinary fit-zoom drag
+    moved = math.hypot(dropped[0] - TRUTH_X, dropped[1] - TRUTH_Y)
+
+    out = locate.snap(placed["ref"], placed["rmask"], tpl, tmsk, dropped,
+                      radius=locate.snap_radius_for(moved), lattice=placed["lattice"])
+
+    assert out.best is not None, out.refused
+    assert math.hypot(out.best.x - TRUTH_X, out.best.y - TRUTH_Y) < 8.0, (
+        f"snapped to ({out.best.x:.1f}, {out.best.y:.1f}), truth ({TRUTH_X}, {TRUTH_Y})")
 
 
 def test_the_snap_radius_is_clamped(placed):

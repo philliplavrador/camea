@@ -94,9 +94,29 @@ SNAP_RADIUS = 96
 snapshot sweep's 64 because the user is dragging across a whole mosaic rather than nudging a
 tile — but a LOCAL search is alias-bound by construction, so this is clamped (see `snap`)."""
 
-SNAP_RADIUS_MAX = 512
+SNAP_RADIUS_MAX = 768
 """⚠️ The hard ceiling on a local search. Past this, use a global match: local mode has no FFT
-and no margin over the whole plane, so a wide local sweep is exactly how a grid alias wins."""
+and no margin over the whole plane, so a wide local sweep is exactly how a grid alias wins.
+
+⭐ **Why it is this big** — found by driving the real app. A mosaic 5319 x 7356 draws ~0.079
+CSS px per mosaic px at fit zoom, so a 40 px nudge of the mouse is a **506 px** move on the
+mosaic. A radius that sounds generous in mosaic pixels is nothing at all in hand movements,
+and the first ceiling (512) could not reach back from an ordinary drag: the snap landed 450 px
+from the truth at NCC 0.51. This is R45.7 again in a different costume — a distance that is
+sane in mosaic px is meaningless on screen — and the answer is the same: let the interaction's
+own scale set the number (`snap_radius_for`), and put the ceiling where a search is still
+affordable rather than where it merely sounded safe."""
+
+
+def snap_radius_for(moved_px: float) -> int:
+    """The local-search half-width that can actually reach back from a drag of `moved_px`.
+
+    The user drags to say *"it belongs over there"*; if the search cannot cover the distance he
+    moved it, the snap answers a question he did not ask. So the window is the drag plus a
+    margin — never smaller than the default, never past the ceiling.
+    """
+    want = 1.25 * abs(float(moved_px)) + 64.0
+    return int(max(SNAP_RADIUS, min(SNAP_RADIUS_MAX, round(want))))
 
 MAX_CANDIDATES = 9
 
@@ -389,7 +409,8 @@ def match(ref: np.ndarray, refmask: np.ndarray, tpl: np.ndarray, tplmask: np.nda
 
 def snap(ref: np.ndarray, refmask: np.ndarray, tpl: np.ndarray, tplmask: np.ndarray,
          near: Sequence[float], radius: int = SNAP_RADIUS,
-         *, max_candidates: int = MAX_CANDIDATES) -> MatchOutcome:
+         *, max_candidates: int = MAX_CANDIDATES,
+         lattice: tuple[Sequence[float], Sequence[float]] | None = None) -> MatchOutcome:
     """*"I dropped it here — now snap it."* Exhaustive exact-NCC around `near`, no FFT.
 
     `near` is the top-left the user dragged the rectangle to, in the reference's pixel space.
@@ -406,11 +427,27 @@ def snap(ref: np.ndarray, refmask: np.ndarray, tpl: np.ndarray, tplmask: np.ndar
     r = int(max(8, min(int(radius), SNAP_RADIUS_MAX)))
     cx, cy = int(round(float(near[0]))), int(round(float(near[1])))
 
-    # coarse sweep, then NMS, then an honest stride-1 score for everything kept
+    # ⚠️ The coarse grid is O(r²) evaluations, so a wide window has to step wider or a drag from
+    # fit zoom would cost tens of seconds. Rank 0 is polished by ±`step` afterwards, so nothing
+    # is lost: the coarse pass only has to land within one step of the peak.
+    step = 4 if r <= 160 else 8
+
+    # 🔴 A WIDE LOCAL SEARCH IS ALIAS-PRONE — measured: over a ±440 px window on a grid-dominated
+    # scene it picked the cell one row DOWN (29.2 px on a 30.1 px pitch) at a comfortable 0.87.
+    # Narrow windows are safe because they cannot reach a neighbouring cell at all; wide ones can,
+    # and then the comb decides. So the same split as the global search applies at this scale
+    # too: FIND THE CELL on the notched picture, where the comb cannot vote, and SETTLE THE PIXEL
+    # on the plain one, where the grid is the sharpest detail there is.
+    wide = lattice is not None and r > 160
+    cref, ctpl = ref, tpl
+    if wide:
+        cref = notch_lattice(ref, lattice[0], lattice[1], valid=refmask)
+        ctpl = notch_lattice(tpl, lattice[0], lattice[1])
+
     coarse: list[tuple[float, int, int, int]] = []
-    for dy in range(cy - r, cy + r + 1, 4):
-        for dx in range(cx - r, cx + r + 1, 4):
-            ncc, npix = t33.exact_ncc(ref, refmask, tpl, tplmask, dx, dy, stride=4)
+    for dy in range(cy - r, cy + r + 1, step):
+        for dx in range(cx - r, cx + r + 1, step):
+            ncc, npix = t33.exact_ncc(cref, refmask, ctpl, tplmask, dx, dy, stride=4)
             if math.isfinite(ncc):
                 coarse.append((float(ncc), dx, dy, int(npix)))
     if not coarse:
@@ -429,9 +466,10 @@ def snap(ref: np.ndarray, refmask: np.ndarray, tpl: np.ndarray, tplmask: np.ndar
     out: list[tuple[float, int, int, int]] = []
     for i, (_ncc, dx, dy, _n) in enumerate(kept):
         if i == 0:
+            # the polish is ALWAYS on the plain picture — see the note above
             best = (-2.0, dx, dy, 0)
-            for yy in range(dy - 4, dy + 5):
-                for xx in range(dx - 4, dx + 5):
+            for yy in range(dy - step, dy + step + 1):
+                for xx in range(dx - step, dx + step + 1):
                     v, n = t33.exact_ncc(ref, refmask, tpl, tplmask, xx, yy)
                     if math.isfinite(v) and v > best[0]:
                         best = (float(v), xx, yy, int(n))
@@ -539,7 +577,22 @@ def scale_ladder(lo: float = _SCALE_LADDER_LO, hi: float = _SCALE_LADDER_HI,
             for v in np.linspace(math.log(lo), math.log(hi), int(n))]
 
 
-def measure_zoom(still: np.ndarray, pitch_mosaic: float, angle_mosaic: float | None = None,
+LATTICE_SNR_MIN = 12.0
+"""Below this the FFT fundamental is not distinct enough to call a MEASUREMENT.
+
+⚠️ `GridConfig.peak_snr_min` (6.0) is the floor for *refusing to see a lattice at all*, and it is
+not the same question. A recording can clear it and still hand back a confidently wrong period —
+observed: a 500 x 380 frame of a 40 px comb (whose fundamental sits ~6 FFT bins from DC, inside
+the blob continuum) reported `pitch 17.88, angle -24.78` with every appearance of success, which
+drove a scale that was half right and a placement **475 px** out. The `measured` flag exists to
+tell a measurement from a guess; without a floor of its own it cannot."""
+
+AGREE_FRAC = 0.05
+"""Two independent projections of the same recording must agree on the pitch to within this."""
+
+
+def measure_zoom(still: np.ndarray | dict, pitch_mosaic: float,
+                 angle_mosaic: float | None = None,
                  *, pitch_min: float = 6.0, pitch_max: float = 200.0) -> Zoom:
     """Read the recording's lattice and turn it into a scale. Never raises.
 
@@ -559,17 +612,60 @@ def measure_zoom(still: np.ndarray, pitch_mosaic: float, angle_mosaic: float | N
         return Zoom(scale=1.0, measured=False,
                     note="the mosaic's own lattice pitch is unknown, so there is nothing to "
                          "compare the recording against")
-    try:
-        pr, ar, _snr = electrodegrid.measure_lattice(
-            still, pitch_min=pitch_min, pitch_max=pitch_max)
-    except Exception as e:                                          # noqa: BLE001
+    # ⭐ TWO INDEPENDENT WITNESSES. When several projections of the recording are available they
+    # are all read, and they must AGREE. They share no noise and very little structure — a median
+    # is the steady picture, a max is every cell that ever fired — so a period both of them find
+    # is in the tissue, while a spurious peak in one is very unlikely to be echoed by the other.
+    # This is the cheapest honest check available, and it costs one extra FFT.
+    stills = ({k: v for k, v in still.items() if isinstance(v, np.ndarray)}
+              if isinstance(still, dict) else {"still": still})
+    if not stills:
         return Zoom(scale=1.0, measured=False, pitch_mosaic=pm, angle_mosaic=angle_mosaic,
-                    note=f"no electrode lattice could be measured in the recording ({e}) — "
-                         "falling back to a search over zoom factors")
+                    note="there is no picture of the recording to measure")
+
+    reads: dict[str, tuple[float, float, float]] = {}
+    last_err = ""
+    for kind, img in stills.items():
+        try:
+            reads[kind] = electrodegrid.measure_lattice(
+                img, pitch_min=pitch_min, pitch_max=pitch_max)
+        except Exception as e:                                      # noqa: BLE001
+            last_err = str(e)
+    if not reads:
+        return Zoom(scale=1.0, measured=False, pitch_mosaic=pm, angle_mosaic=angle_mosaic,
+                    note=f"no electrode lattice could be measured in the recording ({last_err}) "
+                         "— falling back to a search over zoom factors")
+
+    strong = {k: v for k, v in reads.items() if v[2] >= LATTICE_SNR_MIN}
+    if not strong:
+        best = max(reads.values(), key=lambda v: v[2])
+        return Zoom(scale=1.0, measured=False, pitch_mosaic=pm, angle_mosaic=angle_mosaic,
+                    note=f"the recording's lattice is too faint to measure (strongest peak "
+                         f"{best[2]:.1f}, needs {LATTICE_SNR_MIN:.0f}) — falling back to a "
+                         "search over zoom factors")
+
+    # ⭐ CONSENSUS, NOT STRENGTH. The winner is the pitch the most pictures agree on, and SNR only
+    # breaks a tie. ⚠️ Both simpler rules were tried and are wrong on real video:
+    #   * "take the strongest" — measured, a std-dev picture of a compressed recording reported
+    #     **8.0 px** for a true 32 px comb (a harmonic) with the HIGHEST peak of the three, and
+    #     would have set the zoom four times too small.
+    #   * "require unanimity" — that same odd read would veto a median and a max agreeing
+    #     exactly, throwing away an honest measurement in favour of a search.
+    # Counting agreement is what survives both: a harmonic is one voice, the truth is two.
+    def votes(p: float) -> int:
+        return sum(1 for v in strong.values() if abs(v[0] - p) <= AGREE_FRAC * p)
+
+    kind = max(strong, key=lambda k: (votes(strong[k][0]), strong[k][2]))
+    pr, ar, snr = strong[kind]
+    if len(strong) > 1 and votes(pr) < 2:
+        return Zoom(scale=1.0, measured=False, pitch_mosaic=pm, angle_mosaic=angle_mosaic,
+                    note="the recording's pictures disagree about the electrode pitch ("
+                         + ", ".join(f"{k} {v[0]:.1f}px" for k, v in strong.items())
+                         + ") — falling back to a search over zoom factors")
     return Zoom(scale=pm / pr, measured=True, pitch_recording=pr, pitch_mosaic=pm,
                 angle_recording=ar, angle_mosaic=angle_mosaic,
-                note=f"measured: {pr:.3f} px pitch in the recording against {pm:.3f} px in "
-                     f"the mosaic")
+                note=f"measured on the {kind}: {pr:.3f} px pitch in the recording (peak "
+                     f"{snr:.0f}x background) against {pm:.3f} px in the mosaic")
 
 
 # =================================================================================================
