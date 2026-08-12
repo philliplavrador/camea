@@ -1,10 +1,13 @@
 // PROJECTS — the manager's read model. A "project" IS an analysis (one dataset + one task/feature +
-// a name + a document + outputs), living in ONE FOLDER the user named; the manager lists, renames,
-// removes and deletes them. Create lives in the new-project flow (it needs an open session to author
-// the document on the server).
+// a name + a document + outputs), living in ONE FOLDER **in Camea's own store** (R44); the manager
+// lists, renames and deletes them. Create lives in the new-project flow (it needs an open session to
+// author the document on the server).
 //
-// ⭐ `listAnalyses` (GET /api/projects) never 409s: since 2026-07-25 there is no store to choose
-// first, so an empty list is the honest first-run answer and this hook mounts unconditionally.
+// ⭐ `listAnalyses` (GET /api/projects) never 409s: there is no store to choose first, so an empty
+// list is the honest first-run answer and this hook mounts unconditionally.
+//
+// ⭐ `migration` rides along on that same response. It is set ONCE — the first launch after R44,
+// when projects were brought in from the folders the user used to name — and null forever after.
 
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -12,18 +15,25 @@ import {
   deleteAnalysis,
   renameAnalysis,
   type AnalysisSummary,
+  type MigrationReport,
 } from '../../api';
 
 export type ProjectsState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; projects: AnalysisSummary[]; unreadable: string[] };
+  | {
+      status: 'ready';
+      projects: AnalysisSummary[];
+      unreadable: string[];
+      migration: MigrationReport | null;
+    };
 
 export interface UseProjects {
   state: ProjectsState;
   refresh: () => void;
-  /** `deleteFiles: false` forgets it (files stay); `true` removes Camea's files from the folder. */
-  remove: (id: string, deleteFiles?: boolean) => Promise<void>;
+  /** ⭐ **DELETE MEANS DELETE** (R44) — the project and everything in it. The confirmation is the
+   *  caller's job; R42.8's forget-vs-delete is retired with the folders it protected. */
+  remove: (id: string) => Promise<void>;
   rename: (id: string, name: string) => Promise<AnalysisSummary>;
 }
 
@@ -36,9 +46,14 @@ export function useProjects(): UseProjects {
     let cancelled = false;
     setState({ status: 'loading' });
     listAnalyses().then(
-      ({ analyses, unreadable }) => {
+      ({ analyses, unreadable, migration }) => {
         if (!cancelled)
-          setState({ status: 'ready', projects: analyses, unreadable: unreadable ?? [] });
+          setState({
+            status: 'ready',
+            projects: analyses,
+            unreadable: unreadable ?? [],
+            migration: migration ?? null,
+          });
       },
       (e: unknown) => {
         if (!cancelled)
@@ -51,8 +66,8 @@ export function useProjects(): UseProjects {
   }, [reloadKey]);
 
   const remove = useCallback(
-    async (id: string, deleteFiles = false) => {
-      await deleteAnalysis(id, deleteFiles);
+    async (id: string) => {
+      await deleteAnalysis(id);
       refresh();
     },
     [refresh],

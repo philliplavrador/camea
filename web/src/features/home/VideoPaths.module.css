@@ -1,0 +1,40 @@
+/* VIDEO + FOLDER — only what ProjectPaths.module.css does not already provide: the plain path row
+   (no completion menu — a video is a FILE; the fs completion lists folders) and its feedback. */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 11px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--data);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.input:focus-visible {
+  border-color: var(--border-focus);
+  outline: none;
+}
+.input::placeholder {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.probing {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.error {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--danger);
+}

@@ -1,13 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// WHERE FROM, WHERE TO — the last step of New project (2026-07-25).
+// WHERE FROM — the last step of New project. ⭐ **ONE BOX, since R44 (2026-08-10).**
 //
-// His ask, verbatim: *"instead of having, like, data root or whatever … here is the path where I can
-// browse folder. No recommended directories or datasets or nothing. Just I wanna put in where I wanna
-// pull the data from and where I wanna save the data into."*
+// His ask of 2026-07-25 was two boxes: *"I wanna put in where I wanna pull the data from and where I
+// wanna save the data into."* His ruling of 2026-08-10 took the second one back — *"camea saves
+// project-specific files to its own repo automatically"* — so the app answers that question itself
+// and only asks the one it cannot answer: **where is your data?**
 //
-// So: two boxes. No root registry, no `N under M roots`, no grid of datasets the app went looking
-// for. He names a folder and is told what is in it; he names another and is told whether he can save
-// there. The dataset card that remains is a RECEIPT for the folder he just typed — not a menu.
+// No root registry, no `N under M roots`, no grid of datasets the app went looking for. He names a
+// folder and is told what is in it. The dataset card is a RECEIPT for the folder he typed, not a menu.
 //
 // ⛔ NO DATASET KNOWLEDGE (HARD RULE 3 / BEHAVIOUR I1). Every number on the receipt is read off the
 // `/api/datasets/at` response; `is_dataset` is the backend's shape test (`log.txt` + one `NNN.xml`),
@@ -15,14 +15,13 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from 'react';
-import { datasetsAt, checkProjectFolder, getSettings } from '../../api';
-import type { DatasetSummary, ProjectFolderInfo } from '../../api';
+import { datasetsAt, getSettings } from '../../api';
+import type { DatasetSummary } from '../../api';
 import { Button } from '../../design/primitives/Button';
 import { Help } from '../../design/primitives/Help';
 import { cx } from '../../design/cx';
 import { FolderPicker } from './FolderPicker';
 import { PathField } from './PathField';
-import { shortPath } from './pathText';
 import styles from './ProjectPaths.module.css';
 
 const FROM_HELP =
@@ -30,14 +29,9 @@ const FROM_HELP =
   'beside NNN.xml frames — point at one, or at a folder holding several and pick which. Type to ' +
   'complete; ◆ marks a dataset.';
 
-const INTO_HELP =
-  'The folder this project is saved into. It becomes the project: the document, the crash-net ' +
-  'autosave and your exports all live there. It may not be inside a dataset (your raw data is never ' +
-  'written to) or inside the Camea app itself.';
-
 export interface ProjectPathsProps {
-  /** Both paths chosen and confirmed. `folder` is where to save; `dataset` is what was found. */
-  onReady: (choice: { datasetKey: string; folder: string } | null) => void;
+  /** The dataset, once confirmed. ⭐ No save folder: the app owns that (R44). */
+  onReady: (choice: { datasetKey: string } | null) => void;
   /** Create the project. Enabled by the parent only once `onReady` has fired with a choice. */
   onCreate: () => void;
   busy?: boolean;
@@ -49,10 +43,6 @@ export function ProjectPaths({ onReady, onCreate, busy }: ProjectPathsProps) {
   const [dataset, setDataset] = useState<DatasetSummary | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
   const [browsingFrom, setBrowsingFrom] = useState(false);
-
-  // ── where TO ───────────────────────────────────────────────────────────────────
-  const [folder, setFolder] = useState<ProjectFolderInfo | null>(null);
-  const [browsingInto, setBrowsingInto] = useState(false);
 
   // The paths he has used before — the only thing offered back, and only ever paths.
   useEffect(() => {
@@ -70,8 +60,8 @@ export function ProjectPaths({ onReady, onCreate, busy }: ProjectPathsProps) {
   }, []);
 
   useEffect(() => {
-    onReady(dataset && folder ? { datasetKey: dataset.key, folder: folder.path } : null);
-  }, [dataset, folder, onReady]);
+    onReady(dataset ? { datasetKey: dataset.key } : null);
+  }, [dataset, onReady]);
 
   /** ⚠️ Throws on failure ON PURPOSE — PathField shows the backend's message inline and KEEPS the
    *  typed text. A toast here would throw away what he wrote. */
@@ -85,17 +75,6 @@ export function ProjectPaths({ onReady, onCreate, busy }: ProjectPathsProps) {
     // Exactly one (or the folder IS the acquisition): take it. Several: he picks. Never guess.
     setFound(body.datasets);
     setDataset(body.datasets.length === 1 ? body.datasets[0] : null);
-  }, []);
-
-  const saveInto = useCallback(async (path: string) => {
-    const info = await checkProjectFolder(path);
-    if (info.is_project) {
-      throw new Error('that folder already holds a Camea project — choose an empty folder.');
-    }
-    if (info.exists && !info.writable) {
-      throw new Error('that folder cannot be written to.');
-    }
-    setFolder(info);
   }, []);
 
   return (
@@ -140,48 +119,12 @@ export function ProjectPaths({ onReady, onCreate, busy }: ProjectPathsProps) {
         {dataset && <DatasetReceipt ds={dataset} onClear={() => { setDataset(null); setFound([]); }} />}
       </section>
 
-      {/* ── SAVE INTO ─────────────────────────────────────────────────────────── */}
-      <section className={styles.step}>
-        <h2 className={styles.label}>
-          Save into
-          <Help body={INTO_HELP} />
-        </h2>
-        <PathField
-          submitLabel="Use"
-          placeholder="paste a folder to save this project in…"
-          onSubmit={saveInto}
-          onBrowse={() => setBrowsingInto(true)}
-          data-testid="into-field"
-        />
-
-        {folder && (
-          <div className={styles.folderOk} data-testid="folder-receipt">
-            <span className={styles.folderPath} title={folder.path}>
-              {shortPath(folder.path, 52)}
-            </span>
-            <span className={styles.folderNote}>
-              {folder.exists
-                ? folder.empty
-                  ? 'existing empty folder'
-                  : 'existing folder — your other files there are left alone'
-                : 'will be created'}
-            </span>
-            <button
-              type="button"
-              className={styles.clear}
-              onClick={() => setFolder(null)}
-              aria-label="Choose a different save folder"
-            >
-              ✕
-            </button>
-          </div>
-        )}
-      </section>
-
+      {/* ⛔ **NO "SAVE INTO" BOX (R44).** The project goes into Camea's own store; browsing it later
+          is the Outputs panel on the project screen, which is the only door to its files. */}
       <div className={styles.actions}>
         <Button
           variant="primary"
-          disabled={!dataset || !folder || busy}
+          disabled={!dataset || busy}
           onClick={onCreate}
           data-testid="np-create"
         >
@@ -198,17 +141,6 @@ export function ProjectPaths({ onReady, onCreate, busy }: ProjectPathsProps) {
             void lookAt(p).catch(() => setDataset(null));
           }}
           onClose={() => setBrowsingFrom(false)}
-        />
-      )}
-      {browsingInto && (
-        <FolderPicker
-          title="Where should this project be saved?"
-          confirmLabel="Save here"
-          onPick={(p) => {
-            setBrowsingInto(false);
-            void saveInto(p).catch(() => setFolder(null));
-          }}
-          onClose={() => setBrowsingInto(false)}
         />
       )}
     </div>

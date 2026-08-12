@@ -175,3 +175,33 @@
   font-family: var(--font-mono);
   color: var(--text-faint);
 }
+
+/* ── The one-time R44 migration notice ────────────────────────────────────────
+   Said ONCE, at the top of the home screen, on the first launch after projects moved into Camea's
+   own store. It is news, not an error — a quiet accent rule rather than a warning colour — but it
+   sits above the grid because it explains why the folders he chose are now empty. */
+.migration {
+  margin: 0 0 24px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+.migration p {
+  margin: 0 0 6px;
+}
+.migration p:last-child {
+  margin-bottom: 0;
+}
+.migration ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-micro);
+}
+.migrationPath {
+  font-family: var(--font-mono);
+  color: var(--text-faint);
+}

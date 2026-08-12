@@ -1,0 +1,158 @@
+/* OUTPUTS — the only door to a project's files (R44, 2026-08-10).
+
+   A file list wants to read like a list of files: monospace names in a fixed first column so the
+   eye scans DOWN them, dim metadata to their right, and one action at the bottom. It borrows
+   ProjectPaths' micro-cap label so the project screen reads as one surface. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 760px;
+}
+
+/* Micro-cap label — same figure/ground as ProjectPaths' step labels. */
+.label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-dim);
+}
+
+.empty,
+.error {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.error {
+  color: var(--danger, #e5484d);
+}
+
+/* ── the files ──────────────────────────────────────────────────────────────── */
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.pick {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+/* The name is the figure: mono, full-strength, and it truncates rather than wrapping — a wrapped
+   filename breaks the down-the-column scan this list exists for. */
+.name {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.look {
+  min-width: 44px;
+  padding: 2px 8px;
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.look:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.look:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── the look ───────────────────────────────────────────────────────────────── */
+.preview {
+  margin: 0;
+  padding: 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* A mosaic is ~5000x7500. Cap it by height so a tall one does not push the copy box off screen. */
+.previewImg {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  margin: 0 auto;
+  object-fit: contain;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+}
+
+.previewCap {
+  margin-top: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* ── save a copy into… ──────────────────────────────────────────────────────── */
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.copyLede {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.copied {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.copiedPath {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
