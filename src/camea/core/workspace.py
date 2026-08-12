@@ -132,6 +132,14 @@ MANIFEST = "analysis.json"
 DOCUMENT = "document.camea.json"
 AUTOSAVE = "autosave.camea.json"
 OUTPUTS = "outputs"
+VIDEOS = "videos"
+"""⭐ The project's own copies of the videos it was built from (2026-08-11).
+
+A project HOLDS its files: the survey the mosaic came from and every region recording located
+against it are copied in here, so a project is self-contained and survives the originals being
+moved, renamed or deleted. It is an INPUT folder and the Outputs panel does not list it —
+`outputs/` is what the user made, `videos/` is what he gave the app.
+"""
 
 #: The workspace format. Bump only if the LAYOUT changes — the document has its own schema_version.
 WORKSPACE_VERSION = 1

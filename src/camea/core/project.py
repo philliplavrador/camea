@@ -64,6 +64,7 @@ from camea.core.workspace import (
     AUTOSAVE,
     DOCUMENT,
     OUTPUTS,
+    VIDEOS,
     Analysis,
     NoSuchAnalysis,
     PathRefused,
@@ -398,6 +399,13 @@ class Project:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    @property
+    def videos_dir(self) -> Path:
+        """The project's own copies of its input videos. See `workspace.VIDEOS`."""
+        d = self.path / VIDEOS
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def is_project(self) -> bool:
         return self.manifest_path.is_file()
 
@@ -413,7 +421,7 @@ class Project:
         folder would sweep up a screenshot the user dropped there; `build.outputs` is what the app
         actually wrote, recorded by the code that wrote it.
         """
-        names = {MARKER, DOCUMENT, AUTOSAVE, OUTPUTS}
+        names = {MARKER, DOCUMENT, AUTOSAVE, OUTPUTS, VIDEOS}
         try:
             doc = json.loads(self.document_path.read_text(encoding="utf-8"))
             outputs = ((doc.get("build") or {}).get("outputs") or {}) if isinstance(doc, dict) else {}
@@ -659,6 +667,9 @@ class ProjectSet:
 
     def outputs_dir(self, analysis_id: str) -> Path:
         return self._lookup(analysis_id).outputs_dir
+
+    def videos_dir(self, analysis_id: str) -> Path:
+        return self._lookup(analysis_id).videos_dir
 
     def save_document(self, analysis_id: str, doc: Mapping | str) -> dict:
         return self._lookup(analysis_id).save_document(doc)
