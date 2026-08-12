@@ -40,6 +40,11 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     ElectrodeMapPayload,
     ErrorCode,
     JobRef,
+    LocateRegionRequest,
+    RegionRecord,
+    RegionsPayload,
+    RegionUpdateRequest,
+    SnapRegionRequest,
     VideoBuildRequest,
     VideoElectrodeMapRequest,
     VideoProbeRequest,
@@ -51,6 +56,7 @@ from camea.core import workspace as core_workspace
 from camea.core.jobs import JOBS, Busy
 from camea.core.workspace import safe_basename
 
+from . import canvas as vcanvas
 from .config import VideoConfig
 from .document import FEATURE, apply_build
 
@@ -366,16 +372,12 @@ def post_electrodes_map(body: VideoElectrodeMapRequest) -> dict:
                        f"analysis {analysis_id} is a {doc.get('feature')!r} project, "
                        "not a video mosaic")
     build = doc.get("build") or {}
-    mosaic_name = (build.get("outputs") or {}).get("mosaic")
-    if not build.get("built_at") or not isinstance(mosaic_name, str) or not mosaic_name:
-        raise ApiError(409, "refused",
-                       "this project has no built mosaic yet — run the build first")
     out_dir = ws.outputs_dir(analysis_id)
     doc_path = ws.document_path(analysis_id)
-    mosaic_path = out_dir / Path(mosaic_name).name           # a name, never a path
-    if not mosaic_path.is_file():
-        raise ApiError(409, "refused",
-                       f"the built mosaic file is missing ({mosaic_path.name}) — rebuild first")
+    try:
+        vcanvas.mosaic_path(doc, out_dir)        # the two refusals, stated in ONE place
+    except vcanvas.MosaicMissing as e:
+        raise ApiError(409, "refused", str(e)) from e
     try:
         base = safe_basename(str(doc.get("name") or "") or analysis_id)
     except ValueError:
@@ -386,39 +388,15 @@ def post_electrodes_map(body: VideoElectrodeMapRequest) -> dict:
     def fn(report, cancel):
         import time
 
-        import numpy as np
-        from PIL import Image
-
         from camea.core import electrodegrid
         from camea.core import jobs as core_jobs
 
-        core_jobs.say(report, "read", 0, 3, 0.0, "reading the mosaic")
-        Image.MAX_IMAGE_PIXELS = None
-        im = Image.open(mosaic_path)
-        # mode "P": the index plane IS the toned grey composite (the palette only tints it),
-        # so reading indices directly beats a palette->RGB->grey round trip
-        arr = np.asarray(im if im.mode == "P" else im.convert("L"), np.float32)
+        from . import canvas as vcanvas
 
-        # ⭐ Coverage is GEOMETRY, not pixels: the toned composite maps its darkest covered
-        # pixels to exactly 0 too, and treating those as "no data" riddles the mask with
-        # speckle holes that the high-pass erosion then blows up into dead zones (measured:
-        # it cost 97 % of the pads on the synthetic survey). The document's placed keyframes
-        # ARE the coverage — same rule as the snapshot exporter's mandatory mask.
-        valid = np.zeros(arr.shape, bool)
-        src_info = doc.get("source") or {}
-        fw, fh = int(src_info.get("width") or 0), int(src_info.get("height") or 0)
-        if fw > 0 and fh > 0:
-            for kf in (doc.get("keyframes") or {}).values():
-                if not (isinstance(kf, dict) and kf.get("placed")
-                        and kf.get("x") is not None and kf.get("y") is not None):
-                    continue
-                x, y = int(round(float(kf["x"]))), int(round(float(kf["y"])))
-                y0, y1 = max(0, y), min(arr.shape[0], y + fh)
-                x0, x1 = max(0, x), min(arr.shape[1], x + fw)
-                if y1 > y0 and x1 > x0:
-                    valid[y0:y1, x0:x1] = True
-        if not valid.any():
-            valid = arr > 0                      # geometric facts missing: pixel fallback
+        core_jobs.say(report, "read", 0, 3, 0.0, "reading the mosaic")
+        # ⭐ ONE read-back, shared with the region-locating stage — see `canvas.read_mosaic`
+        # for why coverage is geometry and never `png > 0`.
+        arr, valid = vcanvas.read_mosaic(doc, out_dir)
 
         def prog(msg: str) -> None:
             core_jobs.check_cancelled(cancel, "electrode map")
@@ -496,4 +474,257 @@ def get_electrode_map(analysis_id: str) -> dict:
     return {**payload, "stale": stale}
 
 
-__all__ = ["router", "ApiError", "set_store", "JOB_KIND", "FEATURE"]
+# =================================================================================================
+# REGION RECORDINGS — where a fixed-field calcium video sits on this mosaic *(2026-08-11)*
+# =================================================================================================
+#
+# The last step of the pipeline: build the mosaic, number the electrodes, then place each
+# fixed-field recording on it so the electrodes it covers can be named. The document is
+# SERVER-owned here, exactly like the build and the electrode map — every job below re-loads the
+# document fresh, mutates one key, saves, and returns the saved doc for the UI to adopt.
+
+REGION_JOB_KIND = "locate_region"
+
+
+def _video_project(analysis_id: str) -> tuple[dict, core_project.ProjectSet]:
+    """The project's document, or the right refusal. Shared by every region route."""
+    ws = _projects()
+    try:
+        doc, _ = core_document.load_analysis(ws, analysis_id)
+    except FileNotFoundError as e:
+        raise ApiError(404, "no_document", f"analysis {analysis_id} has no document") from e
+    except Exception as e:                                   # noqa: BLE001
+        raise _project_error(e) from e
+    if doc.get("feature") != FEATURE:
+        raise ApiError(409, "refused",
+                       f"analysis {analysis_id} is a {doc.get('feature')!r} project, "
+                       "not a video mosaic")
+    return doc, ws
+
+
+def _region_basename(doc: dict, analysis_id: str) -> str:
+    try:
+        return safe_basename(str(doc.get("name") or "") or analysis_id)
+    except ValueError:
+        return safe_basename(analysis_id)
+
+
+def _save_regions(ws, analysis_id: str, regions: list[dict]) -> dict:
+    """Write `regions` into the SAVED document and rewrite the outputs files. -> the saved doc.
+
+    ⭐ Always re-load fresh. The document captured when a job was submitted is minutes old by
+    the time the job lands, and a build or an electrode map may have written it meanwhile.
+    """
+    from . import regions as vregions
+
+    fresh, _ = core_document.load_analysis(ws, analysis_id)
+    fresh["regions"] = regions
+    out_dir = ws.outputs_dir(analysis_id)
+    vregions.write_region_files(fresh, out_dir, _region_basename(fresh, analysis_id))
+    saved = core_document.save_analysis(ws, analysis_id, fresh)
+    core_document.DOCUMENTS.put(saved["doc"], ws.document_path(analysis_id))
+    return saved["doc"]
+
+
+def _adopt_video(ws, analysis_id: str, path: str) -> Path:
+    """Copy a recording into the project and hand back its new home.
+
+    ⭐ **The project HOLDS its files** (his ruling, 2026-08-11: *"the project is what holds the
+    project files"*). A located region must stay locatable after the original video is moved,
+    renamed or deleted, so the video is copied into `<project>/videos/` and everything downstream
+    reads it from there. `Project.own_entries` includes that folder, so a project that moves
+    takes its recordings with it.
+
+    A file already in the project with the same name and size is adopted rather than re-copied —
+    re-locating a recording must not multiply it on disk.
+    """
+    import shutil
+
+    src = Path(path).expanduser()
+    if not src.is_file():
+        raise ApiError(400, "bad_request", f"no video file at {src.as_posix()}")
+    try:
+        dest_dir = ws.videos_dir(analysis_id)
+    except Exception as e:                                   # noqa: BLE001
+        raise _project_error(e) from e
+    if src.resolve().parent == Path(dest_dir).resolve():
+        return src                                           # already ours
+    try:
+        dest = Path(dest_dir) / safe_basename(src.name)
+    except ValueError:
+        dest = Path(dest_dir) / f"recording{src.suffix}"
+    if dest.exists() and dest.stat().st_size == src.stat().st_size:
+        return dest
+    stem, suffix = dest.stem, dest.suffix
+    k = 2
+    while dest.exists():
+        dest = Path(dest_dir) / f"{stem}-{k}{suffix}"
+        k += 1
+    try:
+        shutil.copy2(src, dest)
+    except OSError as e:
+        raise ApiError(500, "io_error", f"could not copy {src.name} into the project: {e}") from e
+    return dest
+
+
+@router.post("/api/videomosaic/regions/locate", status_code=202, response_model=JobRef)
+def post_locate_region(body: LocateRegionRequest) -> dict:
+    """`POST /api/videomosaic/regions/locate` -> **202 `JobRef`**. Add a fixed-field recording
+    and find where on the built mosaic it was taken.
+
+    ⭐ The zoom is MEASURED, not searched: the electrode lattice appears in both pictures and the
+    ratio of the two pitches is the magnification ratio. Several stills (median / max / std) are
+    built from one decode and each is matched, because whether the neurons are bright at rest or
+    only when firing is a property of the preparation.
+
+    ⚠️ Refuses without a built mosaic, and without an electrode map — the pipeline is step by
+    step (his ruling), and a location whose electrodes cannot be named is half an answer.
+    """
+    analysis_id = body.analysis_id
+    doc, ws = _video_project(analysis_id)
+    out_dir = ws.outputs_dir(analysis_id)
+    try:
+        vcanvas.mosaic_path(doc, out_dir)
+    except vcanvas.MosaicMissing as e:
+        raise ApiError(409, "refused", str(e)) from e
+    if not (doc.get("electrodes") or {}).get("built_at"):
+        raise ApiError(409, "refused",
+                       "map the electrodes first — locating a recording is only useful once "
+                       "the electrodes under it can be named")
+    if not body.path.strip():
+        raise ApiError(400, "bad_request", "give the path of a recording to locate")
+
+    video = _adopt_video(ws, analysis_id, body.path.strip())
+    base = _region_basename(doc, analysis_id)
+    label = body.name
+
+    def fn(report, cancel):
+        from . import regions as vregions
+
+        fresh, _ = core_document.load_analysis(ws, analysis_id)
+        region = vregions.locate_region(fresh, out_dir, base, video, name=label,
+                                        report=report, cancel=cancel)
+        kept = [r for r in (fresh.get("regions") or [])
+                if str(r.get("id")) != str(region["id"])]
+        saved = _save_regions(ws, analysis_id, [*kept, region])
+        return {"kind": REGION_JOB_KIND, "analysis_id": analysis_id, "region": region,
+                "doc": core_document.jsonable(saved)}
+
+    try:
+        job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE)
+    except Busy as e:
+        raise ApiError(409, "busy", str(e)) from e
+    return {"job_id": job.job_id, "kind": REGION_JOB_KIND}
+
+
+@router.post("/api/videomosaic/regions/snap", status_code=202, response_model=JobRef)
+def post_snap_region(body: SnapRegionRequest) -> dict:
+    """`POST /api/videomosaic/regions/snap` -> **202 `JobRef`**. *"I dragged it here, now snap
+    it"* — a bounded local re-search seeded where the user dropped the rectangle.
+
+    ⭐ Correct beats fast (R23): the committed number is the server's masked NCC on the real
+    pixels, not a browser-side guess. About a second, and his ruling accepts that.
+    """
+    analysis_id = body.analysis_id
+    doc, ws = _video_project(analysis_id)
+    out_dir = ws.outputs_dir(analysis_id)
+    regions = list(doc.get("regions") or [])
+    target = next((r for r in regions if str(r.get("id")) == body.region_id), None)
+    if target is None:
+        raise ApiError(404, "not_found", f"no region {body.region_id!r} in this project")
+    at = (float(body.x), float(body.y))
+    radius = body.radius
+
+    def fn(report, cancel):
+        from camea.core import locate as core_locate
+
+        from . import regions as vregions
+
+        fresh, _ = core_document.load_analysis(ws, analysis_id)
+        rs = list(fresh.get("regions") or [])
+        cur = next((r for r in rs if str(r.get("id")) == body.region_id), target)
+        try:
+            updated = vregions.resnap_region(fresh, out_dir, cur, at, radius=radius,
+                                             report=report, cancel=cancel)
+        except core_locate.NoLocation as e:
+            raise RuntimeError(str(e)) from e
+        rs = [updated if str(r.get("id")) == body.region_id else r for r in rs]
+        saved = _save_regions(ws, analysis_id, rs)
+        return {"kind": REGION_JOB_KIND, "analysis_id": analysis_id, "region": updated,
+                "doc": core_document.jsonable(saved)}
+
+    try:
+        job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE)
+    except Busy as e:
+        raise ApiError(409, "busy", str(e)) from e
+    return {"job_id": job.job_id, "kind": REGION_JOB_KIND}
+
+
+@router.patch("/api/videomosaic/regions", response_model=RegionRecord)
+def patch_region(body: RegionUpdateRequest) -> dict:
+    """Rename a region, or confirm it. Both are the user's word, so both are synchronous.
+
+    ⭐ **Confirm is the human's signature.** A located region is `unconfirmed` until he says
+    otherwise; nothing here ever promotes itself, which is I3 (nothing is auto-anchored) applied
+    to a rectangle instead of a tile.
+    """
+    doc, ws = _video_project(body.analysis_id)
+    regions = list(doc.get("regions") or [])
+    idx = next((i for i, r in enumerate(regions)
+                if str(r.get("id")) == body.region_id), None)
+    if idx is None:
+        raise ApiError(404, "not_found", f"no region {body.region_id!r} in this project")
+
+    updated = dict(regions[idx])
+    if body.name is not None:
+        label = body.name.strip()
+        if not label:
+            raise ApiError(400, "bad_request", "a region needs a name")
+        updated["name"] = label
+    if body.status is not None:
+        updated["status"] = body.status
+    regions[idx] = updated
+    _save_regions(ws, body.analysis_id, regions)
+    return updated
+
+
+@router.delete("/api/videomosaic/{analysis_id}/regions/{region_id}",
+               response_model=RegionsPayload)
+def delete_region(analysis_id: str, region_id: str) -> dict:
+    """Forget a located region. Its still and its copy of the video go with it — the project
+    holds the files, so removing the region removes what it brought in."""
+    doc, ws = _video_project(analysis_id)
+    regions = list(doc.get("regions") or [])
+    gone = next((r for r in regions if str(r.get("id")) == region_id), None)
+    if gone is None:
+        raise ApiError(404, "not_found", f"no region {region_id!r} in this project")
+
+    out_dir = ws.outputs_dir(analysis_id)
+    still = gone.get("still")
+    if isinstance(still, str) and still:
+        try:
+            (out_dir / Path(still).name).unlink(missing_ok=True)
+        except OSError:
+            pass                                  # a locked still is not a failed delete
+    saved = _save_regions(ws, analysis_id, [r for r in regions if r is not gone])
+    return _regions_payload(analysis_id, saved, ws)
+
+
+@router.get("/api/videomosaic/{analysis_id}/regions", response_model=RegionsPayload)
+def get_regions(analysis_id: str) -> dict:
+    """Every located region + `stale` (rebuild the mosaic and every location is stale)."""
+    doc, ws = _video_project(analysis_id)
+    return _regions_payload(analysis_id, doc, ws)
+
+
+def _regions_payload(analysis_id: str, doc: dict, ws) -> dict:
+    built = str((doc.get("build") or {}).get("built_at") or "")
+    regions = list(doc.get("regions") or [])
+    stale = any(str(r.get("source_stamp") or "") != built for r in regions)
+    base = _region_basename(doc, analysis_id)
+    return {"analysis_id": analysis_id, "regions": regions, "built_from": built or None,
+            "stale": stale,
+            "outputs": {"regions": f"{base}-regions.json", "csv": f"{base}-regions.csv"}}
+
+
+__all__ = ["router", "ApiError", "set_store", "JOB_KIND", "REGION_JOB_KIND", "FEATURE"]
