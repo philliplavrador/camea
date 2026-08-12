@@ -137,7 +137,9 @@ def locate_region(doc: dict, out_dir: Path, basename: str, video_path: str | Pat
             a1 = a2 = None
 
     core_jobs.say(report, "zoom", 1, len(PHASES), 70.0, "measuring the recording's lattice")
-    zoom = locate.measure_zoom(stills["median"], pitch_mosaic,
+    # ⭐ ALL the stills go in, not just the median: `measure_zoom` requires two independent
+    # projections to agree on the pitch before it will call the zoom MEASURED.
+    zoom = locate.measure_zoom(stills, pitch_mosaic,
                                float(angle_mosaic) if angle_mosaic is not None else None)
 
     ref, refmask = locate.prepare_reference(arr, valid)
@@ -153,7 +155,12 @@ def locate_region(doc: dict, out_dir: Path, basename: str, video_path: str | Pat
     cells = electrodes_under(doc, out_dir, loc.x, loc.y, loc.w, loc.h, payload=emap or None)
 
     core_jobs.say(report, "write", 4, len(PHASES), 0.0, "writing the region")
-    rid = rid or region_id(video_path, {str(r.get("id")) for r in (doc.get("regions") or [])})
+    # 🔴 NOT uniquified against the existing regions. The id is a hash of the video's path in
+    # the project, and `_adopt_video` deliberately does not copy the same file twice — so
+    # re-locating a recording must REPLACE its region, not add a second one pointing at the same
+    # file. Uniquifying here made the route's replace-by-id filter dead code and produced exactly
+    # that duplicate. (Found by the API tests, 2026-08-11.)
+    rid = rid or region_id(video_path)
     still_name = f"{basename}-region-{rid}-still.png"
     write_still(stills[loc.still_kind], loc.zoom.scale, out_dir / still_name)
 
@@ -199,8 +206,18 @@ def resnap_region(doc: dict, out_dir: Path, region: dict, at: tuple[float, float
 
     # the still on disk is ALREADY at mosaic scale (see `write_still`), so it goes in at 1.0
     tpl, tmsk = locate.prepare_template(still, 1.0)
+    # ⭐ THE SEARCH MUST COVER THE DRAG. How far he moved it is the only honest scale for the
+    # window: at fit zoom on a 5319 x 7356 mosaic a 40 px nudge of the mouse is 506 mosaic px,
+    # so a fixed radius that reads as generous cannot reach back from an ordinary gesture.
+    # (Measured before the fix: a 506 px drag snapped 450 px from the truth at NCC 0.51.)
+    was = (float(region.get("x") or 0.0), float(region.get("y") or 0.0))
+    moved = float(np.hypot(float(at[0]) - was[0], float(at[1]) - was[1]))
+    emap = load_map(doc, out_dir) or {}
+    a1, a2 = emap.get("a1"), emap.get("a2")
+    lattice = ((a1, a2) if isinstance(a1, (list, tuple)) and isinstance(a2, (list, tuple))
+               else None)
     out = locate.snap(ref, refmask, tpl, tmsk, at,
-                      radius=int(radius or locate.SNAP_RADIUS))
+                      radius=int(radius or locate.snap_radius_for(moved)), lattice=lattice)
     if out.best is None:
         raise locate.NoLocation(out.refused or "nothing measurable where you dropped it")
 
@@ -220,7 +237,8 @@ def resnap_region(doc: dict, out_dir: Path, region: dict, at: tuple[float, float
         "located_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
     updated["electrodes"] = electrodes_under(
-        doc, out_dir, out.best.x, out.best.y, float(tpl.shape[1]), float(tpl.shape[0]))
+        doc, out_dir, out.best.x, out.best.y, float(tpl.shape[1]), float(tpl.shape[0]),
+        payload=emap or None)
     return updated
 
 

@@ -2873,7 +2873,7 @@
     "/api/videomosaic/{analysis_id}/regions/{region_id}": {
       "delete": {
         "summary": "Delete Region",
-        "description": "Forget a located region. Its still and its copy of the video go with it \u2014 the project\nholds the files, so removing the region removes what it brought in.",
+        "description": "Forget a located region. Its still goes with it, and so does the project's copy of the\nrecording \u2014 unless another region is still using that same file. The project holds the files,\nso removing the region removes what it brought in; but it must not remove what something else\nstill needs.",
         "operationId": "delete_region_api_videomosaic__analysis_id__regions__region_id__delete",
         "parameters": [
           {

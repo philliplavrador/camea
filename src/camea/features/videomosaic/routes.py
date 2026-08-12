@@ -691,8 +691,10 @@ def patch_region(body: RegionUpdateRequest) -> dict:
 @router.delete("/api/videomosaic/{analysis_id}/regions/{region_id}",
                response_model=RegionsPayload)
 def delete_region(analysis_id: str, region_id: str) -> dict:
-    """Forget a located region. Its still and its copy of the video go with it — the project
-    holds the files, so removing the region removes what it brought in."""
+    """Forget a located region. Its still goes with it, and so does the project's copy of the
+    recording — unless another region is still using that same file. The project holds the files,
+    so removing the region removes what it brought in; but it must not remove what something else
+    still needs."""
     doc, ws = _video_project(analysis_id)
     regions = list(doc.get("regions") or [])
     gone = next((r for r in regions if str(r.get("id")) == region_id), None)
@@ -706,7 +708,24 @@ def delete_region(analysis_id: str, region_id: str) -> dict:
             (out_dir / Path(still).name).unlink(missing_ok=True)
         except OSError:
             pass                                  # a locked still is not a failed delete
-    saved = _save_regions(ws, analysis_id, [r for r in regions if r is not gone])
+
+    keep = [r for r in regions if r is not gone]
+    video = str(((gone.get("source") or {}).get("path")) or "")
+    if video:
+        others = {str(((r.get("source") or {}).get("path")) or "") for r in keep}
+        vp = Path(video)
+        try:
+            inside = vp.parent.resolve() == Path(ws.videos_dir(analysis_id)).resolve()
+        except Exception:                         # noqa: BLE001
+            inside = False
+        # ⛔ Only ever OUR copy, and only when nothing else points at it. The original the user
+        # chose is his and is never touched (R44's write guard in spirit).
+        if inside and video not in others:
+            try:
+                vp.unlink(missing_ok=True)
+            except OSError:
+                pass
+    saved = _save_regions(ws, analysis_id, keep)
     return _regions_payload(analysis_id, saved, ws)
 
 

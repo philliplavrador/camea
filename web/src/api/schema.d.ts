@@ -1590,8 +1590,10 @@ export interface paths {
         post?: never;
         /**
          * Delete Region
-         * @description Forget a located region. Its still and its copy of the video go with it — the project
-         *     holds the files, so removing the region removes what it brought in.
+         * @description Forget a located region. Its still goes with it, and so does the project's copy of the
+         *     recording — unless another region is still using that same file. The project holds the files,
+         *     so removing the region removes what it brought in; but it must not remove what something else
+         *     still needs.
          */
         delete: operations["delete_region_api_videomosaic__analysis_id__regions__region_id__delete"];
         options?: never;
