@@ -1,0 +1,407 @@
+/*
+ * REGIONS — the last step of the video pipeline: a fixed-field recording placed on the mosaic, and
+ * the electrodes underneath it named.
+ *
+ * Tokens only — no hex, no one-off colour. The state colours are the app's data palette used for
+ * exactly what it means (BEHAVIOUR §4): --accent is the thing under judgement (the selected field,
+ * the same blue as the sweep cursor), --anchored is a human signature (confirmed), --unverified is
+ * outstanding work (unconfirmed), --thin-margin is the surviving-alias red.
+ *
+ * The progress block, the facts strip and the zoom-bar buttons are the SIBLING module's
+ * (VideoMosaicFeature.module.css), imported rather than copied: a job must look like a job
+ * everywhere, and two copies of a progress bar drift.
+ */
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── add a recording ──────────────────────────────────────────────────────── */
+
+.addRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.addRow + .addRow {
+  margin-top: 8px;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  color: var(--data);
+  font: 500 var(--fs-readout) / 1.3 var(--font-mono);
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.input:disabled {
+  color: var(--text-faint);
+}
+
+.input::placeholder {
+  color: var(--text-faint);
+  font-family: var(--font-sans);
+}
+
+/* The label is not a path — a name is prose, and it does not need the whole row. */
+.nameInput {
+  flex: 0 1 280px;
+  font-family: var(--font-sans);
+}
+
+/* ── the list ─────────────────────────────────────────────────────────────── */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.empty {
+  margin: 0;
+  padding: 6px 0;
+  color: var(--text-dim);
+  font: 500 var(--fs-readout) / 1.4 var(--font-mono);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--unverified);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  cursor: pointer;
+}
+
+.item:hover {
+  background: var(--bg-card-hover);
+}
+
+/* Confirmed rows look SETTLED: the human's green edge, and the row stops nagging. */
+.itemOk {
+  border-left-color: var(--anchored);
+}
+
+/* The selected row is the one on the mosaic — the same blue as its rectangle. */
+.itemSel {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-card));
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: 600 var(--fs-body) / 1.2 var(--font-sans);
+  cursor: text;
+}
+
+.name:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-inset);
+}
+
+.renameInput {
+  flex: 1;
+  font-family: var(--font-sans);
+}
+
+.chip {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font: 600 var(--fs-label) / 1.5 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+.chipOpen {
+  color: var(--unverified);
+  background: color-mix(in srgb, var(--unverified) 16%, transparent);
+}
+
+.chipOk {
+  color: var(--anchored);
+  background: color-mix(in srgb, var(--anchored) 16%, transparent);
+}
+
+.rowFacts {
+  display: flex;
+  flex: none;
+  gap: 14px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-readout);
+  color: var(--data);
+}
+
+.fact {
+  display: inline-flex;
+  gap: 5px;
+  align-items: baseline;
+}
+
+.factLabel {
+  color: var(--text-faint);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+/* A thin margin is the failure this feature can make — it is red wherever it is printed. */
+.rowFacts [data-thin],
+.dValue [data-thin] {
+  color: var(--thin-margin);
+}
+
+.del {
+  flex: none;
+}
+
+/* ── the selected region's readout ────────────────────────────────────────── */
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dFacts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px 18px;
+}
+
+.dFact {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 var(--fs-label) / 1 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-faint);
+}
+
+.dValue {
+  margin: 0;
+  font: 600 var(--fs-readout) / 1.2 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--data);
+  overflow-wrap: anywhere;
+}
+
+/* ── the drop + Snap ──────────────────────────────────────────────────────── */
+
+.snapRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dropped {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: auto;
+  font: 500 var(--fs-readout) / 1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* An uncommitted move is OUTSTANDING WORK, and it says so in the outstanding-work colour. */
+.dropped[data-pending] {
+  color: var(--unverified);
+  font-weight: 700;
+}
+
+/* ── the fade ─────────────────────────────────────────────────────────────── */
+
+.fadeRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fadeLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 var(--fs-label) / 1 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-faint);
+}
+
+.slider {
+  flex: 1;
+  min-width: 120px;
+  max-width: 320px;
+  accent-color: var(--accent);
+}
+
+.fadeValue {
+  min-width: 42px;
+  font: 600 var(--fs-readout) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--data);
+}
+
+/* ── the electrodes underneath — THE ANSWER ───────────────────────────────── */
+
+.electrodes {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.eLine {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.eCount {
+  font: 700 var(--fs-readout-lg) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--data);
+}
+
+.eWord {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 var(--fs-label) / 1 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-faint);
+}
+
+.eRange,
+.eSplit {
+  font: 500 var(--fs-readout) / 1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.details {
+  margin-top: 8px;
+}
+
+.summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font: 600 var(--fs-label) / 1.4 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+.ids {
+  margin-top: 6px;
+  max-height: 168px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  font: 500 var(--fs-readout) / 1.7 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--data);
+  overflow-wrap: anywhere;
+}
+
+/* ── the overlay: SCREEN space, above the picture ─────────────────────────── */
+
+/* The layer itself never eats a pointer — only the selected field's grab box does, so a press
+   anywhere else is still a pan (the viewer's overlay contract). */
+.layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* ⚠️ The edge is an OUTLINE, not a border, and that is load-bearing: everything here is
+   box-sizing: border-box, so a 2 px border would shrink the box — and therefore the still inside it
+   — by 4 CSS px against the mosaic. The fade check is exactly a test of whether the still lines up
+   with the pixels under it, so the rectangle must stay exactly w×h and let the edge sit outside. */
+.rect {
+  position: absolute;
+  outline: 1px solid var(--text-faint);
+}
+
+/* A confirmed field that is not selected still reads as settled at a glance. */
+.rectOk {
+  outline-color: var(--anchored);
+}
+
+/* The one under judgement: bright, on the cursor blue, with a halo so it survives a busy mosaic. */
+.rectSel {
+  outline: 2px solid var(--accent);
+  box-shadow:
+    0 0 0 1px var(--bg-inset),
+    0 0 12px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* The recording's own still, exactly w×h MOSAIC px — it rides the camera with its rectangle. */
+.still {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: fill;
+}
+
+.tag {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  padding: 1px 5px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: color-mix(in srgb, var(--bg-inset) 85%, transparent);
+  color: var(--accent);
+  font: 700 var(--fs-micro) / 1.6 var(--font-mono);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ⚠️ R45.7 — the grab box is sized in CSS px by the component (never below DRAG_MIN_PX), because a
+   handle measured in mosaic px is 4 px wide at fit zoom and cannot be hit by a hand. */
+.grab {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: move;
+  touch-action: none;
+}
