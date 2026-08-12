@@ -219,6 +219,12 @@ export function NewProjectFlow() {
         </div>
       )}
 
+      {/* ⭐ THE TASK PHASE — UNREACHABLE TODAY, AND KEPT ANYWAY. With one task in `TASKS` this never
+          renders (`afterName` jumps straight to Data), because "what do you want to do?" over a list
+          of one is a question with no answer to give. It is left whole — cards, stepper entry, Back —
+          so that adding a second task to `TASKS` is the only edit needed to bring it back. ⛔ Do not
+          delete it as dead code; it is the seam the snapshot builder was unhooked from on
+          2026-08-11, and the seam the next feature will hook into. */}
       {!creating && phase === 'task' && (
         <div className={styles.panel}>
           <p className={styles.prompt}>What do you want to do?</p>
