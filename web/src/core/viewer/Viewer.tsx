@@ -29,6 +29,9 @@ export interface ViewerProps extends ViewerCallbacks {
   tileSize?: number;
   /** Start with the 512-px world grid on? Default false. Read once at mount. */
   grid?: boolean;
+  /** A VIEWING mount (the engine's `readOnly`): tile drag-move, marquee and nudge are suppressed;
+   *  pan/zoom/camera keys still work. Default false. Read once at mount. */
+  readOnly?: boolean;
   className?: string;
   /** Extra props spread onto the <canvas> — e.g. `data-testid="sweep-canvas"` and the feature's
    *  derived `data-*` attributes. */
@@ -38,7 +41,7 @@ export interface ViewerProps extends ViewerCallbacks {
 const NO_VIEW: ViewMatrix = { scale: 1, tx: 0, ty: 0 };
 
 export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(props, ref) {
-  const { layers, tileSize, grid, className, canvasProps, ...callbacks } = props;
+  const { layers, tileSize, grid, readOnly, className, canvasProps, ...callbacks } = props;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<ViewerEngine | null>(null);
@@ -48,7 +51,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(prop
   cbRef.current = callbacks;
 
   // Construction options are captured once — the engine is created a single time.
-  const initRef = useRef({ layers, tileSize, grid });
+  const initRef = useRef({ layers, tileSize, grid, readOnly });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -70,6 +73,7 @@ export const Viewer = forwardRef<ViewerHandle, ViewerProps>(function Viewer(prop
       layers: initRef.current.layers,
       tileSize: initRef.current.tileSize,
       grid: initRef.current.grid,
+      readOnly: initRef.current.readOnly,
       cb,
     });
     engineRef.current = engine;

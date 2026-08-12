@@ -1,0 +1,32 @@
+/* FEATURE GATE — a minimal wait line, and a friendly card for the three ways an id can fail
+   (listing failed · not found · a feature this build does not know). */
+
+.loading {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+}
+
+.gate {
+  max-width: 560px;
+  margin: 64px auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gateTitle {
+  font-family: var(--font-sans);
+  font-size: var(--fs-h2);
+  font-weight: 650;
+  margin: 0;
+}
+
+.gateBody {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  word-break: break-word;
+}

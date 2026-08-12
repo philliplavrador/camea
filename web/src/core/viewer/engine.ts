@@ -127,6 +127,9 @@ export interface EngineOptions {
   cb: ViewerCallbacks;
   tileSize?: number;
   grid?: boolean;
+  /** A VIEWING mount: tile drag-move, marquee select and nudge are suppressed — every left-drag
+   *  pans. Camera gestures (wheel, pan, F/0/G/±) are untouched. Default false (the sweep edits). */
+  readOnly?: boolean;
 }
 
 export class ViewerEngine {
@@ -135,6 +138,7 @@ export class ViewerEngine {
   private readonly cb: ViewerCallbacks;
 
   private readonly tileSize: number;
+  private readonly readOnly: boolean;
   private readonly half: number;
   private readonly featherMask: HTMLCanvasElement;
   private readonly stampCv: HTMLCanvasElement;
@@ -187,6 +191,7 @@ export class ViewerEngine {
     this.canvas = canvas;
     this.cb = opts.cb;
     this.tileSize = opts.tileSize ?? TILE_SIZE;
+    this.readOnly = opts.readOnly ?? false;
     this.half = this.tileSize / 2;
     this.showGrid = opts.grid ?? false;
 
@@ -1102,6 +1107,7 @@ export class ViewerEngine {
   }
 
   nudge(dx: number, dy: number): boolean {
+    if (this.readOnly) return false; // nothing moves in a viewing mount — arrows fall to the feature
     const targets = this.sel.size ? [...this.sel] : this.cursor != null ? [this.cursor] : [];
     if (!targets.length) return false;
     for (const id of targets) {
@@ -1238,7 +1244,8 @@ export class ViewerEngine {
       }
     }
 
-    const id = panBtn || rightBtn ? null : this.hit(mx, my);
+    // Read-only mounts never start a tile move or a marquee — every non-pan press falls to pan.
+    const id = panBtn || rightBtn || this.readOnly ? null : this.hit(mx, my);
     if (id != null) {
       if (e.ctrlKey || e.metaKey) {
         if (this.sel.has(id)) this.sel.delete(id);
@@ -1263,7 +1270,7 @@ export class ViewerEngine {
       };
       for (const k of movers) if (k !== id) this.removeFromLayers(k);
       this.cb.onSelect?.(id);
-    } else if (rightBtn || (e.shiftKey && !panBtn)) {
+    } else if (!this.readOnly && (rightBtn || (e.shiftKey && !panBtn))) {
       this.marquee = { x0: mx, y0: my, x1: mx, y1: my, add: e.ctrlKey || e.metaKey };
       this.drag = { kind: 'marquee' };
     } else {

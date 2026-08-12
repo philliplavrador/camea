@@ -13,11 +13,17 @@ export type { ClassArg } from './cx';
 export { Button } from './primitives/Button';
 export type { ButtonProps } from './primitives/Button';
 
+export { ButtonLink } from './primitives/ButtonLink';
+export type { ButtonLinkProps } from './primitives/ButtonLink';
+
 export { IconButton } from './primitives/IconButton';
 export type { IconButtonProps } from './primitives/IconButton';
 
 export { Toggle } from './primitives/Toggle';
 export type { ToggleProps } from './primitives/Toggle';
+
+export { Choice } from './primitives/Choice';
+export type { ChoiceProps, ChoiceOption } from './primitives/Choice';
 
 export { Kbd } from './primitives/Kbd';
 export type { KbdProps } from './primitives/Kbd';

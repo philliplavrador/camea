@@ -1,0 +1,82 @@
+/*
+ * THE SEGMENTED CHOICE — the Screen step's Keep / Hand place / Exclude control, promoted to a
+ * primitive when the electrode coverage question needed the same shape on two more screens.
+ * Tokens only — no hex, no one-off colour.
+ *
+ * `[data-empty]` is the UNANSWERED group: the frame reads as a question waiting on him (dashed,
+ * accented) rather than as a settled control, because the action next to it is disabled until he
+ * answers.
+ */
+
+.choice {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.choice[data-empty] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.seg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 7px 9px;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.seg:last-child {
+  border-right: none;
+}
+.seg:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  color: var(--text);
+}
+.seg:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+.seg:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.segLabel {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* The consequence, quieter than the label — it is what the choice DOES, not what it is called. */
+.segBlurb {
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+/* Selected — the accent picks out the answer, exactly as the Screen step's judgement does. */
+.segOn {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.segOn .segBlurb {
+  color: color-mix(in srgb, var(--accent-ink) 72%, transparent);
+}
