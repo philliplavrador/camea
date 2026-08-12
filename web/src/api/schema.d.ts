@@ -56,11 +56,34 @@ export interface paths {
         get: operations["get_settings_api_settings_get"];
         /**
          * Put Settings
-         * @description ⛔ Two keys, both lists of paths. See `camea.settings` — a settings file that remembered an
-         *     exclusion would be answering, on the user's behalf, the question the app exists to help him
-         *     answer.
+         * @description ⛔ One key, and it is a list of paths. See `camea.settings` — a settings file that remembered
+         *     an exclusion would be answering, on the user's behalf, the question the app exists to help him
+         *     answer. (`projects` went with R44: the store is the index.)
          */
         put: operations["put_settings_api_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/electrodes/device": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Electrode Device
+         * @description The chip a *"whole chip imaged"* fit is held to — `MAXWELL`, read at call time, not copied.
+         *
+         *     ⚠️ `as_dict()` derives `electrodes` from `axes`, so the count on the wire cannot disagree with
+         *     the shape beside it. Cheap and total: it touches no image, no session and no disk.
+         */
+        get: operations["get_electrode_device_api_electrodes_device_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -384,30 +407,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/projects/folder": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Project Folder
-         * @description *"Can I save here?"* — asked as the user types, **before** anything is written.
-         *
-         *     `writable` is **proved, not assumed** (it writes and deletes a probe file): a folder on a drive
-         *     that has been unplugged must show up as `writable: false`, not as a 500 an hour into a sweep.
-         *     A refusal (inside a dataset, inside the repo) raises 409 so he is told *why*, not just "no".
-         */
-        get: operations["get_project_folder_api_projects_folder_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/projects": {
         parameters: {
             query?: never;
@@ -417,11 +416,14 @@ export interface paths {
         };
         /**
          * Get Projects
-         * @description **The home screen.** Every project in the folders the user has saved into.
+         * @description **The home screen.** Every project in Camea's store (R44).
          *
-         *     ⚠️ A folder that has moved or is on an unplugged drive is reported in `unreadable`, **not**
-         *     silently dropped and **not** a failure of the whole listing: one dead drive must cost him that
+         *     ⚠️ A project folder whose manifest cannot be read is reported in `unreadable`, **not** silently
+         *     dropped and **not** a failure of the whole listing: one corrupt file must cost the user that
          *     project's card, never his home screen.
+         *
+         *     ⭐ `migration` is set on the first launch after R44 and null on every launch after that. It is
+         *     stated once, on the home screen, because those projects moved out of folders the user chose.
          */
         get: operations["get_projects_api_projects_get"];
         put?: never;
@@ -453,17 +455,32 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get Project
+         * @description ONE project, by id. What `/project/:id` opens.
+         *
+         *     ⭐ It asks for **this** project rather than filtering the whole listing, and that is not just
+         *     cheaper: a **draft** is reachable but deliberately not listed (R43.3), so a screen that found
+         *     projects by scanning the list could not open a video mosaic that is still building.
+         *
+         *     ⚠️ Declared AFTER `/api/projects/folder` so the literal route keeps winning that path.
+         */
+        get: operations["get_project_api_projects__analysis_id__get"];
         put?: never;
         post?: never;
         /**
          * Delete Analysis
-         * @description ⭐ **FORGET, OR DELETE — and the app does not guess which.**
+         * @description ⭐ **DELETE MEANS DELETE** (R44) — the project and everything in it, including its outputs.
          *
-         *     `delete_files=false` (the default) takes the project off the home screen and **leaves every byte
-         *     where it is**: the folder is his, he named it, and "remove this card" must not be a synonym for
-         *     "destroy a week of sweeping". `delete_files=true` removes Camea's own files from it — the
-         *     manifest, the document, the autosave, `outputs/` — and leaves anything else he put there alone.
+         *     ⚠️ **`delete_files` is gone, and with it R42.8's Remove-vs-Delete.** That distinction existed
+         *     because the folder was one the user had named and might hold his own files: *remove* took the
+         *     card off the home screen and left every byte. In an app-owned store there is no such folder and
+         *     no such choice — a project the app is not listing is a project nobody can ever reach again, so
+         *     "remove the card" and "delete the work" are the same act, and pretending otherwise would just
+         *     accumulate unreachable bytes on his C: drive.
+         *
+         *     🔴 The **confirmation is the front end's job** and it is not optional; this route does what it
+         *     is told. `Project.delete` is where the rmtree target is re-checked against the store.
          */
         delete: operations["delete_analysis_api_projects__analysis_id__delete"];
         options?: never;
@@ -475,6 +492,90 @@ export interface paths {
          *     guard, every path the document carries, and any Explorer window he has open on it).
          */
         patch: operations["rename_analysis_api_projects__analysis_id__patch"];
+        trace?: never;
+    };
+    "/api/projects/{analysis_id}/outputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Outputs
+         * @description ⭐ **WHAT THIS PROJECT HAS BUILT** — newest first. The outputs browser's whole source.
+         *
+         *     Read off the directory every call, never from the document: `build.outputs` records what the
+         *     last build *wrote*, and this must answer what is *there*. A file deleted underneath us, or one
+         *     an older Camea wrote under a different name, has to show up as it actually is.
+         *
+         *     An empty list is a normal answer (nothing built yet), not a 404.
+         */
+        get: operations["get_outputs_api_projects__analysis_id__outputs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{analysis_id}/outputs/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Output File
+         * @description One output's bytes — the preview in the browser, and the click-to-open.
+         *
+         *     `download=true` sets `Content-Disposition: attachment`, which is how the web build lets the user
+         *     take a copy without a native dialog. `no-store`, because a rebuild overwrites in place.
+         */
+        get: operations["get_output_file_api_projects__analysis_id__outputs__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{analysis_id}/outputs/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Copy Outputs
+         * @description ⭐ **THE ONE WAY WORK LEAVES CAMEA** (R44) — copy the chosen outputs into a folder the user
+         *     names, right now, while looking at them.
+         *
+         *     🔴 **THE THREE REFUSALS, IN ORDER, BEFORE A SINGLE BYTE IS WRITTEN:**
+         *       1. `refuse_write(dest)` — ⛔ never onto the evidence. A destination inside `data/`, inside a
+         *          raw acquisition folder, or inside one on the way up is refused, exactly as every other
+         *          write in the app is. (The **repo** is *not* refused here: root `output/` has always been a
+         *          legitimate place to put an export, and this is an export.)
+         *       2. Every name is resolved through `_output_file` — so a name that is not this project's
+         *          output cannot be copied out of it.
+         *       3. ⛔ **Nothing at the destination is overwritten.** A clash refuses the whole request and
+         *          names the files, rather than half-copying and destroying one of his. The destination is
+         *          his folder; this route does not get to be the reason something in it is gone.
+         *
+         *     A copy is not a move: the project keeps its outputs. That is the point — the store stays the
+         *     home, and what leaves is a copy the user asked for.
+         */
+        post: operations["post_copy_outputs_api_projects__analysis_id__outputs_copy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/analyses/{analysis_id}/document": {
@@ -1194,6 +1295,212 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mosaic/electrodes/map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Electrodes Map
+         * @description `POST /api/mosaic/electrodes/map` -> **202 `JobRef`**. Optional post-build stage: render
+         *     the placed tiles (the export's own compositor) and fit the electrode lattice — pitch,
+         *     rotation and phase MEASURED from this mosaic, never assumed (no dataset knowledge).
+         *
+         *     ⭐ Files land in the project's `outputs/` (R44), `<name>-electrodes.json/.csv`; the job result
+         *     carries the summary block for the CLIENT to merge into its document and save (this feature's
+         *     document is client-owned, like export and unlike the videomosaic build).
+         *
+         *     ⭐ `array_coverage` is HIS declaration (R45.8), made before the button is even enabled:
+         *     `"full"` holds the fit to the MaxOne/MaxTwo's 220 × 120 (a near miss corrected and reported,
+         *     a far miss refused by the fitter); `"partial"` enforces only the 17.5 µm scale and leaves
+         *     `1-1` meaning the top-left of the IMAGED REGION. Defaulted `"partial"` here so an older
+         *     client that does not send it cannot accidentally claim a whole chip.
+         *
+         *     Holds the `gpu` lease: the render walks the same frame store the export does.
+         */
+        post: operations["post_electrodes_map_api_mosaic_electrodes_map_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mosaic/electrodes/{analysis_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Electrodes
+         * @description The full electrode map of a project, plus `stale` — computed against the SAVED document's
+         *     current tile positions, so an edited/recomputed mosaic says "re-run" instead of silently
+         *     highlighting drifted centres. (Unsaved client edits are the client's own staleness to track.)
+         */
+        get: operations["get_electrodes_api_mosaic_electrodes__analysis_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Probe
+         * @description The receipt: does this path decode as video, and what does it claim to contain?
+         *     Proves a frame actually decodes — 'probed OK' can be trusted by Create.
+         */
+        post: operations["post_probe_api_videomosaic_probe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Video Project
+         * @description ⭐ THE SERVER CREATES THE DOCUMENT — `POST /api/projects` for a video source.
+         *
+         *     No session: the video is probed here (a real decode, not a header parse) and its receipt
+         *     becomes the document's `source`.
+         *
+         *     ⭐ **AND NO FOLDER (R44).** The project is made in Camea's store, listed on the home screen from
+         *     this moment, and its build writes into its own `outputs/`. There is nothing left to ask.
+         */
+        post: operations["post_video_project_api_videomosaic_projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/build": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Build
+         * @description The whole pipeline as one cancellable job: track → keyframes → register → solve →
+         *     render → save.
+         *
+         *     ⭐ The artifacts land in the project's **`outputs/`, named after the project** (R44) — the one
+         *     place the outputs browser reads for every feature, and names that still say what they are when
+         *     the user copies one out to his desktop. The document is updated and saved by the JOB
+         *     (server-side), so the result the UI polls out is already durable.
+         */
+        post: operations["post_build_api_videomosaic_build_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/{analysis_id}/outputs/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Output
+         * @description One built artifact, addressed by its LOGICAL name (`mosaic.png` / `preview.png` /
+         *     `positions.csv` / `build.json`) and resolved to the real file through the document's
+         *     `build.outputs` — on disk it lives in `outputs/`, named after the project (R44).
+         *
+         *     `v` is the cache-buster the UI appends (the build's `built_at`); the response itself says
+         *     no-store because a rebuild overwrites in place.
+         */
+        get: operations["get_output_api_videomosaic__analysis_id__outputs__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/electrodes/map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Electrodes Map
+         * @description `POST /api/videomosaic/electrodes/map` -> **202 `JobRef`**. Fit the electrode lattice of
+         *     the built `mosaic.png` — its canvas is 1:1 with video pixels, so the map needs no offset.
+         *
+         *     ⭐ Same artifacts and block as the mosaic feature (`<name>-electrodes.json/.csv` in
+         *     `outputs/`, R44), but here the DOCUMENT IS SERVER-OWNED: the job saves `electrodes` into it
+         *     and returns the saved doc, exactly like the build job. `source_stamp` is the build's
+         *     `built_at` — a rebuild makes the map stale, and the GET below says so.
+         *
+         *     ⭐ `array_coverage` is HIS declaration (R45.8), same contract as the snapshot route:
+         *     `"full"` holds the fit to the MaxOne/MaxTwo's 220 × 120 (near miss corrected and reported,
+         *     far miss refused); `"partial"` enforces only the 17.5 µm scale and leaves `1-1` meaning the
+         *     top-left of the IMAGED REGION. Defaulted `"partial"` — the mode that assumes nothing.
+         */
+        post: operations["post_electrodes_map_api_videomosaic_electrodes_map_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/{analysis_id}/electrodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Electrode Map
+         * @description The full electrode map + `stale` (the map's `source_stamp` vs the current build's
+         *     `built_at` — a rebuilt mosaic invalidates the map and the UI says so).
+         */
+        get: operations["get_electrode_map_api_videomosaic__analysis_id__electrodes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1204,9 +1511,11 @@ export interface components {
             analyses: components["schemas"]["AnalysisSummary"][];
             /**
              * Unreadable
-             * @description Remembered folders that could not be read this launch (an unplugged drive). Listed, never silently dropped — and never a failure of the whole home screen.
+             * @description Project folders in the store that could not be read (a corrupt manifest). Listed, never silently dropped — and never a failure of the whole home screen.
              */
             unreadable?: string[];
+            /** @description ⭐ Set on the first launch after R44, when pre-R44 projects were brought into the store. The home screen states it once. null on every ordinary launch. */
+            migration?: components["schemas"]["MigrationReport"] | null;
         };
         /**
          * AnalysisRef
@@ -1228,7 +1537,7 @@ export interface components {
         };
         /**
          * AnalysisSummary
-         * @description A project = a document + its outputs, in the folder the user named. Bound to ONE dataset.
+         * @description A project = a document + its outputs, in Camea's store. Bound to ONE dataset.
          */
         AnalysisSummary: {
             /** Analysis Id */
@@ -1248,7 +1557,7 @@ export interface components {
             path: string;
             /**
              * Folder
-             * @description The project's own folder — the one he named.
+             * @description Where the project lives in Camea's store. ⚠️ Shown for support and diagnosis, not as somewhere to go: browsing a project means GET /api/projects/{id}/outputs.
              * @default
              */
             folder: string;
@@ -1602,6 +1911,37 @@ export interface components {
             ];
         };
         /**
+         * CopyOutputsRequest
+         * @description `POST /api/projects/{id}/outputs/copy` — **the one way work leaves Camea.**
+         *
+         *     ⛔ The destination is refused (409) inside a dataset or inside `data/`, exactly as every other
+         *     path the app writes to is. ⛔ A file already at the destination is **refused, never overwritten**
+         *     — the user's folder is his, and this route is not allowed to be the reason something in it is
+         *     gone.
+         */
+        CopyOutputsRequest: {
+            /**
+             * Names
+             * @description Which outputs to copy. Names from the listing.
+             */
+            names: string[];
+            /**
+             * Dest
+             * @description The folder to copy them into. Created if it does not exist.
+             */
+            dest: string;
+        };
+        /** CopyOutputsResponse */
+        CopyOutputsResponse: {
+            /**
+             * Copied
+             * @description The full paths written.
+             */
+            copied?: string[];
+            /** Dest */
+            dest: string;
+        };
+        /**
          * CreateAnalysisRequest
          * @description ⭐ **THE SERVER CREATES THE DOCUMENT**, via the feature's `new_document` hook.
          *
@@ -1618,15 +1958,25 @@ export interface components {
             /** Name */
             name: string;
             /**
-             * Folder
-             * @description ⭐ WHERE TO SAVE IT — the folder the user named. The project IS this folder. Refused (409) inside a dataset or inside the repo.
-             */
-            folder: string;
-            /**
              * Trials
              * @description The feature's selection. null = the session's whole trial list.
              */
             trials?: number[] | null;
+        };
+        /**
+         * CreateVideoProjectRequest
+         * @description ⭐ THE SERVER CREATES THE DOCUMENT — `POST /api/videomosaic/projects`. The video-source
+         *     sibling of `CreateAnalysisRequest`: no session, the probed receipt becomes `doc.source`.
+         *
+         *     ⭐ **NO `folder` — and neither has the dataset task since R44 (2026-08-10).** Both create their
+         *     project in Camea's store. R43 got here first for this feature, by deferring the folder question
+         *     until the mosaic existed; R44 removed the question instead.
+         */
+        CreateVideoProjectRequest: {
+            /** Name */
+            name: string;
+            /** Video Path */
+            video_path: string;
         };
         /**
          * DatasetAtRequest
@@ -1870,6 +2220,262 @@ export interface components {
             h?: number | null;
         };
         /**
+         * ElectrodeCells
+         * @description Flat parallel arrays, one entry per EXISTING grid position (absent corners omitted).
+         *     `kind`: 1 = detected on the pixels, 2 = inferred from the lattice (occluded/dead pad).
+         *
+         *     `x`/`y` are pixels in the feature's own space; `x_um`/`y_um` are the SAME positions in the
+         *     ARRAY's frame — origin at electrode 1-1's lattice position, rotation taken out, so x grows
+         *     along columns and y along rows. They land near `(col-1) * 17.5` / `(row-1) * 17.5` but carry
+         *     the real measured deviation. Both are served: µm is added ALONGSIDE pixels, never instead.
+         */
+        ElectrodeCells: {
+            /** Col */
+            col: number[];
+            /** Row */
+            row: number[];
+            /** X */
+            x: number[];
+            /** Y */
+            y: number[];
+            /** Kind */
+            kind: number[];
+            /**
+             * X Um
+             * @description µm along the column axis. Empty on maps written before R45.8 (and whenever no device spec applied) — never assume it is populated.
+             */
+            x_um?: number[];
+            /**
+             * Y Um
+             * @description µm along the row axis.
+             */
+            y_um?: number[];
+        };
+        /**
+         * ElectrodeDevice
+         * @description `GET /api/electrodes/device` — ⭐ **THE CHIP, ON THE WIRE, so nothing has to retype it.**
+         *
+         *     🔴 R45.8 put every device number in exactly one place (`core.electrodegrid.DeviceSpec` /
+         *     `MAXWELL`) — and then the coverage question the UI asks *before* mapping wrote them out a second
+         *     time as button prose ("220 × 120", "26,400", "17.5 µm"), in TypeScript, where nothing keeps them
+         *     honest. Change `DeviceSpec.axes` and the panel goes on promising the old array while the fitter
+         *     enforces the new one: **the UI describing a rule it is not the one enforcing.** This model is the
+         *     fix — the spec is served, typed, and the UI reads it instead of repeating it.
+         *
+         *     ⛔ **No field here has a default.** A default would be a second copy of the device fact, which is
+         *     the very duplication this endpoint exists to close. The values are `MAXWELL`'s, whatever they are.
+         */
+        ElectrodeDevice: {
+            /**
+             * Name
+             * @description Whose numbers these are, e.g. "MaxWell MaxOne/MaxTwo".
+             */
+            name: string;
+            /**
+             * Axes
+             * @description The two array axis lengths, **ORIENTATION-FREE** — the chip can sit portrait or landscape in a mosaic, so neither the fitter nor the UI may assume which one is columns.
+             */
+            axes: [
+                number,
+                number
+            ];
+            /**
+             * Pitch Um
+             * @description Centre-to-centre electrode spacing, µm. The physical ruler that turns the MEASURED pixel pitch into a scale (`um_per_px = pitch_um / pitch_px`) — in BOTH coverage modes. It is never used to assume a pitch: R45.1 stands, the lattice is measured.
+             */
+            pitch_um: number;
+            /**
+             * Electrodes
+             * @description axes[0] * axes[1]. Derived by the spec, never typed in twice — and the number a 'whole chip imaged' map must contain, exactly.
+             */
+            electrodes: number;
+        };
+        /**
+         * ElectrodeMapBlock
+         * @description `doc["electrodes"]` — the SUMMARY of a fitted grid (the full per-electrode table lives in
+         *     `outputs/<name>-electrodes.json`, listed here by filename). `source_stamp` identifies the tile
+         *     positions / build the map was computed from; when it no longer matches, the map is STALE and
+         *     the UI says so instead of silently highlighting drifted centres.
+         */
+        ElectrodeMapBlock: {
+            /** Built At */
+            built_at?: string | null;
+            /**
+             * Cols
+             * @default 0
+             */
+            cols: number;
+            /**
+             * Rows
+             * @default 0
+             */
+            rows: number;
+            /**
+             * Pitch Px
+             * @default 0
+             */
+            pitch_px: number;
+            /**
+             * Angle Deg
+             * @default 0
+             */
+            angle_deg: number;
+            /**
+             * Hit Radius Px
+             * @default 0
+             */
+            hit_radius_px: number;
+            /**
+             * Stats
+             * @description the fit's own numbers, plus `um_per_px` and — when the whole chip was declared imaged and the fit was a near miss — `shape_corrected` ({'cols': +1, 'rows': -1}), which the panel MUST show: a corrected shape is never silent.
+             */
+            stats?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Outputs
+             * @description logical name ('map', 'csv') -> FILENAME in outputs/.
+             */
+            outputs?: {
+                [key: string]: string;
+            };
+            /** Source Stamp */
+            source_stamp?: string | null;
+            /** Coordinates */
+            coordinates?: string | null;
+            /**
+             * Array Coverage
+             * @description what the user declared before mapping: 'full' or 'partial'. Recorded so a reopened project still knows whether 1-1 is the chip's corner or only the imaged region's (R45.8). Old blocks predate the field and read as 'partial'.
+             * @default partial
+             */
+            array_coverage: string;
+            /**
+             * Um Per Px
+             * @description device pitch / measured pitch_px. None when no device applied.
+             */
+            um_per_px?: number | null;
+            /**
+             * Device
+             * @description the device NAME the spec came from ('MaxWell MaxOne/MaxTwo'). The full spec (axes, pitch, electrode count) rides on the payload, not on this summary.
+             */
+            device?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ElectrodeMapPayload
+         * @description The full electrode map, served typed so the client never re-derives geometry. A pixel
+         *     resolves to electrode `col-row` only within `hit_radius_px` of that centre (his click rule:
+         *     the pad plus a slim margin; the gaps select nothing — arrow keys step to neighbours).
+         */
+        ElectrodeMapPayload: {
+            /** Cols */
+            cols: number;
+            /** Rows */
+            rows: number;
+            /** Pitch Px */
+            pitch_px: number;
+            /** Angle Deg */
+            angle_deg: number;
+            /** Hit Radius Px */
+            hit_radius_px: number;
+            /**
+             * A1
+             * @description mean column step vector (one cell rightward), px
+             */
+            a1: [
+                number,
+                number
+            ];
+            /**
+             * A2
+             * @description mean row step vector (one cell downward), px
+             */
+            a2: [
+                number,
+                number
+            ];
+            /**
+             * Canvas Offset
+             * @description world = rendered-canvas px + this offset. (0,0) for the videomosaic.
+             */
+            canvas_offset: [
+                number,
+                number
+            ];
+            /** Coordinates */
+            coordinates?: string | null;
+            /** Built At */
+            built_at?: string | null;
+            /**
+             * Stale
+             * @description True when the mosaic changed after this map was built (tile positions edited / rebuilt) — re-run the mapping.
+             */
+            stale: boolean;
+            /** Stats */
+            stats?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Um Per Px
+             * @description MEASURED scale: the device's known pitch (17.5 µm) over the pitch this image actually shows. None when the map was written without a device spec. ⚠️ Not the provenance `Scale.um_per_px` (R30) — that one stays absent.
+             */
+            um_per_px?: number | null;
+            /**
+             * Device
+             * @description the spec that supplied the µm scale: {name, axes, pitch_um, electrodes}. None on maps written before R45.8.
+             */
+            device?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Array Coverage
+             * @description 'full' = the user declared the whole chip imaged, so the shape was checked against the device (and any near miss corrected — see `stats.shape_corrected`). 'partial' = only part of the chip: **1-1 is the top-left of the IMAGED REGION, not of the chip**, and the UI must say so.
+             * @default partial
+             */
+            array_coverage: string;
+            cells: components["schemas"]["ElectrodeCells"];
+        };
+        /**
+         * ElectrodeMapRequest
+         * @description `POST /api/mosaic/electrodes/map` — fit the electrode grid of the built mosaic.
+         */
+        ElectrodeMapRequest: {
+            /** Session Id */
+            session_id: string;
+            doc: components["schemas"]["MosaicDocument"];
+            /**
+             * Include Unverified
+             * @description Render (and therefore map) the same tile set the export defaults to: anchored plus unverified. False = certified field only.
+             * @default true
+             */
+            include_unverified: boolean;
+            /**
+             * Array Coverage
+             * @description Did the user say the WHOLE chip is in frame? 'full' enforces the device shape (220 x 120 = 26,400 electrodes, either orientation) and corrects a near miss; 'partial' enforces nothing but the 17.5 um scale, and 1-1 is the top-left of the imaged region. R45.8 — he picks before mapping; the server default is the assumption-free one.
+             * @default partial
+             * @enum {string}
+             */
+            array_coverage: "full" | "partial";
+        };
+        /**
+         * ElectrodeMapResult
+         * @description `job.result` of an `electrode_map` job (either feature). The videomosaic job saves its
+         *     document server-side and returns it; the mosaic feature's document is CLIENT-owned, so the UI
+         *     merges `electrodes` into its doc and saves — same split as build vs export.
+         */
+        ElectrodeMapResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "electrode_map";
+            /** Analysis Id */
+            analysis_id: string;
+            electrodes: components["schemas"]["ElectrodeMapBlock"];
+            doc?: components["schemas"]["Document"] | null;
+        };
+        /**
          * ExportRequest
          * @description `POST /api/mosaic/export` → 202 `JobRef`. Holds the `gpu` lease.
          *
@@ -1892,9 +2498,10 @@ export interface components {
         ExportRequest: {
             /** Session Id */
             session_id: string;
-            /** Dir */
-            dir: string;
-            /** Basename */
+            /**
+             * Basename
+             * @description What the exported files are CALLED. ⭐ Not where they go — since R44 they go into this project's outputs/, and the user is never asked for a folder.
+             */
             basename: string;
             doc: components["schemas"]["MosaicDocument"];
             /** Outputs */
@@ -1953,6 +2560,19 @@ export interface components {
             path: string;
             /** Bytes */
             bytes: number;
+        };
+        /**
+         * FailedMigration
+         * @description One project that did **not** move. ⭐ It is still exactly where it was.
+         */
+        FailedMigration: {
+            /** Path */
+            path: string;
+            /**
+             * Reason
+             * @description Said out loud, because the user's work is in that folder.
+             */
+            reason: string;
         };
         /**
          * FsEntry
@@ -2185,7 +2805,7 @@ export interface components {
              * Result
              * @description null until state == 'done'. Discriminated on `kind`.
              */
-            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"]) | null;
+            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"]) | null;
             /** @description Set iff state == 'failed'. */
             error?: components["schemas"]["JobError"] | null;
         };
@@ -2456,6 +3076,37 @@ export interface components {
             refuse?: number[];
         };
         /**
+         * MigratedProject
+         * @description One project that came home to the store.
+         */
+        MigratedProject: {
+            /** Name */
+            name: string;
+            /**
+             * From
+             * @description The folder the user had saved it into.
+             */
+            from: string;
+            /**
+             * To
+             * @description Where it is now, inside Camea's store.
+             */
+            to: string;
+        };
+        /**
+         * MigrationReport
+         * @description `core.migrate`'s account of the one-time move into the store (R44).
+         *
+         *     ⚠️ Reported, never silent. A project that moved without saying so would be indistinguishable
+         *     from one that vanished, and these are folders the user chose and can still find in Explorer.
+         */
+        MigrationReport: {
+            /** Migrated */
+            migrated?: components["schemas"]["MigratedProject"][];
+            /** Failed */
+            failed?: components["schemas"]["FailedMigration"][];
+        };
+        /**
          * MosaicDocument
          * @description ⭐ **THE MOSAIC PAYLOAD, FLAT, BESIDE THE ENVELOPE.** (See the `Document` note: nesting it
          *     under `payload` would make it unreadable to the scorer, and a project the scorer cannot read is
@@ -2531,6 +3182,8 @@ export interface components {
             run?: components["schemas"]["RunBlock"];
             build?: components["schemas"]["BuildBlock"] | null;
             tone?: components["schemas"]["ToneSnapshot"];
+            /** @description The fitted electrode-grid summary (2026-08-11); the full per-electrode table is an outputs/ file it names. None until Map electrodes runs. */
+            electrodes?: components["schemas"]["ElectrodeMapBlock"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -2572,6 +3225,40 @@ export interface components {
             dataset_key?: string | null;
             /** Trials */
             trials?: number[] | null;
+        };
+        /**
+         * OutputEntry
+         * @description One file in a project's `outputs/`.
+         */
+        OutputEntry: {
+            /**
+             * Name
+             * @description Its filename. ⛔ A name, never a path — there are no subfolders.
+             */
+            name: string;
+            /** Bytes */
+            bytes: number;
+            /** Modified */
+            modified: string;
+            /**
+             * Media Type
+             * @description Guessed from the extension. What GET .../outputs/{name} serves.
+             */
+            media_type: string;
+            /**
+             * Previewable
+             * @description True for images the browser can show inline.
+             * @default false
+             */
+            previewable: boolean;
+        };
+        /**
+         * OutputListResponse
+         * @description `GET /api/projects/{id}/outputs` — everything this project has built, newest first.
+         */
+        OutputListResponse: {
+            /** Outputs */
+            outputs?: components["schemas"]["OutputEntry"][];
         };
         /**
          * PassSplit
@@ -2632,30 +3319,6 @@ export interface components {
             run_margin?: number | null;
             /** Pass */
             pass: number;
-        };
-        /**
-         * ProjectFolderInfo
-         * @description What Camea can say about a candidate save folder BEFORE anything is written to it.
-         */
-        ProjectFolderInfo: {
-            /** Path */
-            path: string;
-            /** Exists */
-            exists: boolean;
-            /** Writable */
-            writable: boolean;
-            /**
-             * Is Project
-             * @description True when the folder already holds a Camea project.
-             * @default false
-             */
-            is_project: boolean;
-            /**
-             * Empty
-             * @description False when the folder already has files in it.
-             * @default true
-             */
-            empty: boolean;
         };
         /**
          * Provenance
@@ -3294,16 +3957,12 @@ export interface components {
          * @description Everything the app remembers between launches. ⛔ **No dataset knowledge lives here.**
          *     A remembered *path* is not knowledge about the data at that path.
          *
-         *     ⭐ `workspace` and `dataset_roots` were removed on 2026-07-25: there is no single app-managed
-         *     store and no root registry. A project names its own save folder, and these are the folders the
-         *     user has actually used.
+         *     ⭐ **ONE KEY, since R44 (2026-08-10).** `projects` went with the folders it indexed: projects
+         *     live in Camea's own store and the store IS the index. (`workspace` and `dataset_roots` went on
+         *     2026-07-25.) What is left is the one thing the app cannot re-derive — where the user keeps his
+         *     data, which is his to decide and nobody else's to remember.
          */
         Settings: {
-            /**
-             * Projects
-             * @description Folders the user has saved a project into. An index for the home screen — the truth is the camea-project.json in each folder.
-             */
-            projects?: string[];
             /**
              * Recent Datasets
              * @description Data folders recently opened. Offered back as completions.
@@ -3312,8 +3971,6 @@ export interface components {
         };
         /** SettingsUpdate */
         SettingsUpdate: {
-            /** Projects */
-            projects?: string[] | null;
             /** Recent Datasets */
             recent_datasets?: string[] | null;
         };
@@ -3684,6 +4341,172 @@ export interface components {
             /** Problems */
             problems?: components["schemas"]["DocumentProblem"][];
         };
+        /** VideoBuildRequest */
+        VideoBuildRequest: {
+            /** Analysis Id */
+            analysis_id: string;
+            /**
+             * Config
+             * @description VideoConfig overrides, for development and tests. The UI sends null: a normal user never tunes computer-vision parameters to get a mosaic.
+             */
+            config?: {
+                [key: string]: number | boolean | string | {
+                    [key: string]: number | boolean | string | null;
+                } | (number | boolean | string | null)[] | null;
+            } | null;
+        };
+        /** VideoCanvasSize */
+        VideoCanvasSize: {
+            /** W */
+            w: number;
+            /** H */
+            h: number;
+        };
+        /**
+         * VideoElectrodeMapRequest
+         * @description `POST /api/videomosaic/electrodes/map` — fit the grid of the saved video mosaic.
+         */
+        VideoElectrodeMapRequest: {
+            /** Analysis Id */
+            analysis_id: string;
+            /**
+             * Array Coverage
+             * @description Did the user say the WHOLE chip is in frame? 'full' enforces the device shape (220 x 120 = 26,400 electrodes, either orientation) and corrects a near miss; 'partial' enforces nothing but the 17.5 um scale, and 1-1 is the top-left of the imaged region. R45.8 — he picks before mapping; the server default is the assumption-free one.
+             * @default partial
+             * @enum {string}
+             */
+            array_coverage: "full" | "partial";
+        };
+        /**
+         * VideoKeyframeRecord
+         * @description One automatically selected video frame. `x`/`y` are canvas top-left corners (R19),
+         *     null when the frame could not be tied to the mosaic (`placed: false`).
+         */
+        VideoKeyframeRecord: {
+            /** X */
+            x?: number | null;
+            /** Y */
+            y?: number | null;
+            /** Segment */
+            segment?: number | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Placed
+             * @default false
+             */
+            placed: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * VideoMosaicBuildResult
+         * @description `job.result` of a `videomosaic_build` job. The document is already SAVED server-side
+         *     when this appears — the UI refetches or takes `doc` as-is; it never authors.
+         */
+        VideoMosaicBuildResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "videomosaic_build";
+            doc: components["schemas"]["VideoMosaicDocument"];
+            canvas: components["schemas"]["VideoCanvasSize"];
+            /** Stats */
+            stats: {
+                [key: string]: unknown;
+            };
+            /**
+             * Outputs
+             * @description logical name -> FILENAME of each artifact (mosaic, preview, positions, build). They sit in the project folder itself, named after the project. Filenames, not paths: a saved project moves (R43), and a recorded absolute path would go stale.
+             */
+            outputs: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * VideoMosaicDocument
+         * @description A videomosaic document: envelope + `source`/`config`/`build`/`keyframes`, flat.
+         */
+        VideoMosaicDocument: {
+            /** Schema Version */
+            schema_version: string;
+            app: components["schemas"]["AppStamp"];
+            /** Id */
+            id: string;
+            /** Feature */
+            feature: string;
+            /** Dataset */
+            dataset: string;
+            /**
+             * Experiment
+             * @default
+             */
+            experiment: string;
+            /** Data Dir */
+            data_dir: string;
+            /** Dataset Key */
+            dataset_key: string;
+            /** Created */
+            created: string;
+            /** Modified */
+            modified: string;
+            provenance: components["schemas"]["Provenance"];
+            source?: components["schemas"]["VideoSource"] | null;
+            /** Config */
+            config?: {
+                [key: string]: number | boolean | string | {
+                    [key: string]: number | boolean | string | null;
+                } | (number | boolean | string | null)[] | null;
+            } | null;
+            /**
+             * Build
+             * @description {built_at, canvas, outputs, stats} — the last build's summary; the full forensics live in outputs/build.json.
+             */
+            build?: {
+                [key: string]: unknown;
+            } | null;
+            /** Keyframes */
+            keyframes?: {
+                [key: string]: components["schemas"]["VideoKeyframeRecord"];
+            };
+            /** @description The fitted electrode-grid summary (2026-08-11); stale when its source_stamp no longer equals build.built_at. None until Map electrodes runs. */
+            electrodes?: components["schemas"]["ElectrodeMapBlock"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** VideoProbeRequest */
+        VideoProbeRequest: {
+            /**
+             * Path
+             * @description Path of a video file (mp4/avi/…) — anything cv2 decodes.
+             */
+            path: string;
+        };
+        /**
+         * VideoSource
+         * @description The probe receipt. `fps`/`n_frames` are what the container CLAIMS (phone video is often
+         *     VFR) — good for a receipt, never for arithmetic. Probing decodes a real frame, so a receipt
+         *     means 'this will decode', not 'a header parsed'.
+         */
+        VideoSource: {
+            /** Path */
+            path: string;
+            /** Name */
+            name: string;
+            /** Width */
+            width: number;
+            /** Height */
+            height: number;
+            /** Fps */
+            fps: number;
+            /** N Frames */
+            n_frames: number;
+            /** Duration S */
+            duration_s: number;
+            /** Size Bytes */
+            size_bytes: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -3782,6 +4605,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_electrode_device_api_electrodes_device_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElectrodeDevice"];
                 };
             };
         };
@@ -4291,38 +5134,6 @@ export interface operations {
             };
         };
     };
-    get_project_folder_api_projects_folder_get: {
-        parameters: {
-            query: {
-                /** @description The candidate save folder. */
-                path: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProjectFolderInfo"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_projects_api_projects_get: {
         parameters: {
             query?: {
@@ -4388,11 +5199,40 @@ export interface operations {
             };
         };
     };
+    get_project_api_projects__analysis_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_analysis_api_projects__analysis_id__delete: {
         parameters: {
-            query?: {
-                delete_files?: boolean;
-            };
+            query?: never;
             header?: never;
             path: {
                 analysis_id: string;
@@ -4443,6 +5283,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalysisSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_outputs_api_projects__analysis_id__outputs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutputListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_output_file_api_projects__analysis_id__outputs__name__get: {
+        parameters: {
+            query?: {
+                download?: boolean;
+            };
+            header?: never;
+            path: {
+                analysis_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_copy_outputs_api_projects__analysis_id__outputs_copy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopyOutputsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopyOutputsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5319,6 +6257,265 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QcReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_electrodes_map_api_mosaic_electrodes_map_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ElectrodeMapRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_electrodes_api_mosaic_electrodes__analysis_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElectrodeMapPayload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_probe_api_videomosaic_probe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VideoProbeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VideoSource"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_video_project_api_videomosaic_projects_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateVideoProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_build_api_videomosaic_build_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VideoBuildRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_output_api_videomosaic__analysis_id__outputs__name__get: {
+        parameters: {
+            query?: {
+                v?: string | null;
+            };
+            header?: never;
+            path: {
+                analysis_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_electrodes_map_api_videomosaic_electrodes_map_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VideoElectrodeMapRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_electrode_map_api_videomosaic__analysis_id__electrodes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElectrodeMapPayload"];
                 };
             };
             /** @description Validation Error */
