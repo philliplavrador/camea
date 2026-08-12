@@ -70,6 +70,7 @@ This module is feature-agnostic and pure: numpy at import, cv2/scipy inside func
 
 from __future__ import annotations
 
+import dataclasses
 import heapq
 import math
 from dataclasses import dataclass, field
@@ -77,7 +78,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 __all__ = ["FIT_STEPS", "MAXWELL", "DeviceSpec", "GridConfig", "GridMap", "NoGridFound",
-           "fit_grid", "full_payload", "load_map_file", "write_map_files"]
+           "fit_grid", "full_payload", "lattice_axes", "load_map_file", "measure_lattice",
+           "write_map_files"]
 
 #: The progress messages `fit_grid` emits, in order — callers map them to honest percentages.
 FIT_STEPS = ("high-pass", "lattice fit", "array mask", "pad detection", "indexing", "assembling")
@@ -474,6 +476,65 @@ def fit_grid(image: np.ndarray, valid: np.ndarray | None = None,
     if enforce_shape:
         _assert_full_shape(gm, device)
     return gm
+
+
+def measure_lattice(image: np.ndarray, valid: np.ndarray | None = None,
+                    *, pitch_min: float = 6.0, pitch_max: float = 200.0,
+                    cfg: GridConfig | None = None) -> tuple[float, float, float]:
+    """`(pitch_px, angle_deg, snr)` — the lattice ALONE, without detecting or indexing pads.
+
+    ⭐ **This is a ruler, and it is what makes a differently-magnified recording placeable.**
+    The same electrode array appears in the mosaic and in a fixed-region calcium recording, so
+    the ratio of the two measured pitches IS the magnification ratio between them
+    (`core.locate.measure_zoom`). Measuring beats searching a ladder of zoom factors: one
+    number instead of thirteen chances for a grid alias to win.
+
+    It stops after `fit_grid`'s first two phases — high-pass, then the windowed-FFT
+    fundamentals — so it costs a fraction of a full fit and needs no coverage geometry, no
+    device, and no pad detection. Everything the full fit does after this point exists to
+    NUMBER pads; none of it is needed to read a period.
+
+    ⚠️ `pitch_max` defaults wider than `GridConfig`'s 64 px. That default bounds a *mosaic's*
+    pitch; a region recording is by definition at higher magnification, and 17.5 um through
+    40x optics lands well past 100 px. It is still bounded, because the FFT ring for a very
+    long period sits within a few bins of DC where nothing can be told apart.
+
+    Raises `NoGridFound` with a sentence when there is no lattice to read — which for a
+    calcium recording of bare tissue is a legitimate answer, not a failure.
+    """
+    a1, a2, snr = lattice_axes(image, valid, pitch_min=pitch_min, pitch_max=pitch_max, cfg=cfg)
+    # the same two derivations `_assemble` uses, so a measured pitch/angle is comparable with
+    # a fitted map's `pitch_px` / `angle_deg` without anyone having to convert
+    pitch = float((np.hypot(*a1) + np.hypot(*a2)) / 2)
+    angle = float(math.degrees(math.atan2(a1[1], a1[0])))
+    return pitch, angle, float(snr)
+
+
+def lattice_axes(image: np.ndarray, valid: np.ndarray | None = None,
+                 *, pitch_min: float = 6.0, pitch_max: float = 200.0,
+                 cfg: GridConfig | None = None) -> tuple[np.ndarray, np.ndarray, float]:
+    """`(a1, a2, snr)` — the two primitive lattice VECTORS, in px, as `_lattice_vectors` found
+    them. `measure_lattice` is this reduced to a period and an angle.
+
+    Wanted whole because a lattice's *direction* matters to anything that filters it out:
+    `core.locate.notch_lattice` needs the reciprocal basis, and a pitch alone cannot give it.
+    """
+    base = cfg or GridConfig()
+    c = dataclasses.replace(base, pitch_min=float(pitch_min), pitch_max=float(pitch_max))
+
+    img = np.ascontiguousarray(image, dtype=np.float32)
+    if img.ndim != 2:
+        raise ValueError(f"expected a 2-D grayscale image, got shape {image.shape}")
+    if valid is None:
+        valid = np.ones(img.shape, bool)
+    else:
+        valid = np.asarray(valid, bool)
+        if valid.shape != img.shape:
+            raise ValueError("valid mask shape does not match the image")
+
+    hp, core = _highpass(img, valid, c)
+    a1, a2, snr = _lattice_vectors(hp, core, c)
+    return np.asarray(a1, float), np.asarray(a2, float), float(snr)
 
 
 # -----------------------------------------------------------------------------
