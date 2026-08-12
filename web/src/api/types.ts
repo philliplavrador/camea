@@ -163,6 +163,26 @@ export type VideoKeyframeRecord = Schemas['VideoKeyframeRecord'];
 export type VideoMosaicBuildResult = Schemas['VideoMosaicBuildResult'];
 export type VideoMosaicDocument = Schemas['VideoMosaicDocument'];
 
+// ── Videomosaic: regions — a recording located on the built mosaic ─────────────────
+// The document is SERVER-owned here (as with the build and the video electrode map): the locate/snap
+// jobs save `doc["regions"]` themselves, so these types are what the UI READS, never what it authors.
+export type RegionRecord = Schemas['RegionRecord'];
+export type RegionsPayload = Schemas['RegionsPayload'];
+export type RegionZoom = Schemas['RegionZoom'];
+export type RegionCandidate = Schemas['RegionCandidate'];
+export type RegionElectrodes = Schemas['RegionElectrodes'];
+export type LocateRegionRequest = Schemas['LocateRegionRequest'];
+export type SnapRegionRequest = Schemas['SnapRegionRequest'];
+export type RegionUpdateRequest = Schemas['RegionUpdateRequest'];
+export type LocateRegionResult = Schemas['LocateRegionResult'];
+/**
+ * The TWO states a region can be in. ⭐ `unconfirmed` until the human says otherwise — nothing
+ * promotes itself (I3, applied to a rectangle instead of a tile). Read off the RECORD, whose union is
+ * the clean literal pair; the PATCH request's copy is nullable ("leave it alone") and would drag a
+ * `null` into every consumer.
+ */
+export type RegionStatus = RegionRecord['status'];
+
 // ── System: settings / fs / dialogs / health ──────────────────────────────────────
 export type Settings = Schemas['Settings'];
 export type SettingsUpdate = Schemas['SettingsUpdate'];

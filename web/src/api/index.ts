@@ -25,4 +25,5 @@ export * from './dialogs';
 export * from './mosaic';
 export * from './videomosaic';
 export * from './electrodes';
+export * from './regions';
 export * from './jobs';
