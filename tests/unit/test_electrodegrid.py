@@ -51,6 +51,13 @@ def lattice_image(cols=24, rows=16, pitch=14.0, angle_deg=0.0, *, pad_amp=60.0,
     the matched filter is TM_CCOEFF_NORMED, a shape match independent of brightness, which
     still answers ~0.97 there. Exactly the split the evidence rule is built to read.
 
+    ⚠️ **WHERE the dim cells sit decides the outcome, and both outcomes are ruled.** A dim
+    PATCH is recovered (`_claim_dim_pads`, R45.9): it lies inside the fit's bounding box, so
+    numbering it cannot move an array edge. A dim EDGE LINE is still dropped, and under "whole
+    chip imaged" still refuses (R45.8): it lies OUTSIDE the box, so putting it back would be a
+    claim about where the array starts — the repair rule that was twice caught shifting every
+    id. Fixtures below rely on each half, so `faint` is not a single behaviour.
+
     `shear_deg` tilts the row axis off perpendicular (0 = square). `_lattice_vectors` accepts
     pairs up to ~12 deg off orthogonal, and on such a lattice projecting onto a1_hat is NOT
     the array frame — the dual basis is.
@@ -209,6 +216,45 @@ def test_border_ring_is_never_an_extra_electrode_row():
     assert_every_truth_resolves(gm, truth, center_tol_frac=0.25)
 
 
+def test_a_dim_corner_is_still_the_array():
+    """⭐ **A DIM PATCH OF THE ARRAY IS STILL THE ARRAY** (his report, 2026-08-11: *"electrodes
+    are missing for this mosaic in the bottom left corner"*).
+
+    A survey mosaic is not evenly lit — illumination drifts across a 4-minute sweep, and the
+    corner reached last can come out several times dimmer than the middle while showing exactly
+    the same pads. The array mask is a Gabor ENERGY threshold set from a percentile of the WHOLE
+    image, and energy goes as amplitude SQUARED: on his real 5319x7356 video mosaic the
+    bottom-left corner ran 3.9x down in high-pass amplitude, so ~8x down in energy, and fell
+    under a bar the bright majority had set. 120 positions went unnumbered — while the matched
+    filter, which is normalised and therefore blind to brightness, read **0.64** there, *higher*
+    than at the indexed cells around it. The pads were never in doubt; only the mask was.
+
+    ⛔ The mask is NOT what was changed, and `_claim_dim_pads` explains at length why: every
+    brightness-invariant statistic that recovers this corner also drags the mask's outer boundary
+    a lattice step outward, onto the pads' own filter bleed, which is a phantom edge line and a
+    shift of every id. The boundary stays put and the INTERIOR is revisited instead.
+
+    This plants the failure: a corner block at 22 % amplitude — the ratio measured on his mosaic
+    — surrounded by array on two sides. Those pads are visible to any brightness-invariant test,
+    so they must be numbered, and numbered as DETECTED: they were measured, not guessed. An
+    `inferred` centre here would mean the fitter fell back on arithmetic where it had pixels to
+    read. (Headroom, measured: full recovery holds down to 0.10 amplitude; past that it degrades
+    to fewer detections and never to a wrong id.)
+    """
+    dim = {(c, r) for c in range(1, 9) for r in range(16, 21)}
+    img, truth, _ = lattice_image(cols=24, rows=20, pitch=14.0, angle_deg=-2.0,
+                                  faint=dim, seed=5)
+    gm = fit_grid(img)
+
+    assert (gm.cols, gm.rows) == (24, 20), "the dim corner must not shrink the array"
+    assert_every_truth_resolves(gm, truth)
+
+    got = [(c, r) for c, r in dim if gm.kind[r - 1, c - 1] == GridMap.KIND_DETECTED]
+    assert len(got) >= 0.9 * len(dim), (
+        f"only {len(got)}/{len(dim)} dim corner pads were DETECTED — the rest were inferred or "
+        f"absent, i.e. the mask still reads brightness where it means to read lattice content")
+
+
 # =============================================================================
 # The click rule
 # =============================================================================
@@ -292,7 +338,13 @@ TEST_DEVICE = DeviceSpec(name="test device", axes=(12, 22), pitch_um=17.5)
 def faint_col(col, rows=22):
     """A whole column, dim. ⭐ `faint` keeps the pads in the PIXELS while dropping them out of
     the energy-thresholded array mask — a real edge line the fit never indexes, which is the
-    only honest fixture for "put the missing line back"."""
+    only honest fixture for "put the missing line back".
+
+    ⚠️ A WHOLE line, and at an EDGE, on purpose. R45.9's recovery pass deliberately cannot reach
+    it: the line falls outside the fit's bounding box, which is exactly what keeps that pass from
+    being able to move an array edge. Dim a *patch* instead and it is recovered — see
+    `test_a_dim_corner_is_still_the_array`. Shorten these fixtures to a partial line and they
+    stop testing R45.8's refusal, because the fit would then find the column."""
     return {(col, r) for r in range(1, rows + 1)}
 
 

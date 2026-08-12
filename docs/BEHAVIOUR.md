@@ -1159,13 +1159,61 @@ map electrodes process then at the end you should have a final product that is c
   - **Both →** 17.5 µm is the scale: `um_per_px = 17.5 / measured pitch_px`, and every electrode
     carries `x_um`/`y_um` in the array's own frame (origin at 1-1's lattice position, rotation taken
     out) in the readout, the JSON and the CSV, **alongside** pixels.
-  - **Verified on his real data:** the 260801 video mosaic maps as **full → 120 × 220, all 26,400
-    numbered, 6.2 s**, corners µm-correct; as **partial → 26,280** (the clipped bottom-left corner
-    stays absent). That difference *is* the ruling working: full says the chip has an electrode
-    everywhere, partial only reports what was seen.
+  - **Verified on his real data:** the 260801 video mosaic maps as **120 × 220, all 26,400 numbered**
+    in **both** modes, corners µm-correct.
+    ⚠️ **This line used to read "partial → 26,280 (the clipped bottom-left corner stays absent) —
+    that difference *is* the ruling working". It was wrong, and it was recording R45.9's bug as
+    correct behaviour.** Nothing was clipped: all 120 of those positions sat inside the mosaic's
+    coverage with pads plainly in the pixels. Partial still reports only what was *seen* — that half
+    of the ruling stands — but "seen" means the coverage, never how brightly it happened to be lit.
   - ⛔ The lattice is still **measured** (R45.1). The spec lives in exactly one place (`DeviceSpec` /
     `MAXWELL`); it checks and completes a fit, it never replaces one, and it only binds when he says
     the whole chip is in frame. A device number hard-coded anywhere else is a violation.
+
+---
+
+### R45.9 — ⭐ A DIM PATCH OF THE ARRAY IS STILL THE ARRAY *(2026-08-11)*
+**His report, in his own words:** *"electrodes are missing for this mosaic in the bottom left corner."*
+
+A survey mosaic is not evenly lit — illumination drifts across a four-minute sweep — and the corner
+reached last can come out several times dimmer while showing exactly the same pads. **Brightness must
+never decide whether an electrode exists.**
+
+- **The bug.** `_array_mask` thresholded Gabor **energy**, which goes as amplitude *squared*, against
+  a percentile of the **whole image** — so it measured brightness where it meant to measure lattice
+  content. On his P003693 mosaic the bottom-left corner ran **3.9× down in high-pass amplitude** (8×
+  in energy) and fell under a bar the bright middle had set. **120 positions went unnumbered** while
+  the matched filter — normalised, therefore blind to brightness — read **0.64** there, *higher* than
+  at the indexed cells around them. The pads were never in doubt. Only the mask was.
+- ⛔ **AND THE MASK IS NOT WHAT CHANGED.** Every brightness-invariant statistic that recovers the
+  corner also drags the mask's outer boundary a full lattice step outward (**measured**: a
+  locally-referenced energy and a normalised coherence both reach **+1.00** steps where the shipped
+  mask reaches **+0.50**). One step out is where the **pads' own filter support bleeds to** — it is
+  literally made of pads, so no intensity statistic evaluated there can tell it from a pad. That step
+  is a phantom edge line, and a phantom edge line shifts **every id by one**. Nothing downstream
+  would catch it: such a line carries ~191 claimable cells against a trim threshold of 44, and
+  `_assert_registered` is blind to a phantom already *inside* the numbering (R45.8 catches the
+  mirror case, a real line left outside, and only that one).
+- **The rule.** The boundary stays exactly where the conservative mask put it, and only the
+  **interior** is revisited: after the edge trim has frozen the shape, a position already inside the
+  fit's own bounding box is re-examined against the matched filter and claimed if a pad is really
+  there (`_claim_dim_pads`). A position inside the box has indexed array beside it by construction,
+  so admitting it **cannot move an edge** — that geometric bound is what makes this safe with **no
+  new threshold to tune**, and it is why the rule is *"fill the box"*, not *"loosen the mask"*.
+- **It adds only measured pads, never guesses.** A position whose pixels show nothing is left exactly
+  as it was, so a corner the **coverage** never saw stays absent — that is what partial means. A
+  claim must clear the same `conf_floor` growth held its own detections to, so `detected` cannot come
+  to mean two strengths of evidence in one map.
+- **Measured on his real data.** P003693: **26,280 → 26,400** numbered, 120 → **0** absent, shape
+  120 × 220 and pitch 30.6111 px **unchanged**, 385 pads recovered, worst registration edge
+  0.63 → 0.64 against the 0.70 bar, +0.2 s. The archive t33 render: **25,854 → 26,396**. And the
+  check that matters most — of the 26,280 electrodes already numbered, median centre movement
+  **0.004 px**; every cell that moved more than a hit radius was an `inferred` guess snapping onto a
+  real pad, and **no two cells sit closer than 17.4 px on a 30.6 px pitch**. No id moved.
+- ⚠️ **A whole dim edge LINE is still dropped, and still refuses under "whole chip imaged"** (R45.8).
+  That is not an oversight: a line outside the bounding box is a claim about *where the array starts*,
+  and putting it back is the repair rule that cost an afternoon. A dim *patch* is inside the box; a
+  dim *line* is not. The distinction is the whole safety argument.
 
 ---
 

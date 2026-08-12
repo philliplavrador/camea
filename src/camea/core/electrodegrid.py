@@ -445,10 +445,18 @@ def fit_grid(image: np.ndarray, valid: np.ndarray | None = None,
     xs, ys, conf, corr = _detect_pads(hp, mask, a1, a2, cfg)
 
     say("indexing")
-    cells = _grow(xs, ys, conf, a1, a2, mask, cfg)
+    # A position may only claim a detection of honest strength: the matched filter's noise floor
+    # on this small template reaches ~0.2-0.35, so an EMPTY position (dead or occluded pad) would
+    # otherwise adopt a noise maximum and report 'detected'. Relative to the strong-pad
+    # population so blur across a mosaic stays tolerated.
+    # ⚠️ DERIVED ONCE, HERE, because `_assemble` recovers pads too (`_claim_dim_pads`) and a pad
+    # it recovers has to clear the SAME bar growth held its own to — otherwise "detected" would
+    # mean two different strengths of evidence in one map.
+    conf_floor = 0.4 * float(np.percentile(conf, 90))
+    cells = _grow(xs, ys, conf, a1, a2, mask, cfg, conf_floor)
 
     say("assembling")
-    gm = _assemble(cells, a1, a2, snr, cfg)
+    gm = _assemble(cells, a1, a2, snr, cfg, corr, conf_floor)
 
     # The device half runs on the finished, purely geometric assembly — `_assemble` stays a
     # function of the pixels alone, and everything the user ASSERTED is applied here.
@@ -805,23 +813,31 @@ def _detect_pads(hp, mask, a1, a2, cfg):
     if py.size == 0:
         raise NoGridFound("no pad-like detections inside the array")
 
-    # sub-pixel: 1-D parabola per axis on the correlation surface
+    xs = np.empty(py.size, np.float32)
+    ys = np.empty(py.size, np.float32)
+    cf = corr[py, px].astype(np.float32)
+    for i in range(py.size):
+        xs[i], ys[i] = _subpixel(corr, int(px[i]), int(py[i]))
+    return xs, ys, cf, corr
+
+
+def _subpixel(corr, x: int, y: int) -> tuple[float, float]:
+    """A correlation maximum refined to sub-pixel by a 1-D parabola per axis.
+
+    ⚠️ ONE COPY, TWO CALLERS (`_detect_pads` and `_claim_dim_pads`). A pad growth found and a
+    pad recovered later must land on the same sub-pixel convention or the two populations would
+    sit a fraction of a pixel apart on the same lattice, and `_step_residuals` — the gate that
+    decides whether an image has a lattice at all — would read that split as incoherence."""
     def parab(cm, cc, cp):
         den = cm + cp - 2 * cc
         if den >= -1e-9:
             return 0.0
         return float(np.clip(0.5 * (cm - cp) / den, -0.5, 0.5))
 
-    xs = np.empty(py.size, np.float32)
-    ys = np.empty(py.size, np.float32)
-    cf = corr[py, px].astype(np.float32)
     H, W = corr.shape
-    for i in range(py.size):
-        y, x = int(py[i]), int(px[i])
-        dx = parab(corr[y, x - 1], corr[y, x], corr[y, x + 1]) if 0 < x < W - 1 else 0.0
-        dy = parab(corr[y - 1, x], corr[y, x], corr[y + 1, x]) if 0 < y < H - 1 else 0.0
-        xs[i], ys[i] = x + dx, y + dy
-    return xs, ys, cf, corr
+    dx = parab(corr[y, x - 1], corr[y, x], corr[y, x + 1]) if 0 < x < W - 1 else 0.0
+    dy = parab(corr[y - 1, x], corr[y, x], corr[y + 1, x]) if 0 < y < H - 1 else 0.0
+    return x + dx, y + dy
 
 
 # -----------------------------------------------------------------------------
@@ -849,7 +865,7 @@ class _Buckets:
         return best
 
 
-def _grow(xs, ys, conf, a1, a2, mask, cfg):
+def _grow(xs, ys, conf, a1, a2, mask, cfg, conf_floor):
     """Confidence-ordered region growing. Each assigned cell carries its own local
     lattice vectors, exponentially updated from the steps actually observed — this is
     what absorbs the focus-driven pitch drift a rigid model cannot. Predictions average
@@ -859,12 +875,6 @@ def _grow(xs, ys, conf, a1, a2, mask, cfg):
     r_snap = cfg.snap_frac * pitch
     H, W = mask.shape
     bk = _Buckets(xs, ys, max(4.0, pitch))
-
-    # A position may only claim a detection of honest strength: the matched filter's
-    # noise floor on this small template reaches ~0.2-0.35, so an EMPTY position (dead
-    # or occluded pad) would otherwise adopt a noise maximum and report 'detected'.
-    # Relative to the strong-pad population so blur across a mosaic stays tolerated.
-    conf_floor = 0.4 * float(np.percentile(conf, 90))
 
     order = np.argsort(conf)[::-1]
     seed = -1
@@ -1002,7 +1012,108 @@ def _relax_inferred(cells, K_INF, iters=12):
 
 
 # -----------------------------------------------------------------------------
-def _assemble(cells, a1, a2, snr, cfg):
+def _claim_dim_pads(centers, kind, conf, a1m, a2m, corr, conf_floor, cfg) -> int:
+    """Recover pads the array mask was too dim to admit — INSIDE the fit's own bounding box, on
+    the matched filter's word, one ring at a time. Returns how many were claimed.
+
+    ⭐ **WHY THIS EXISTS** (his report, 2026-08-11: *"electrodes are missing for this mosaic in
+    the bottom left corner"*). `_array_mask` thresholds Gabor ENERGY, which goes as amplitude
+    SQUARED, against a percentile of the WHOLE image — so it measures BRIGHTNESS where it means
+    to measure lattice content. A survey mosaic is not evenly lit: on his real 5319x7356 video
+    mosaic the corner swept last ran 3.9x down in high-pass amplitude — 8x down in energy — and
+    fell under a bar the bright middle had set. 120 positions went unnumbered, while the matched
+    filter read **0.64** there, *higher* than at the indexed cells around them. The pads were
+    never in doubt. Only the mask was.
+
+    ⛔ **AND WHY THE MASK IS NOT WHAT CHANGED.** Every brightness-invariant statistic that
+    recovers the corner also drags the mask's outer boundary a full lattice step outward
+    (measured on this mosaic: a locally-referenced energy and a normalised coherence both reach
+    +1.00 steps where the shipped mask reaches +0.50). One step out is where the PADS' OWN filter
+    support bleeds to — it is literally made of pads, so no intensity statistic evaluated there
+    can tell it from a pad. That step is a phantom edge line, and a phantom edge line shifts
+    EVERY id by one. Nothing downstream would catch it: a phantom line here carries ~191
+    claimable cells against `_assemble`'s trim threshold of 44, and `_assert_registered` is blind
+    to a phantom that is already INSIDE the numbering. In partial mode nothing else looks at all.
+
+    So the boundary stays exactly where the conservative mask put it, and only the INTERIOR is
+    revisited. A position already inside the fit's bounding box has indexed array on both sides
+    of it along at least one axis, by construction — admitting it cannot move an edge. That
+    geometric bound is what makes this safe without a threshold to tune, and it is why the rule
+    is written as "fill the box", not "loosen the mask".
+
+    ⚠️ **IT ADDS ONLY MEASURED PADS, NEVER GUESSES.** A position whose pixels show nothing is
+    left exactly as it was, for the notch fill and (in full mode) `_fill_every_position` to
+    reason about — so a corner the COVERAGE never saw stays absent, which is what "partial"
+    means. And the claim must clear `conf_floor`, the same bar growth held its own detections to,
+    so a recovered pad is evidence of the same strength and not a weaker class wearing the same
+    label.
+
+    ⚠️ It cannot steal a neighbour's ground: the search radius is `snap_frac * pitch` — growth's
+    own snap radius — so two adjacent positions' windows stay half a pitch apart at closest.
+    """
+    rows, cols = kind.shape
+    pitch = (np.hypot(*a1m) + np.hypot(*a2m)) / 2
+    r_snap = cfg.snap_frac * pitch
+    # every assigned neighbour votes, each stepping to this cell with the vector that separates
+    # them; the diagonals are in because a cell first reached at a box corner can have no axis
+    # neighbour yet
+    nbrs = ((0, -1, a1m), (0, 1, -a1m), (-1, 0, a2m), (1, 0, -a2m),
+            (-1, -1, a1m + a2m), (-1, 1, -a1m + a2m),
+            (1, -1, a1m - a2m), (1, 1, -a1m - a2m))
+    claimed = 0
+    for _ in range(rows + cols + 2):       # each pass reaches one ring further into the hole
+        got = 0
+        for r, c in np.argwhere(kind == GridMap.KIND_ABSENT):
+            r, c = int(r), int(c)
+            preds = [centers[r + dr, c + dc] + v for dr, dc, v in nbrs
+                     if 0 <= r + dr < rows and 0 <= c + dc < cols and kind[r + dr, c + dc]]
+            # two independent votes minimum: one neighbour's own drift would otherwise place
+            # the window, and a window in the wrong place finds either nothing or the wrong pad
+            if len(preds) < 2:
+                continue
+            px, py = (float(v) for v in np.mean(preds, axis=0))
+            hit = _peak_near(corr, px, py, r_snap, conf_floor)
+            if hit is None:
+                continue
+            centers[r, c] = (hit[0], hit[1])
+            kind[r, c] = GridMap.KIND_DETECTED
+            conf[r, c] = hit[2]
+            got += 1
+        claimed += got
+        if not got:
+            break
+    return claimed
+
+
+def _peak_near(corr, x: float, y: float, radius: float,
+               floor: float) -> tuple[float, float, float] | None:
+    """`(x, y, confidence)` of the matched filter's best pad within `radius` of (x, y), sub-pixel
+    — or None if the strongest thing there is not pad-like enough to claim.
+
+    Reads the correlation surface DIRECTLY rather than the detection list, because the detections
+    were only ever collected inside the array mask: at a position the mask excluded there is no
+    candidate to find, which is precisely the situation this recovers from."""
+    H, W = corr.shape
+    r = max(1, int(round(radius)))
+    ix, iy = int(round(x)), int(round(y))
+    x0, x1 = max(1, ix - r), min(W - 1, ix + r + 1)
+    y0, y1 = max(1, iy - r), min(H - 1, iy + r + 1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    win = corr[y0:y1, x0:x1]
+    wy, wx = np.unravel_index(int(np.argmax(win)), win.shape)
+    px, py = x0 + int(wx), y0 + int(wy)
+    best = float(corr[py, px])
+    if best < floor:
+        return None
+    # the window is a square but the snap radius is a DISC, the same shape growth snapped with
+    if (px - x) ** 2 + (py - y) ** 2 > radius ** 2:
+        return None
+    sx, sy = _subpixel(corr, px, py)
+    return sx, sy, best
+
+
+def _assemble(cells, a1, a2, snr, cfg, corr=None, conf_floor=-1.0):
     """Integer indices -> 1-based grid with 1-1 at top-left. Edge rows/columns with zero
     detected pads are trimmed: an inferred-only fringe (mask slop) must never shift the
     numbering of everything else by one."""
@@ -1063,6 +1174,15 @@ def _assemble(cells, a1, a2, snr, cfg):
     a2m = np.mean(v2s, axis=0)
     pitch = float((np.hypot(*a1m) + np.hypot(*a2m)) / 2)
 
+    # ⭐ Pads the mask was too DIM to admit, recovered on the matched filter's word before
+    # anything interpolates over them — a position with a pad in the pixels must come out
+    # `detected` with a measured centre, not `inferred` from arithmetic (his bottom-left corner,
+    # 2026-08-11). Runs BEFORE the notch fill so a recovered pad anchors the next ring instead of
+    # being pre-empted by a guess.
+    n_claimed = 0
+    if corr is not None:
+        n_claimed = _claim_dim_pads(centers, kind, conf, a1m, a2m, corr, conf_floor, cfg)
+
     # Fill one-cell notches the tight array mask clipped at the boundary: an absent
     # cell with >= 2 assigned axis neighbours is inside the array by construction and
     # gets an interpolated (inferred) centre — every position numbered, his ruling.
@@ -1100,12 +1220,25 @@ def _assemble(cells, a1, a2, snr, cfg):
             f"detections do not cohere into a lattice (median step residual "
             f"{med_res:.2f}px on a {pitch:.1f}px pitch)")
 
+    # ⚠️ Counted off the FINAL planes, not off the running totals: `_claim_dim_pads` turns absent
+    # cells into detected ones after the loop above filled `n_det`/`n_inf` in, and stats that
+    # describe the map before that describe a map nobody has (the same rule `_refresh_stats`
+    # follows for the shape corrections).
+    n_det = int((kind == K_DET).sum())
+    n_inf = int((kind == 2).sum())
+    confs = conf[kind == K_DET]
+    confs = confs[np.isfinite(confs)]
+
     stats = {
         "n_detected": int(n_det),
         "n_inferred": int(n_inf),
         "detected_frac": round(n_det / max(1, n_det + n_inf), 4),
         "fft_snr": round(float(snr), 2),
-        "mean_confidence": round(float(np.mean(confs)), 4) if confs else 0.0,
+        "mean_confidence": round(float(np.mean(confs)), 4) if confs.size else 0.0,
+        # how many of those detections the array mask had missed for being dim. Reported because
+        # it is the first number worth reading if the recovery pass ever misbehaves: on an evenly
+        # lit image it is 0, and a large value says the mask and the pixels disagreed a lot.
+        "n_recovered": int(n_claimed),
         "step_residual_median_px": round(float(np.median(res)), 3),
         "step_residual_p95_px": round(float(np.percentile(res, 95)), 3),
     }
