@@ -50,16 +50,33 @@ the UI must set it — specs assert on it.
 |---|---|---|
 | `project-manager` | the home | ⭐ no first-run prompt — nothing is picked before he can start (R41.2, 2026-07-25) |
 | `project-card` | one project | `data-project-id`; the card is the Open affordance |
-| `project-name` / `project-folder` | card facts | the name he typed, and the folder he named |
-| `project-rename` / `project-export` / `project-forget` / `project-delete` | card menu | **Remove** forgets (files stay); **Delete** removes Camea's files |
-| `projects-unreadable` | the moved/unplugged list | said out loud, never silently dropped |
-| `project-paths` | the where-from/where-to step | two `PathField`s — **no root registry, no browse grid** |
-| `from-field` / `into-field` | the two path boxes | `path-input` · `path-submit` · `path-browse` · `path-error` inside each |
+| `project-name` / `project-data-dir` | card facts | the name he typed, and where its **data** came from. ⛔ The project's own folder is Camea's and is never advertised (R44.7) |
+| `project-rename` / `project-export` / `project-delete` | card menu | ⭐ **Delete means delete** (R44.8) — there is no Remove; the confirm says so |
+| `projects-unreadable` | store folders that would not read | said out loud, never silently dropped |
+| `projects-migrated` | the one-time R44 notice | which projects moved into the store, and what did not |
+| `project-paths` | the where-**from** step | ONE `PathField` — **no root registry, no browse grid, and no save folder** (R44.2) |
+| `from-field` | the data path box | `path-input` · `path-submit` · `path-browse` · `path-error` inside it |
 | `dataset-choice` | disambiguation chip | shown **only** when one folder holds several acquisitions |
 | `dataset-card` | the RECEIPT for the folder he typed | a confirmation, not a card in a grid |
 | `dataset-name` / `dataset-snapshots` / `dataset-shapes` | receipt facts | read straight off `/api/datasets/at` |
-| `folder-receipt` | the save folder, confirmed | "will be created" / "existing folder" |
-| `np-create` | **Create project** | disabled until BOTH paths resolve |
+| `np-create` | **Create project** | disabled until the ONE path resolves |
+
+### Outputs — ⭐ the only door to a project's files (R44)
+
+Mounted by **both** feature screens; the same component, not a copy.
+
+| testid | element | notes |
+|---|---|---|
+| `outputs-panel` | the whole panel | lists `<project>/outputs/`, read off the DIRECTORY, never the document |
+| `outputs-list` / `output-row` | the files | `data-name` = the filename |
+| `output-pick` / `output-look` | tick · preview | `output-preview` renders the image inline |
+| `outputs-empty` | nothing built yet | a normal state, not an error |
+| `copy-into-field` | where a copy goes | a `PathField` — typed box + `path-browse`, so it stays drivable headless (R38) |
+| `outputs-copied` | the receipt | "Copied into …". ⛔ A clash refuses the WHOLE request, inline, via `path-error` |
+
+⛔ **There is no `project-folder`, no `into-field`, no `folder-receipt`, no `project-forget`, no
+`vm-save` and no `vm-open-folder`.** R44 retired every one of them; a spec asserting `toHaveCount(0)`
+on those names is guarding the ruling, not a leftover.
 | `topbar` | the shell top bar | |
 | `save-project` | **Save…** button | visible & functional on ALL six steps (R5.1) |
 | `toast` | transient message region | `role=status`/`alert`; carries "Finish the step…", "Resumed…" |
@@ -131,11 +148,57 @@ The sweep **is** the stage; it has no pane (R4.7).
 
 ### 6 · Mosaic
 
-`mosaic-dir`, `mosaic-browse`, `mosaic-basename`; output chips `mosaic-out-{tiff,png,csv,gt,qc}`;
+`mosaic-basename` (⛔ **no `mosaic-dir` / `mosaic-browse`** — R44: the export goes into the
+project's own `outputs/`, and `outputs-panel` is how it leaves); output chips
+`mosaic-out-{tiff,png,csv,gt,qc}`;
 `mosaic-render-mode`, `mosaic-include-unverified`, `mosaic-umperpx`, `mosaic-export`,
 `mosaic-autosave-note` (separate from Save… — R5.4); `provenance-panel`, `provenance-stamp` (W5:
 "NOT AN INDEPENDENT GROUND TRUTH…"); export result `export-files` + `export-file` (**attrs**
 `data-kind=tiff|coverage|png|positions|gt|qc|qc_md`, `data-path` = the written absolute path).
+
+### 7 · Electrodes (the post-export identification stage — shared by BOTH features)
+
+The step chrome is `electrodes-*`; the readout that the snapshot step **and** the videomosaic screen
+both mount is `electrode-*` (singular); the video screen's own chrome is `vm-*`.
+
+- **Step** `electrodes-viewer` (root), `electrodes-canvas` (the READ-ONLY core viewer),
+  `electrodes-map` (**Map electrodes _and_ Re-run — one testid, two mutually-exclusive states**),
+  `electrodes-progress` / `electrodes-phase` / `electrodes-cancel`, `electrodes-map-error`
+  (**the refusal, verbatim** — see below).
+- **Readout** `electrode-panel`, `electrode-id` (text `col-row`; **attr** `data-kind=1|2`),
+  `electrode-marker` (**attr** `data-electrode`), `electrode-ids-toggle` (`role=switch`, off by
+  default), `electrode-stale` (the "map is stale — re-run" live warning).
+- **R45.8 — the device spec and whether the whole chip is in frame.** The app now carries device
+  knowledge, but **only because the user supplies it** by declaring the whole chip imaged. The
+  lattice is still MEASURED from the pixels (R45.1); the spec only checks and completes the result.
+  ⛔ **The numbers are never written in `web/`.** They are served by `GET /api/electrodes/device`
+  (`ROUTES.electrodeDevice`) from the one place that also *enforces* them, and the UI formats what it
+  is given. The specs stub that endpoint with a **fabricated** chip (`7 × 5 = 35` at `3.5 µm`), so a
+  retyped "220 × 120" cannot pass; with the endpoint **down**, the choice still works and names **no
+  numbers at all** rather than remembered ones.
+  - `electrode-coverage` — `role=radiogroup`, `aria-label="Array coverage"`, with
+    `electrode-coverage-full` ("Whole chip imaged") and `electrode-coverage-partial` ("Part of the
+    chip"), each carrying `aria-pressed`. ⭐ **There is no default**: both read `false` until he
+    picks, and `electrodes-map` / `vm-map-electrodes` are **DISABLED** while neither is pressed. The
+    answer goes on the wire as `array_coverage` on the map request.
+  - `electrode-coverage-mode` (**attr** `data-coverage=full|partial`), `electrode-um-per-px` (the
+    MEASURED scale — device pitch ÷ the pitch this image shows), `electrode-device` (the named spec)
+    — grid facts; `electrode-um` — the selection's centre in µm, in the array's own frame
+    (**absent** when the map carries no device scale: "not known" is never rendered as a number).
+  - `electrode-shape-corrected` — a live warning; **a corrected shape is never silent**. Either
+    correction renumbers: a line **added** before column 1 pushes every id up (old 1-1 is 2-1), a
+    line **dropped** from that end pulls every id down (old column 2 is column 1).
+  - `electrode-partial-note` — a live warning; a partial map must say that **1-1 is the top-left of
+    the IMAGED REGION, not of the chip**. ⛔ It names a pitch **only when the payload carried one** —
+    over a pre-R45.8 map (no device, no `um_per_px`) it says the readout is pixels only.
+  - `electrodes-map-error` / `vm-electrodes-map-error` — ⭐ **the refusal, whole.** Under "whole chip
+    imaged" the fit is STRICT: the device's exact shape with every position numbered, or a refusal
+    naming both shapes and telling him to answer "part of the chip". It renders verbatim, and the
+    coverage question stays on the page beside it so the fix is one click away.
+- **Videomosaic** `vm-map-electrodes` (Map electrodes _and_ Re-run — one testid),
+  `vm-electrodes-progress`, `vm-electrodes-cancel`, `vm-electrodes-map-error`, `vm-viewer`
+  (**attrs** `data-fit`, `data-identify`), `vm-zoom-toggle`, `vm-electrode-marker`,
+  `vm-electrode-ids-toggle`.
 
 ### Help (R3)
 

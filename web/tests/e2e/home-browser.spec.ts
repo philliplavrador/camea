@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { Home, Wizard, TID, byId, enterMosaic, fillPath } from './pages';
-import { FIXTURE, PATHS, SHORT, freshSaveFolder } from './fixture';
+import { randomUUID } from 'node:crypto';
+
+import { FIXTURE, PATHS, SHORT } from './fixture';
 
 /**
  * THE HOME IS A PROJECT MANAGER (2026-07-24 reframe — R41), and opening a project excludes nothing.
@@ -91,32 +93,33 @@ test.describe('The new-project flow asks for two paths (R41.3)', () => {
     await expect(page.getByTestId('choose-store')).toHaveCount(0);
   });
 
-  test('the dataset step is two path boxes, not a browse grid over remembered roots', async ({
+  test('⭐ R44: the dataset step is ONE path box — the app never asks where to save', async ({
     page,
   }) => {
     const home = new Home(page);
     await home.open();
     await byId(page, TID.newProject).click();
-    await byId(page, TID.npName).fill('two paths');
+    await byId(page, TID.npName).fill('one path');
     await byId(page, TID.npNext).click();
     await page.getByTestId(TID.taskCard).first().click();
 
     await expect(byId(page, TID.paths)).toBeVisible();
     await expect(byId(page, TID.fromField)).toBeVisible();
-    await expect(byId(page, TID.intoField)).toBeVisible();
 
-    // ⛔ The removed registry UI: no root chips, no "N under M roots" counter, and NO grid of
-    // datasets the app went looking for. Nothing is shown until he names a folder.
+    // ⛔ **THE SAVE-FOLDER BOX IS GONE** (R44 reverses R42.1). Not hidden — absent.
+    await expect(page.getByTestId('into-field')).toHaveCount(0);
     const body = await page.locator('body').innerText();
+    expect(body).not.toMatch(/save into/i);
+
+    // ⛔ …and the registry UI R42 removed stays removed: no root chips, no "N under M roots", and
+    // no grid of datasets the app went looking for.
     expect(body).not.toMatch(/data root/i);
     expect(body).not.toMatch(/under \d+ roots?/i);
     await expect(page.getByTestId(TID.card)).toHaveCount(0);
 
-    // Create is refused until BOTH paths are given.
+    // Create is refused until the ONE path is given — and enabled the moment it is.
     await expect(byId(page, TID.npCreate)).toBeDisabled();
     await fillPath(page, TID.fromField, PATHS.data);
-    await expect(byId(page, TID.npCreate)).toBeDisabled();
-    await fillPath(page, TID.intoField, freshSaveFolder('two-paths'));
     await expect(byId(page, TID.npCreate)).toBeEnabled();
   });
 
@@ -152,35 +155,49 @@ test.describe('The new-project flow asks for two paths (R41.3)', () => {
     await expect(field.getByTestId(TID.pathInput)).toHaveValue(typed);
   });
 
-  test('⛔ a project folder inside the dataset is refused, with the reason said out loud', async ({
+  test('the project card shows where its DATA came from — the one path he named', async ({
     page,
   }) => {
-    const home = new Home(page);
-    await home.open();
-    await byId(page, TID.newProject).click();
-    await byId(page, TID.npName).fill('into the evidence');
-    await byId(page, TID.npNext).click();
-    await page.getByTestId(TID.taskCard).first().click();
-    await fillPath(page, TID.fromField, PATHS.data);
-
-    // The app does not write on the evidence — refused at the moment he names the place.
-    await fillPath(page, TID.intoField, `${PATHS.data}/my-project`);
-    const field = byId(page, TID.intoField);
-    await expect(field.getByTestId(TID.pathError)).toBeVisible({ timeout: SHORT });
-    await expect(byId(page, TID.npCreate)).toBeDisabled();
-  });
-
-  test('the project card shows the folder he named', async ({ page }) => {
-    const folder = freshSaveFolder('named');
     // ⚠️ Unique per run: the state dir persists between local runs, so a fixed name would match the
     // cards left by every previous run and trip Playwright's strict mode.
-    const name = `folder on the card ${folder.slice(-8)}`;
+    const name = `data on the card ${randomUUID().slice(0, 8)}`;
     const home = new Home(page);
     await home.open();
-    await home.openFixture(name, folder);
+    await home.openFixture(name);
 
     await home.open();
     const card = page.getByTestId(TID.projectCard).filter({ hasText: name });
-    await expect(card.getByTestId(TID.projectFolder)).toContainText(folder.slice(-8));
+    // ⭐ R44: the card advertises the DATA folder, never the project's own — that one is Camea's and
+    // is not somewhere to go. Its files are browsed in the app.
+    await expect(card.getByTestId(TID.projectDataDir)).toContainText('synthetic');
+    await expect(card.getByTestId('project-folder')).toHaveCount(0);
+  });
+
+  test('⛔ R44: there is no "Remove" that leaves the files — delete means delete', async ({
+    page,
+  }) => {
+    const name = `delete means delete ${randomUUID().slice(0, 8)}`;
+    const home = new Home(page);
+    await home.open();
+    await home.openFixture(name);
+    await home.open();
+
+    const card = page.getByTestId(TID.projectCard).filter({ hasText: name });
+    await expect(card).toBeVisible();
+    // R42.8's second action is gone with the user-named folder it protected.
+    await expect(page.getByTestId('project-forget')).toHaveCount(0);
+
+    // `window.confirm` on purpose (R38): Playwright can answer it, a custom modal it cannot.
+    page.once('dialog', (d) => {
+      expect(d.message()).toMatch(/cannot be undone/i);
+      void d.accept();
+    });
+    await card
+      .locator('xpath=../..')
+      .getByTestId(TID.projectDelete)
+      .or(page.getByTestId(TID.projectDelete).first())
+      .first()
+      .click();
+    await expect(page.getByTestId(TID.projectCard).filter({ hasText: name })).toHaveCount(0);
   });
 });

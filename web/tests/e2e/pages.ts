@@ -18,9 +18,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { type Page, type Locator, expect } from '@playwright/test';
-import { FIXTURE, PATHS, SHORT, freshSaveFolder } from './fixture';
+import { FIXTURE, PATHS, SHORT } from './fixture';
 
-export const STEPS = ['load', 'range', 'screen', 'place', 'sweep', 'mosaic'] as const;
+export const STEPS = ['load', 'range', 'screen', 'place', 'sweep', 'mosaic', 'electrodes'] as const;
 export type StepName = (typeof STEPS)[number];
 
 /** The frozen backend routes the specs inspect or stub. (docs/openapi.json — never hand-write a body.) */
@@ -39,8 +39,14 @@ export const ROUTES = {
   load: '/api/documents/load',
   datasetsAt: '/api/datasets/at', //     "look at THIS folder" — no registry, nothing remembered
   projects: '/api/projects', //          a project IS one folder (list/create/delete/PATCH rename)
-  projectFolder: '/api/projects/folder', // "can I save here?", asked before anything is written
   document: '/api/analyses', //          PUT /api/analyses/{id}/document — the durable auto-save (R29)
+  electrodes: '/api/mosaic/electrodes', // POST …/map → 202 job (body carries `array_coverage` —
+  //                                     R45.8, the user's own declaration); GET …/{id} → 404 until mapped
+  electrodeDevice: '/api/electrodes/device', // ⭐ CORE, not a feature: the chip the "whole chip
+  //                                     imaged" fit is held to. The UI READS its numbers from here
+  //                                     instead of retyping them (R45.8 — one place owns them, and
+  //                                     it is the same place that enforces them).
+  jobs: '/api/jobs', //                  GET /api/jobs/{id} — the 500 ms poll every long op rides
 } as const;
 
 /** THE TESTID REGISTRY. Grouped by screen; see README.md for the human-readable table. */
@@ -50,14 +56,14 @@ export const TID = {
   newProject: 'new-project', //             the "New project" CTA
   projectCard: 'project-card', //           data-project-id; the card is the Open affordance
   projectName: 'project-name',
-  projectFolder: 'project-folder', //       the folder HE named
+  projectDataDir: 'project-data-dir', //    where its DATA came from — the one path HE named
   projectRename: 'project-rename',
   projectExport: 'project-export',
-  projectForget: 'project-forget', //       take it off the list; the files stay
-  projectDelete: 'project-delete', //       remove Camea's files from the folder
+  projectDelete: 'project-delete', //       ⭐ R44: delete means delete. There is no Remove.
   projectGrid: 'project-grid',
-  projectsUnreadable: 'projects-unreadable', // remembered folders that could not be read
-  // the new-project flow (/new): name → task → where from / where to
+  projectsUnreadable: 'projects-unreadable', // store folders that could not be read
+  projectsMigrated: 'projects-migrated', //  the one-time R44 "your projects moved" notice
+  // the new-project flow (/new): name → task → where the DATA is (R44: no save folder)
   newProjectFlow: 'new-project-flow',
   npName: 'np-name',
   npNext: 'np-next',
@@ -65,12 +71,10 @@ export const TID = {
   npCancel: 'np-cancel',
   npCreate: 'np-create',
   taskCard: 'task-card', //                 data-task=mosaic
-  // ── the two path boxes (R41.3, reframed 2026-07-25) ───────────────────────────
+  // ── the ONE path box (R41.3 → R42 → ⭐ R44: "into" is gone, the app owns the folder) ────────
   paths: 'project-paths',
   fromField: 'from-field', //               "Pull data from" — a PathField
-  intoField: 'into-field', //               "Save into" — a PathField
   datasetChoice: 'dataset-choice', //       shown ONLY when one folder holds several acquisitions
-  folderReceipt: 'folder-receipt',
   card: 'dataset-card', //                  the RECEIPT for the folder he typed, not a browse card
   cardName: 'dataset-name',
   cardSnapshots: 'dataset-snapshots',
@@ -221,8 +225,8 @@ export const TID = {
   statusFps: 'status-fps',
 
   // ── 6 · Mosaic ────────────────────────────────────────────────────────────
-  mosaicDir: 'mosaic-dir',
-  mosaicBrowse: 'mosaic-browse',
+  // ⛔ `mosaic-dir` / `mosaic-browse` are GONE (R44): an export goes into the project's own
+  //    outputs/, and the Outputs panel below is how it leaves Camea.
   mosaicBasename: 'mosaic-basename',
   outTiff: 'mosaic-out-tiff',
   outPng: 'mosaic-out-png',
@@ -238,6 +242,49 @@ export const TID = {
   provenanceStamp: 'provenance-stamp', //   W5 — "NOT AN INDEPENDENT GROUND TRUTH…"
   exportFiles: 'export-files',
   exportFile: 'export-file', //             data-kind = tiff|coverage|png|positions|gt|qc|qc_md; data-path = written path
+
+  // ── 7 · Electrodes (the post-export identification stage, 2026-08-11) ─────
+  // The step nav button is TID.step('electrodes') → `wizard-step-electrodes` (STEPS above).
+  electrodesViewer: 'electrodes-viewer', //    the step root (canvas + rail)
+  electrodesCanvas: 'electrodes-canvas', //    the READ-ONLY core-viewer <canvas>
+  electrodesMap: 'electrodes-map', //          Map electrodes / Re-run (both states, one testid)
+  electrodesProgress: 'electrodes-progress', // the map job block (bar + phase + cancel)
+  electrodesPhase: 'electrodes-phase',
+  electrodesCancel: 'electrodes-cancel',
+  electrodesMapError: 'electrodes-map-error', // ⭐ the refusal, VERBATIM. Under "whole chip imaged"
+  //                                           the strict fit ends in a map or a refusal that names
+  //                                           both shapes and says to answer "part of the chip" —
+  //                                           it is shown whole, beside a live coverage question.
+  electrodePanel: 'electrode-panel', //        the shared readout (both features mount it)
+  electrodeId: 'electrode-id', //              the id line, text `col-row`; data-kind = 1|2
+  electrodeStale: 'electrode-stale', //        the "map is stale — re-run" live warning
+  electrodeIdsToggle: 'electrode-ids-toggle', // role=switch; the IDs overlay (off by default)
+  electrodeMarker: 'electrode-marker', //      the snapshot highlight ring; data-electrode
+  // ── R45.8 · the device spec + the coverage question (2026-08-11) ────────────
+  // ⭐ HE PICKS BEFORE ANY MAPPING. The Map/Re-run button is DISABLED until one segment is pressed —
+  // a map that quietly assumed "partial" would be an answer he never gave.
+  electrodeCoverage: 'electrode-coverage', //  role=radiogroup, aria-label "Array coverage"; both
+  //                                           features mount it (pre-map panel AND the readout)
+  electrodeCoverageFull: 'electrode-coverage-full', //       "Whole chip imaged"; aria-pressed
+  electrodeCoveragePartial: 'electrode-coverage-partial', // "Part of the chip"; aria-pressed
+  electrodeCoverageMode: 'electrode-coverage-mode', // the grid fact; data-coverage = full|partial
+  electrodeUm: 'electrode-um', //              the selection's centre in µm — array frame, x along
+  //                                           columns; ABSENT when the map carries no device scale
+  electrodeUmPerPx: 'electrode-um-per-px', //  the MEASURED scale (device pitch ÷ measured pitch)
+  electrodeDevice: 'electrode-device', //      the named sensor spec that supplied the µm
+  // ⛔ there is deliberately NO `electrode-shape-corrected` id: a full map is never repaired, so a
+  //    corrected shape cannot happen (R45.8). The refusal is what the user reads instead.
+  electrodePartialNote: 'electrode-partial-note', // live warning — "1-1 is the top-left of the
+  //                                           IMAGED REGION, not of the chip"
+  // videomosaic
+  vmMapElectrodes: 'vm-map-electrodes', //     Map electrodes / Re-run on the video screen
+  vmElectrodesProgress: 'vm-electrodes-progress',
+  vmElectrodesCancel: 'vm-electrodes-cancel',
+  vmElectrodesMapError: 'vm-electrodes-map-error', // the same refusal, verbatim, on the video screen
+  vmViewer: 'vm-viewer', //                    the preview scroller; data-fit / data-identify
+  vmZoomToggle: 'vm-zoom-toggle', //           Fit ↔ 100% — shown once plain click means identify
+  vmElectrodeMarker: 'vm-electrode-marker', // the video highlight ring; data-electrode
+  vmElectrodeIdsToggle: 'vm-electrode-ids-toggle', // role=switch; the video screen's IDs overlay
 
   // ── Help (R3/R7) ──────────────────────────────────────────────────────────
   help: 'help', //                          the 14 px `?`; role=button, tabindex=0; data-empty hides it
@@ -294,15 +341,14 @@ export class Home {
     return fixtureCard(this.page);
   }
   /**
-   * Create a project on the fixture via the new-project flow (name → task → where from / where to) →
+   * Create a project on the fixture via the new-project flow (name → task → where the DATA is) →
    * enters the Mosaic feature at `/project/:id` (R41.3; R4.5 lands it on Range).
    *
-   * ⭐ **NO HARNESS SETUP IS NEEDED ANY MORE.** This used to depend on a store having been chosen and
-   * the fixture root registered — neither existed, which is why `home-browser.spec.ts` carried a
-   * known-gap note. Since 2026-07-25 the flow asks for both paths outright, so the test simply types
-   * them, exactly as the user does.
+   * ⭐ **ONE PATH, AND NO HARNESS SETUP** (R44). It used to type two — a data folder and a save
+   * folder — and before that it needed a store to have been chosen and a root registered. Now the
+   * app owns where the project goes, so the test types what the user types: where his data is.
    */
-  async openFixture(name = 'e2e project', folder = freshSaveFolder()) {
+  async openFixture(name = 'e2e project') {
     await byId(this.page, TID.newProject).click();
     await expect(this.page).toHaveURL(/\/new(\/|$)/);
     await byId(this.page, TID.npName).fill(name);
@@ -311,8 +357,6 @@ export class Home {
 
     await fillPath(this.page, TID.fromField, PATHS.data);
     await expect(this.card()).toBeVisible();
-    await fillPath(this.page, TID.intoField, folder);
-    await expect(byId(this.page, TID.folderReceipt)).toBeVisible();
 
     await byId(this.page, TID.npCreate).click();
     await expect(this.page).toHaveURL(/\/project\//);

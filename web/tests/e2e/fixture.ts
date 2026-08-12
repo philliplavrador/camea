@@ -95,3 +95,15 @@ export const PATHS = {
 export function freshSaveFolder(label = 'p'): string {
   return `${PATHS.saveRoot}/${label}-${randomUUID().slice(0, 8)}`;
 }
+
+/**
+ * The committed synthetic survey VIDEO (tests/fixtures/survey.avi — regenerate with
+ * `uv run python tests/fixtures/make_synthetic_video.py`). Crops of one generated world
+ * panned in a 2-row serpentine; the videomosaic pipeline must build it with SHIPPED
+ * DEFAULTS, because the UI sends no config overrides.
+ */
+export const VIDEO_FIXTURE = {
+  path: `${repoRoot}/tests/fixtures/survey.avi`,
+  width: 480,
+  height: 320,
+} as const;

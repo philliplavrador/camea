@@ -1,7 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
 import { Sweep, Wizard, TID, byId, enterMosaic, runBuild } from './pages';
 import { SHORT } from './fixture';
 
@@ -43,9 +41,10 @@ test.describe('R28 / R37 — provenance + export', { tag: '@slow' }, () => {
     await sweep.focus();
     await sweep.press('a');
 
-    const outDir = mkdtempSync(join(tmpdir(), 'camea-export-'));
     await wizard.goto('mosaic');
-    await byId(page, TID.mosaicDir).fill(outDir);
+    // ⭐ **NO OUTPUT FOLDER TO FILL IN** (R44): the export lands in this project's own outputs/, and
+    // the Files panel below is how it leaves Camea. `basename` is what those files are CALLED.
+    await expect(page.getByTestId('mosaic-dir')).toHaveCount(0);
     await byId(page, TID.mosaicBasename).fill('run');
     await byId(page, TID.mosaicExport).click();
 
@@ -71,6 +70,18 @@ test.describe('R28 / R37 — provenance + export', { tag: '@slow' }, () => {
     const gt = JSON.parse(readFileSync(gtPath!, 'utf8'));
     expect(gt.provenance.independent_of_method).toBe(false);
     expect(gt.provenance.warning, 'the warning must ship in the file').toBeTruthy();
+
+    // ⭐ **R44: and the Outputs panel lists exactly what was written**, so he can look at it and copy
+    // out whichever files he wants. What the panel shows IS what is on disk — it reads the directory.
+    const panel = page.getByTestId('outputs-panel');
+    await expect(panel).toBeVisible({ timeout: 30_000 });
+    const listed = await panel
+      .getByTestId('output-row')
+      .evaluateAll((els) => els.map((e) => e.getAttribute('data-name')));
+    expect(new Set(listed)).toEqual(new Set(paths.map((f) => (f ?? '').split(/[\\/]/).pop())));
+
+    // …and every one of them sits in the PROJECT's folder, which the user never named.
+    for (const f of paths) expect(f).toMatch(/[\\/]outputs[\\/]/);
   });
 
   test('R27: "Skip — place by hand" after a build is DESTRUCTIVE and confirms with a count', async ({

@@ -8,11 +8,13 @@ import { SHORT } from './fixture';
  * reachable from EVERY screen (R5).
  */
 test.describe('Six-step wizard (R4) and Save-from-anywhere (R5)', () => {
-  test('R4.1: the six steps are exactly Load · Range · Screen · Place · Sweep · Mosaic, in order', async ({
+  test('R4.1: the steps are exactly Load · Range · Screen · Place · Sweep · Mosaic · Electrodes, in order', async ({
     page,
   }) => {
+    // Electrodes joined on 2026-08-11 (R45) — an OPTIONAL post-build stage, gated with Mosaic.
     await enterMosaic(page);
-    const labels = ['Load', 'Range', 'Screen', 'Place', 'Sweep', 'Mosaic'];
+    const labels = ['Load', 'Range', 'Screen', 'Place', 'Sweep', 'Mosaic', 'Electrodes'];
+    expect(STEPS.length).toBe(labels.length);
     for (let i = 0; i < STEPS.length; i++) {
       await expect(byId(page, TID.step(STEPS[i]))).toContainText(labels[i], { timeout: SHORT });
     }
