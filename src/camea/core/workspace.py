@@ -361,11 +361,15 @@ def _as_text(doc: Mapping | str) -> str:
 def app_state_dir() -> Path:
     """`%LOCALAPPDATA%/Camea` (or `$XDG_STATE_HOME/Camea`, or `~/.local/state/Camea`).
 
-    ⭐ This is where the app's own settings live — the chosen workspace path, the recent datasets.
-    **It is NOT where analyses live.** In v1 the autosave went here, keyed on the dataset directory,
-    and two trial ranges of one dataset collided in it. Analyses live in the workspace, one directory
-    each. Nothing that is the user's *work* is written here. `CAMEA_STATE_DIR` overrides (the tests
-    set it; so can a portable install).
+    ⭐ **Under R44 (2026-08-10) this is where the user's PROJECTS live too** — `projects/<id>/`, the
+    app-managed store (`core.project.store_root`). It also holds the app's own settings (the recent
+    datasets). `CAMEA_STATE_DIR` overrides it (the tests set it; so can a portable install), which is
+    what gives every test process and the e2e harness its own store.
+
+    ⚠️ **The v1 trap this must not re-open.** In v1 the *autosave* lived here keyed on the DATASET
+    DIRECTORY, and two trial ranges of one dataset collided in it — pass 2 silently overwrote pass
+    1's ground-truth records. What is keyed here is the **project id**, never the dataset: two ranges
+    are two projects, two ids, two folders. Nothing in this directory is ever keyed on the data.
     """
     override = os.environ.get("CAMEA_STATE_DIR")
     if override:
@@ -480,9 +484,9 @@ class Analysis:
             "dataset_key": self.dataset_key,
             "dataset": self.dataset,
             "path": _fwd(self.path),
-            # ⭐ The folder the user named, and the data it was built on. He chose both; the card
-            # shows him both. (`dir` is the document's parent, which under `core.project`'s layout
-            # IS the project folder.)
+            # ⭐ Where the project lives (Camea's store, R44) and the data it was built on — he chose
+            # the second, never the first. (`dir` is the document's parent, which under
+            # `core.project`'s layout IS the project folder.)
             "folder": _fwd(self.dir),
             "data_dir": self.data_dir,
             "created": self.created,

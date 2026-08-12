@@ -1,16 +1,21 @@
 """settings.py — ⭐ **WHAT THE APP REMEMBERS BETWEEN LAUNCHES. AND IT IS ONLY PATHS.**
 
-    {"projects": ["D:/work/retina-run", "E:/runs/cortex"],
-     "recent_datasets": ["D:/.../260620d"]}
+    {"recent_datasets": ["D:/.../260620d"]}
 
 That is the whole file. It lives in the OS's app-data directory (`core.workspace.app_state_dir()` —
 `%LOCALAPPDATA%/Camea` on Windows), **not** in a project folder and **never** in a dataset.
 
-⭐ **`dataset_roots` and `workspace` were REMOVED on 2026-07-25** (his ruling — see
-`core/project.py`). There is no root registry to scan on launch and no single app-managed store:
-a project names **where its data comes from** and **where it is saved**, and the only thing kept
-here is the list of folders he has actually saved into, so the home screen can list them.
-`recent_datasets` survives — it is what offers his last data paths back as completions.
+⭐ **`projects` was REMOVED on 2026-08-10** (his ruling, BEHAVIOUR R44 — see `core/project.py`).
+Projects live in Camea's own store now, so **the store IS the index**: to list them you read
+`core.project.store_root()`, and there is nothing to keep in sync. (`dataset_roots` and `workspace`
+went on 2026-07-25 for a different reason and are not coming back either.) What is left is
+`recent_datasets` — the one thing the app cannot re-derive, because the data is the user's and lives
+wherever he keeps it. It offers his last data paths back as completions.
+
+⚠️ **`legacy_projects` is read but never written.** The pre-R44 `projects` key names folders the
+user saved into under R42/R43; `core.migrate` reads it once, brings those projects into the store,
+and the next `save()` drops the key. It is deliberately **not** on the wire — nothing in the app may
+start depending on it again.
 
 ⛔ **NO DATASET KNOWLEDGE. THIS FILE IS WHERE IT WOULD BE MOST TEMPTING TO PUT SOME.**
 A remembered *path* is not knowledge *about the data at that path*. So:
@@ -27,10 +32,10 @@ A remembered *path* is not knowledge *about the data at that path*. So:
     this session**, and **a project file he loaded.**
 
 **A CORRUPT OR UNREADABLE SETTINGS FILE IS NOT A FATAL ERROR.** It is a convenience cache. It is
-reset to defaults, loudly (`warnings`), and the app starts. Nothing the user has *made* lives here —
-his work is in the project folders he named, each a real folder with a real name he chose. Losing
-this file costs him the *list* on the home screen, never a project: point Camea at the folder again
-and everything is there, because the truth is the manifest in the folder, not this index.
+reset to defaults, loudly (`warnings`), and the app starts. ⭐ Under R44 losing this file costs the
+user **nothing but his recent-dataset completions** — not even the home screen, because the projects
+are read from the store, not from here. (Before R44 it held the list of project folders, and losing
+it cost him that list.) The truth was always the manifest in the folder; now the folder is ours too.
 """
 
 from __future__ import annotations
@@ -83,10 +88,11 @@ class Settings:
     ⚠️ Thread-safe: the API serves from a thread pool, and the settings are touched on every scan.
     """
 
-    #: Every folder the user has saved a project into. ⭐ An INDEX, not the truth — the truth is the
-    #: `camea-project.json` in each folder. A folder that has moved simply drops out of the listing.
-    projects: list[str] = field(default_factory=list)
     recent_datasets: list[str] = field(default_factory=list)
+
+    #: ⚠️ **PRE-R44 ONLY. Read from disk, never written, never on the wire.** The folders the user
+    #: saved projects into under R42/R43. `core.migrate` drains this once; see the module docstring.
+    legacy_projects: list[str] = field(default_factory=list, repr=False, compare=False)
 
     #: Set when the file on disk could not be read. Surfaced, never swallowed — but never fatal.
     warnings: list[str] = field(default_factory=list, repr=False, compare=False)
@@ -114,8 +120,8 @@ class Settings:
                 self.warnings.append(f"could not read {_fwd(p)} ({e}) — starting with defaults")
                 return self
 
-            self.projects = _dedup([r for r in (raw.get("projects") or [])
-                                    if isinstance(r, str)])
+            self.legacy_projects = _dedup([r for r in (raw.get("projects") or [])
+                                           if isinstance(r, str)])
             self.recent_datasets = _dedup([r for r in (raw.get("recent_datasets") or [])
                                            if isinstance(r, str)])[:MAX_RECENT]
             return self
@@ -134,29 +140,21 @@ class Settings:
     # the wire
     # ---------------------------------------------------------------------------------------------
     def to_json(self) -> dict[str, Any]:
-        """`api.schemas.Settings`. ⛔ Two keys. Both of them lists of paths."""
+        """`api.schemas.Settings`. ⛔ ONE key, and it is a list of paths.
+
+        ⚠️ `legacy_projects` is deliberately absent — writing it back would resurrect the pre-R44
+        index the store replaced. Persisting these settings is what finally drops the old key.
+        """
         with self._lock:
-            return {
-                "projects": list(self.projects),
-                "recent_datasets": list(self.recent_datasets),
-            }
+            return {"recent_datasets": list(self.recent_datasets)}
 
     # ---------------------------------------------------------------------------------------------
     # mutation — every one of these persists immediately
     # ---------------------------------------------------------------------------------------------
-    def add_project(self, path: str | Path) -> Settings:
-        """Remember a folder the user saved a project into. Most recent first, so the *"Save into"*
-        box can offer his last choice's neighbourhood back to him."""
+    def drop_legacy_projects(self) -> Settings:
+        """Forget the pre-R44 folder index, once `core.migrate` has drained it."""
         with self._lock:
-            self.projects = _dedup([_fwd(path), *self.projects])
-            return self.save()
-
-    def forget_project(self, path: str | Path) -> Settings:
-        """Drop a folder from the index. ⚠️ Forgetting is not deleting — `core.project.Project.delete`
-        removes the files; this only stops listing the folder."""
-        with self._lock:
-            want = _fwd(path).rstrip("/").lower()
-            self.projects = [r for r in self.projects if r.lower() != want]
+            self.legacy_projects = []
             return self.save()
 
     def touch_dataset(self, path: str | Path) -> Settings:
@@ -165,22 +163,24 @@ class Settings:
             self.recent_datasets = _dedup([_fwd(path), *self.recent_datasets])[:MAX_RECENT]
             return self.save()
 
-    def update(self, *, projects: list[str] | None = None,
-               recent_datasets: list[str] | None = None) -> Settings:
+    def update(self, *, recent_datasets: list[str] | None = None) -> Settings:
         """`PUT /api/settings`. Only the fields that are given are touched; a field that is absent is
         left alone (that is what `SettingsUpdate`'s `None` defaults mean)."""
         with self._lock:
-            if projects is not None:
-                self.projects = _dedup(list(projects))
             if recent_datasets is not None:
                 self.recent_datasets = _dedup(list(recent_datasets))[:MAX_RECENT]
             return self.save()
 
     def clear(self) -> Settings:
-        """Reset to defaults **and persist**. The tests use it; so does a user with a broken file."""
+        """Reset to defaults **and persist**. The tests use it; so does a user with a broken file.
+
+        ⛔ It does **not** touch the store — deleting the user's projects is `Project.delete`'s job
+        and nothing else's. Clearing settings has never been able to cost him work, and under R44 it
+        costs him even less than it did.
+        """
         with self._lock:
-            self.projects = []
             self.recent_datasets = []
+            self.legacy_projects = []
             self.warnings = []
             return self.save()
 

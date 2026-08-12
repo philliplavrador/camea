@@ -226,30 +226,42 @@ def client(state_dir) -> TestClient:
 
 
 @pytest.fixture()
-def workspace(tmp_path) -> Path:
-    """A place to put project folders — outside the repo and outside any dataset.
+def outbox(tmp_path) -> Path:
+    """⭐ **A PLACE TO COPY OUTPUTS INTO** — outside the repo and outside any dataset.
 
-    ⚠️ Since 2026-07-25 there is no app-managed store to choose: a project names **its own** folder
-    (`core.project`). This fixture is just a tmp parent to mint those folders under; nothing is
-    written and nothing is registered until a project is actually created in one.
+    ⚠️ Since R44 (2026-08-10) a project is **not** created in a folder the test names: it goes into
+    Camea's store under the isolated `CAMEA_STATE_DIR`. The only folder a user still names is the
+    destination of `POST /api/projects/{id}/outputs/copy`, and this is it.
     """
-    d = tmp_path / "work"
+    d = tmp_path / "out"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def new_project(client: TestClient, session_id: str, folder, *, feature: str = "mosaic",
+def new_project(client: TestClient, session_id: str, *, feature: str = "mosaic",
                 name: str = "p", trials=None):
-    """`POST /api/projects` — one project, in the folder it names. -> the raw response.
+    """`POST /api/projects` — one project, in Camea's store. -> the raw response.
 
-    ⭐ `folder` is required by the contract on purpose: *where to save* is the user's choice, and a
-    default would be the app choosing for him. Tests name it too.
+    ⭐ **NO `folder` (R44).** *Where to save* is not the user's choice any more and not the test's
+    either; the app puts it in its own store and says where it went.
     """
-    body: dict = {"session_id": session_id, "feature": feature, "name": name,
-                  "folder": str(folder)}
+    body: dict = {"session_id": session_id, "feature": feature, "name": name}
     if trials is not None:
         body["trials"] = trials
     return client.post("/api/projects", json=body)
+
+
+def store_dir(state_dir: Path) -> Path:
+    """Where projects actually land, for tests that need to look at the bytes."""
+    return state_dir / "projects"
+
+
+def store_entries() -> list[str]:
+    """Every project folder in the store. ⚠️ Tolerant of the store not existing yet — a fresh
+    process has made no projects, and that is the state most "nothing was left behind" tests are
+    asserting about."""
+    from camea.core.project import store_folders
+    return store_folders()
 
 
 # =================================================================================================

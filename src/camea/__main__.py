@@ -130,7 +130,14 @@ def _remember_root(path: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
+    from camea.api import routes_core
     from camea.api.app import create_app
+
+    # ⚠️ Before `create_app()`: `POST /api/fs/reveal` opens a folder in the OS file manager, which
+    # `--window` and `--browser` both should do (the server is on the user's own machine) and
+    # `--headless` must never do. Unlike `/api/dialog/*` this needs no pywebview, so it cannot be
+    # gated on `WINDOW` — the mode has to be told to it.
+    routes_core.set_headless(args.headless)
 
     app = create_app()
 

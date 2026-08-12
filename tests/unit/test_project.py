@@ -1,9 +1,10 @@
-"""A project is ONE FOLDER — the guards, the slot rule, and finding it again cold.
+"""A project is ONE FOLDER, and Camea owns it — the store, the guards, the slot rule, and finding a
+project again cold.
 
-His ruling, 2026-07-25: a project names *where its data comes from* and *where it is saved*, and the
-folder he names IS the project. These tests pin the parts that would quietly cost him work if they
-drifted — the refusals, the slot guard, and the fact that `delete` is not greedy with a folder he
-owns.
+His ruling, 2026-08-10 (R44): *"camea saves project-specific files to its own repo automatically"*.
+The user names where the data comes **from**; the app answers where the project goes. These tests
+pin the parts that would quietly cost him work if they drifted — the store's shape, the refusals,
+the slot guard, and the two very different things `delete` does inside the store and outside it.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from camea.core.project import (
     Project,
     ProjectError,
     ProjectSet,
+    store_folders,
+    store_root,
 )
 from camea.core.workspace import PathRefused, SlotMismatch, repo_root
 
@@ -93,6 +96,33 @@ def test_a_project_inside_the_repo_is_refused():
         Project.open(root / "my-project", create=True)
 
 
+def test_the_app_state_dir_is_exempt_from_the_repo_rule_ONLY(tmp_path, monkeypatch):
+    """⭐ **The STORE lives in `app_state_dir()` (R44)**, which a dev install may put beside the
+    checkout (the e2e harness puts it at `web/.playwright-state`). The repo rule protects HIS work
+    from a `git clean`; the state dir is the app's by construction, so it is exempt — and under R44
+    that exemption is the normal path, not an edge case. ⛔ The evidence rule is NOT exempted.
+
+    (`tmp_path` stands in for the checkout so this never writes into the real repo.)"""
+    monkeypatch.setattr("camea.core.project.repo_root", lambda: tmp_path)
+    monkeypatch.setenv("CAMEA_STATE_DIR", str(tmp_path / "web" / ".state"))
+
+    # inside the "repo", and refused — the rule still bites everywhere else
+    with pytest.raises(PathRefused):
+        Project.open(tmp_path / "my-project", create=True)
+
+    # inside the "repo" AND inside the state dir — allowed: this is where the store IS
+    pr = Project.open(tmp_path / "web" / ".state" / "projects" / "vm-1", create=True)
+    assert pr.path.is_dir()
+
+    # …and a dataset inside the state dir is STILL read-only, exemption or no exemption
+    ds = tmp_path / "web" / ".state" / "an-acquisition"
+    ds.mkdir(parents=True, exist_ok=True)
+    (ds / "log.txt").write_text("trial 011\n", encoding="utf-8")
+    (ds / "011.xml").write_text("<vsdscope/>", encoding="utf-8")
+    with pytest.raises(DatasetIsReadOnly):
+        Project.open(ds / "mosaic", create=True)
+
+
 def test_a_file_is_not_a_folder(tmp_path):
     f = tmp_path / "notes.txt"
     f.write_text("hi", encoding="utf-8")
@@ -151,13 +181,15 @@ def test_the_autosave_lands_BESIDE_the_document_never_over_it(tmp_path):
 
 
 # =================================================================================================
-# delete — ⚠️ the folder is HIS, and we are not greedy with it
+# delete, OUTSIDE the store — ⚠️ the folder is HIS, and we are not greedy with it
 # =================================================================================================
 
 
 def test_delete_removes_OUR_files_and_leaves_HIS_alone(tmp_path):
-    """🔴 Under the old layout this was an `rmtree` of a uuid dir Camea made. The folder is now one
-    HE named and may hold things we did not put there. A stray PDF of his notes must survive."""
+    """🔴 The careful path, and it is not dead code under R44: `core.migrate` meets pre-R44 folders
+    the user named, and a project whose migration failed is left in one. A stray PDF of his notes in
+    that folder must survive his deleting the project. (In the store, `delete` takes the whole
+    folder — see `test_deleting_a_project_IN_THE_STORE_takes_the_whole_folder`.)"""
     pr = make(tmp_path)
     pr.save_document({"id": pr.analysis_id, "dataset_key": "k1"})
     (pr.outputs_dir / "mosaic.tiff").write_bytes(b"II*\x00")
@@ -230,3 +262,133 @@ def test_rename_rewrites_the_manifest_and_the_folder_does_NOT_move(tmp_path):
     assert after.name == "after"
     assert after.analysis_id == aid
     assert pr.path == where and where.is_dir()
+
+
+# =================================================================================================
+# THE STORE — ⭐ where every project lives (R44, 2026-08-10)
+# =================================================================================================
+
+
+def test_create_in_store_names_the_folder_after_the_id(tmp_path, monkeypatch):
+    """⭐ Nobody reads this path, so it does not have to be legible — it has to be **collision-free
+    and stable**. The id IS the folder name, so two projects called the same thing are two folders,
+    and a rename never has to move anything."""
+    monkeypatch.setenv("CAMEA_STATE_DIR", str(tmp_path / "state"))
+
+    a = Project.create_in_store(feature="mosaic", name="pass 1", dataset_key="k1", dataset="d")
+    b = Project.create_in_store(feature="mosaic", name="pass 1", dataset_key="k1", dataset="d")
+
+    assert a.path.parent == store_root()
+    assert a.path.name == a.analysis_id
+    assert a.analysis_id != b.analysis_id and a.path != b.path
+    assert sorted(store_folders()) == sorted([a.path.as_posix(), b.path.as_posix()])
+
+
+def test_the_store_is_the_index_and_it_is_read_fresh(tmp_path, monkeypatch):
+    """⭐ `ProjectSet.of_store()` is built per call, so a project made in another tab (or by a second
+    Camea) shows up without a restart. There is no remembered list to fall out of sync with — which
+    is the whole reason `settings.projects` could be deleted."""
+    monkeypatch.setenv("CAMEA_STATE_DIR", str(tmp_path / "state"))
+    assert ProjectSet.of_store().analyses() == []
+
+    pr = Project.create_in_store(feature="mosaic", name="p", dataset_key="k1", dataset="d")
+    pr.save_document({"id": pr.analysis_id, "dataset_key": "k1"})
+
+    found = ProjectSet.of_store().analyses()
+    assert [a.analysis_id for a in found] == [pr.analysis_id]
+
+
+def test_deleting_a_project_IN_THE_STORE_takes_the_whole_folder(tmp_path, monkeypatch):
+    """⭐ **R44 retires R42.8's Remove-vs-Delete.** The folder is Camea's, made by Camea; everything
+    in it is the project, outputs included. A project the app stops listing is one nobody could ever
+    reach again, so half-deleting it would only accumulate unreachable bytes on his C: drive."""
+    monkeypatch.setenv("CAMEA_STATE_DIR", str(tmp_path / "state"))
+    pr = Project.create_in_store(feature="mosaic", name="p", dataset_key="k1", dataset="d")
+    pr.save_document({"id": pr.analysis_id, "dataset_key": "k1"})
+    (pr.outputs_dir / "mosaic.png").write_bytes(b"PNG")
+
+    pr.delete()
+
+    assert not pr.path.exists()
+    assert store_folders() == []
+
+
+# =================================================================================================
+# move_to — ⭐ how a pre-R44 project comes home to the store (`core.migrate`)
+# =================================================================================================
+
+
+def test_a_project_moves_whole_and_drops_the_legacy_draft_flag(tmp_path):
+    """The migration's mechanics: the whole project — document, artifacts, manifest — arrives at the
+    destination, and R43's `draft` flag is dropped on the way in, because in the store there is no
+    such thing as a project without a home."""
+    pr = make(tmp_path, folder="old")
+    # A pre-R44 draft, as R43 left it on disk. `Project.create` cannot make one any more — the flag
+    # only ever arrives from a manifest an older Camea wrote, which is exactly what this simulates.
+    man = json.loads(pr.manifest_path.read_text("utf-8")) | {"draft": True}
+    pr.manifest_path.write_text(json.dumps(man), encoding="utf-8")
+    # ⚠️ The artifact is declared in `build.outputs`. That is what makes it OURS to move — see
+    # `own_entries()`: the document is the authority on the build's files, never a glob.
+    pr.save_document({"id": pr.analysis_id, "dataset_key": "k1", "hello": "world",
+                      "build": {"outputs": {"mosaic": "night sky.png"}}})
+    (pr.path / "night sky.png").write_bytes(b"PNG")
+    aid, was = pr.analysis_id, pr.path
+
+    moved = pr.move_to(tmp_path / "store" / aid)
+
+    assert moved.path == (tmp_path / "store" / aid).resolve()
+    assert moved.analysis_id == aid, "the id survives the move — it is the addressing token"
+    assert (moved.path / "night sky.png").read_bytes() == b"PNG"
+    assert (moved.path / "document.camea.json").is_file()
+    assert not was.exists(), "the old folder is not left behind as a husk"
+    assert json.loads((moved.path / MARKER).read_text("utf-8")).get("draft") is None
+
+
+def test_move_to_refuses_a_folder_that_already_holds_a_project(tmp_path):
+    """A migration must never merge two projects into one folder — it refuses, and reports."""
+    make(tmp_path, folder="taken", label="his real work")
+    pr = make(tmp_path, folder="old")
+
+    with pytest.raises(PathRefused, match="already holds the project"):
+        pr.move_to(tmp_path / "taken")
+    assert pr.path.is_dir(), "a refused move leaves the project exactly where it was"
+
+
+def test_move_to_refuses_to_write_over_HIS_files(tmp_path):
+    """⭐ `open` adopts a non-empty folder on purpose — but adopting is not overwriting, and this
+    checks before a single byte moves."""
+    pr = make(tmp_path, folder="old")
+    pr.save_document({"id": pr.analysis_id, "dataset_key": "k1"})
+    dest = tmp_path / "not empty"
+    dest.mkdir()
+    (dest / "document.camea.json").write_text("his notes", encoding="utf-8")
+
+    with pytest.raises(PathRefused, match="document.camea.json"):
+        pr.move_to(dest)
+    assert (dest / "document.camea.json").read_text("utf-8") == "his notes"
+    assert pr.document_path.is_file(), "nothing moved"
+
+
+def test_move_to_adopts_a_non_empty_folder_that_does_not_clash(tmp_path):
+    pr = make(tmp_path, folder="old")
+    dest = tmp_path / "his stuff"
+    dest.mkdir()
+    (dest / "notes.pdf").write_bytes(b"%PDF")
+
+    moved = pr.move_to(dest)
+
+    assert (moved.path / "notes.pdf").is_file(), "his own file is left alone"
+    assert (moved.path / MARKER).is_file()
+
+
+def test_move_to_refuses_a_destination_inside_a_dataset(tmp_path):
+    """`refuse_write`, verbatim — the app does not write on the evidence, whenever it is asked."""
+    ds = tmp_path / "260620d"
+    ds.mkdir()
+    (ds / "log.txt").write_text("trial 011\n", encoding="utf-8")
+    (ds / "011.xml").write_text("<vsdscope/>", encoding="utf-8")
+    pr = make(tmp_path, folder="old")
+
+    with pytest.raises(DatasetIsReadOnly):
+        pr.move_to(ds / "mosaic")
+    assert pr.path.is_dir()

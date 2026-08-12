@@ -215,3 +215,15 @@ def load_frames():
         return f
     except Exception:                                       # noqa: BLE001 — not written yet
         return _load_frames_fallback
+
+
+@pytest.fixture(scope="session")
+def videosynth():
+    """The synthetic survey-video helper (`tests/fixtures/videosynth.py`), loaded by path so it
+    imports the same whether or not the tests tree is treated as a package."""
+    spec = importlib.util.spec_from_file_location(
+        "videosynth", Path(__file__).resolve().parent / "fixtures" / "videosynth.py")
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
