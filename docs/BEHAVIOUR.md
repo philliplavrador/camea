@@ -1169,6 +1169,90 @@ map electrodes process then at the end you should have a final product that is c
 
 ---
 
+### R46 — ⭐ THE PIPELINE, AND WHERE THE CALCIUM RECORDING WAS TAKEN *(2026-08-11)*
+**His ask, in his own words:** *"a primary culture or an organoid is placed on an MEA chip. And as an
+MEA chip is recording the voltages from the primary culture, there's also some regions that are also
+recorded using calcium imaging. And at the end, then they do calcium imaging video for the entire
+MEA — that way a mosaic can be built. And then the region that the calcium imaging was taken can be
+matched to a specific part of the mosaic, so you can count the electrodes … this lets us basically
+pair up the MEA recording of the electrodes with the traces of the neurons from the calcium imaging
+to create a ground truth dataset."*
+
+⭐ **THIS IS WHAT CAMEA IS FOR.** Every earlier ruling was about a step; this one is about the
+destination. The deliverable is a table that says *this calcium recording sat on these electrodes*,
+because that is what lets an MEA channel's voltage be paired with the calcium trace of the neuron on
+top of it. ⛔ **Camea stops there.** No MEA voltage ingestion, no trace pairing, no spike sorting —
+*"that MEA stuff will come later"*, and building it early would be inventing his experiment for him.
+
+**Statements that can fail:**
+- R46.1 ⭐ **IT IS ONE PIPELINE, WALKED STEP BY STEP** *("it should be all one pipeline with a
+  progress bar at the top")*. `pipeline-steps`: **Survey → Mosaic → Electrodes → Regions**, and a
+  step is LOCKED until the one before it is done. The gate is read off the **document** (a source, a
+  `build.built_at`, an `electrodes.built_at`), never off where the user has clicked — and opening a
+  project lands on the furthest ready step, so the work is where he left it.
+- R46.2 ⭐ **THE ZOOM IS MEASURED, NEVER SEARCHED.** A region recording is at a different
+  magnification from the survey — his words, *"pretty much always differs"* — so the naive answer is
+  a ladder of scale factors, and every rung is another chance for a confident wrong peak. It is not
+  needed: **the same electrode array is in both pictures and it is a ruler.** `pitch_mosaic /
+  pitch_recording` **is** the magnification ratio (`electrodegrid.measure_lattice`). A ladder exists
+  ONLY as the fallback for a recording with no readable lattice, and when it is used the record says
+  `zoom.measured: false` — ⛔ a search must never be presented as a measurement.
+- R46.3 ⭐ **THE ELECTRODE COMB IS THE ALIAS GENERATOR, AND IT IS DELETED BEFORE THE SEARCH.** The
+  lattice manufactures correlation peaks a whole number of cells from the truth that score nearly as
+  well as it does (measured: the runner-up sat ~10 cells away). `locate.notch_lattice` removes it
+  from both pictures, which costs the answer nothing it could have used — a perfectly periodic
+  pattern carries no absolute position, only phase modulo the pitch. Everything aperiodic survives:
+  the tissue, the neurons, **and the array's border**, the one landmark unique on the whole chip.
+  Measured `best − second`, without → with: **0.064 → 0.134** (exact scale), **0.068 → 0.135** (3 %
+  scale error), **0.046 → 0.087** (5 %). ⚠️ Notching is for the GLOBAL search only — the refinement
+  and the drag-snap run on the un-notched picture, where there is no alias left to kill and the grid
+  is the sharpest detail available for settling the last fraction of a pixel.
+- R46.4 **THE FFT IS A GOOD RULER AND A POOR MICROMETER.** Its pitch is quantised in bins and a
+  magnified recording's fundamental sits ~7 bins from DC, so the measured zoom is good to a few
+  percent — and three percent of a 420 px field puts the corner ~7 px out with a *perfect* match.
+  `locate.refine_scale` tunes the zoom against the pixels, holding the rectangle's **centre** (not
+  its corner) so every trial covers the same ground. Measured: 0.4116 → 0.4013 against a planted
+  0.4000, NCC 0.814 → 0.918, corner 7 px → sub-pixel.
+- R46.5 **SEVERAL PICTURES OF THE RECORDING ARE TRIED, AND THE WINNER IS NAMED.** median / max / std
+  over time are built from ONE decode; whether the neurons are bright at rest or only when firing is
+  a property of the preparation, not something to decide in code. They are ranked by **margin, not
+  NCC** — two projections have incomparable NCCs, but how far a winner stands above its own runner-up
+  on its own surface is comparable. The record carries `still_kind` and the whole `tried` table, so a
+  poor result can be diagnosed instead of merely disbelieved.
+- R46.6 ⭐ **THE MACHINE PROPOSES, HE DISPOSES.** A located region lands `unconfirmed` with its
+  evidence on show (NCC, margin, which still won, the alternatives). It can be **dragged** and
+  **snapped** (a bounded local re-search at the settled scale, seeded where he dropped it — the
+  committed number is the server's, per R23), and it becomes `confirmed` only when he says so. That
+  is I3 applied to a rectangle instead of a tile, and it is why the exported CSV can distinguish the
+  locations he signed off from the ones the machine guessed. A drag or a snap returns it to
+  `unconfirmed`.
+- R46.7 **AN UNCERTAIN PLACEMENT IS SHOWN, FLAGGED — NOT HIDDEN.** Low NCC or a thin margin makes the
+  rectangle a warning, never a refusal, because a roughly-right start is what makes drag-and-snap
+  worth having. ⛔ But a placement that could not be made at all **refuses with a sentence**: a
+  hallucinated location names the wrong electrodes, which is far more expensive than saying so.
+- R46.8 **THE RECORDING'S OWN PICTURE FADES INTO THE RECTANGLE**, with an opacity slider — his
+  explicit ask. Whether the tissue lines up is a question the eye answers better than an NCC does,
+  and it is what makes the rectangle aimable while dragging. The still is written to `outputs/`
+  **already at mosaic scale**, so the one file serves both the fade and the re-snap's template.
+- R46.9 **THE PROJECT HOLDS ITS FILES** *("the project is what holds the project files including the
+  survey video and region recordings")*. Videos are COPIED into `<project>/videos/` and read from
+  there, so moving or deleting an original cannot break a project. `videos/` is in
+  `Project.own_entries` (a project that moves takes its recordings) and is an INPUT folder — the
+  Outputs panel does not list it. R44 is untouched: `outputs/` is still the only door out, and the
+  recording's path is the one path question allowed, asked INSIDE the project.
+- R46.10 **A REBUILD STALES EVERY LOCATION.** Regions record the `build.built_at` they were placed
+  against; rebuild the mosaic and `GET .../regions` reports `stale`, exactly as R45.5 does for the
+  electrode map. Nothing silently drifts.
+- R46.11 ⛔ **ROTATION IS NOT SOLVED, AND THAT IS SAID OUT LOUD.** Same rig, same camera orientation
+  — his ruling — so the match is translation plus scale. Both lattice angles ARE measured and
+  `angle_delta_deg` is reported, so a reseated chip shows up as a number he can see rather than as a
+  silently wrong placement.
+- R46.12 **THE SNAPSHOT BUILDER IS RETIRED, NOT DELETED** *("retire the snapshot code for now and
+  just put it somewhere else, but don't delete it")*. It leaves the new-project flow and its suites
+  leave the fast run; the code stays in the repo and existing snapshot projects still open.
+
+---
+
 ## 2. THE SIX STEPS
 
 The step header is a progress indicator, not a menu (R4.2). The exact gate is in R4.3.
