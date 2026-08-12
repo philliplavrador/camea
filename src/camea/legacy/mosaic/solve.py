@@ -48,7 +48,7 @@ WHAT ISN'T HERE, AND WHERE IT WENT
 * `read_anchors` / the `t33._pool` patch / `render._canvas` / `t27._free`
                                -> `camea.engine.adapters` — the ONE module allowed to touch an
                                  underscore on t27/t33/render (`docs/ENGINE_MOVE.md` §4).
-* `render_mosaic` / `_RenderSink` -> `features/mosaic/export.py`.
+* `render_mosaic` / `_RenderSink` -> `legacy/mosaic/export.py`.
 * `score_against_gt`           -> `tests/slow/`. It is dev-only, it is 260620d-only, and
                                  ⛔ **`score.robust_align` must never be reimplemented** (a rewrite
                                  with a different tie-break scored the same positions 152/156 where
@@ -140,7 +140,7 @@ GPU_NOTE = (
 )
 
 #: The dotted path `core.jobs.submit_process` spawns. It must be importable in a FRESH interpreter.
-BUILD_TARGET = "camea.features.mosaic.solve.build_worker"
+BUILD_TARGET = "camea.legacy.mosaic.solve.build_worker"
 
 
 # --- the phase weighting of a COLD build ---------------------------------------------------------
@@ -333,7 +333,7 @@ _COMPOSITE = _CompositeCache()
 
 def _require_tile_shape(store: FrameStore) -> None:
     """t33's composite, feather and FFT plans are **512x512, everywhere**. The 512x512 gate is
-    mosaic's (`features/mosaic/run.py`), and this is that gate restated as a precondition: if an
+    mosaic's (`legacy/mosaic/run.py`), and this is that gate restated as a precondition: if an
     off-shape store ever reached the matcher, the feather would be pasted at the wrong stride and the
     answer would be **silently, plausibly wrong**. Fail loudly instead."""
     h, w = store.shape
@@ -1116,7 +1116,7 @@ def make_config(config: Mapping | None, pass_split: int | None = None):
         raise ValueError(
             "the pass split must be supplied by the caller: t33.Config's default of 166 is one "
             "acquisition's measured number, and the app carries no dataset knowledge. Pass the "
-            "session's DETECTED split (features/mosaic/run.py)."
+            "session's DETECTED split (legacy/mosaic/run.py)."
         )
     t27_d = cfg_d.pop("t27", None)
     if t27_d is None:

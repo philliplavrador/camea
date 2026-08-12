@@ -130,7 +130,7 @@ class ApiError(HTTPException):
     FastAPI's `{"detail": ...}`. A 400 must never be able to become a 500 over a wiring detail — that
     is the bug shape that turned v1's refused document into an opaque 500 on every 2-second autosave.
 
-    `camea.features.mosaic.routes.ApiError` is the same class in shape and is handled by the same
+    `camea.legacy.mosaic.routes.ApiError` is the same class in shape and is handled by the same
     handler. Two definitions, one envelope; the handler keys on the `code` attribute, not the type.
     """
 
@@ -256,7 +256,7 @@ def _session(session_id: str) -> Session:
 # GPU — 🔴 there is EXACTLY ONE DETECTOR, and the API layer does not own it
 # =================================================================================================
 #
-# ⛔ **THE API MAY NOT IMPORT t27.** `features/mosaic/solve.py` is the ONLY module outside `engine/`
+# ⛔ **THE API MAY NOT IMPORT t27.** `legacy/mosaic/solve.py` is the ONLY module outside `engine/`
 # that may import t27/t33 (`docs/SPLIT.md` §0.5, asserted by
 # `tests/unit/test_mosaic_solve.py::test_solve_is_the_ONLY_module_under_src_that_imports_t27_or_t33`
 # — which caught this the moment it was written the other way). Two entry points into the engine is

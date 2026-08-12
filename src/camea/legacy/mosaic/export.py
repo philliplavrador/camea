@@ -84,7 +84,7 @@ from camea.core.jobs import Progress
 # ⇒ This module keeps **NO COPY of the state machine**, not even a "compatible" one: a compatible
 # copy is exactly what the last one was. Importing `mosaic.document` is also what REGISTERS the
 # feature's hooks with `core.document`, which is how `stamp()` derives the provenance verdict.
-from camea.features.mosaic.document import (
+from camea.legacy.mosaic.document import (
     MOVED_EPS,
     PLACED_STATES,
     STATES,
@@ -159,7 +159,7 @@ def _margin_thin() -> float:
     electrode grid repeats every 256 px. The shipped 312/312 build's worst run margin is 0.081
     against a ~0.47 typical.
     """
-    from camea.features.mosaic.solve import MARGIN_THIN  # noqa: PLC0415 — see the docstring
+    from camea.legacy.mosaic.solve import MARGIN_THIN  # noqa: PLC0415 — see the docstring
 
     return float(MARGIN_THIN)
 
@@ -249,7 +249,7 @@ def render_positions(doc: dict, include_unverified: bool = True) -> dict[int, tu
     simply not drawn in the sweep. **Deferring must never destroy tissue**, and `include_unverified`
     is how those tiles still reach the final image.)
     """
-    from camea.features.mosaic.document import positions  # noqa: PLC0415 — one implementation
+    from camea.legacy.mosaic.document import positions  # noqa: PLC0415 — one implementation
 
     return positions(doc, include_unverified=include_unverified)
 

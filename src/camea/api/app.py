@@ -7,7 +7,7 @@ WHAT THIS FILE IS
 Three jobs, and it must not grow a fourth:
 
 1. **Mount the routers.** `api/routes_core.py` (health, gpu, settings, fs, datasets, sessions, tiles,
-   workspace, documents, jobs, dialogs) and each feature's own — `features/mosaic/routes.py` today.
+   workspace, documents, jobs, dialogs) and each feature's own — `legacy/mosaic/routes.py` today.
    A feature registers its document hooks by being imported; it is imported here and nowhere else.
 
 2. ⭐ **INJECT THE SESSION LOOKUP INTO EACH FEATURE.** Core owns sessions (one per dataset, shared by
@@ -112,7 +112,7 @@ def create_app(*, cors: bool = True) -> FastAPI:
     @app.exception_handler(HTTPException)
     def _on_http_error(request: Request, exc: HTTPException) -> JSONResponse:
         """⭐ **ONE HANDLER FOR BOTH `ApiError`s.** `routes_core.ApiError` and
-        `features.mosaic.routes.ApiError` are two classes with the same shape, and a feature must not
+        `legacy.mosaic.routes.ApiError` are two classes with the same shape, and a feature must not
         have to import the API layer to raise one. So this handler keys on the **`code` attribute**,
         not on the type — a new feature's `ApiError` is handled for free, and a plain
         `HTTPException(404)` still renders a proper envelope instead of FastAPI's `{"detail": ...}`.
@@ -155,8 +155,13 @@ def create_app(*, cors: bool = True) -> FastAPI:
     # ⭐ THE FEATURES. Importing one registers its document hooks with core
     # (`core.document.register_feature`), which is what lets `core.document.load()` open its
     # documents and what puts its counts on a browser card. Import it here and nowhere else.
-    from camea.features.mosaic import document as mosaic_document  # noqa: F401 — registers the hooks
-    from camea.features.mosaic import routes as mosaic_routes
+    #
+    # ⭐ **THE SNAPSHOT MOSAIC IS RETIRED BUT STILL MOUNTED** (2026-08-11). It moved to
+    # `camea.legacy.mosaic` and the New-project screen no longer offers it — but a project the user
+    # already built with it must still open, save and export, so its hooks and its router are wired
+    # exactly as before. ⛔ Do not "tidy" these two lines away. See `camea/legacy/__init__.py`.
+    from camea.legacy.mosaic import document as mosaic_document  # noqa: F401 — registers the hooks
+    from camea.legacy.mosaic import routes as mosaic_routes
 
     # ⭐ The injection (see the module docstring, point 2). A feature never imports `camea.api`.
     mosaic_routes.set_session_provider(routes_core.SESSIONS.get)

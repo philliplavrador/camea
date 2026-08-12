@@ -1034,7 +1034,7 @@ def qc_report(doc: dict, app_version: str | None = None) -> dict:
     module-level import here would be a cycle — and `export` pulls in tifffile and matplotlib, which
     `document` must never drag into a caller that only wants to read a tile's state.
     """
-    from camea.features.mosaic.export import qc_report as _export_qc
+    from camea.legacy.mosaic.export import qc_report as _export_qc
 
     return _export_qc(doc, app_version)[0]               # (json, markdown) -> the JSON half
 

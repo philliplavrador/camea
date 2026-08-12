@@ -42,7 +42,7 @@ THE FOUR RULES THIS FILE IS BUILT ON
 WHAT THIS FILE OWES ANOTHER FILE
 -------------------------------
 `solve` / `document` / `export` are imported **lazily, inside the handlers** — on purpose. Importing
-`camea.features.mosaic.routes` must not drag in cv2, cupy or spectralign (the package `__init__`
+`camea.legacy.mosaic.routes` must not drag in cv2, cupy or spectralign (the package `__init__`
 says so), and the API surface must be inspectable (`/openapi.json`) on a machine where the engine
 cannot even load.
 """
@@ -198,7 +198,7 @@ def _outputs_dir(analysis_id: str):
     if _PROJECTS_PROVIDER is None:
         raise ApiError(500, "io_error",
                        "the mosaic router has no store provider — camea.api.app must call "
-                       "camea.features.mosaic.routes.set_store() at startup")
+                       "camea.legacy.mosaic.routes.set_store() at startup")
     if not analysis_id:
         raise ApiError(400, "bad_request",
                        "this document carries no project id, so Camea does not know which "
@@ -213,7 +213,7 @@ def _session(session_id: str) -> MosaicSession:
     if _SESSION_PROVIDER is None:
         raise ApiError(500, "io_error",
                        "the mosaic router has no session provider — camea.api.app must call "
-                       "camea.features.mosaic.routes.set_session_provider() at startup")
+                       "camea.legacy.mosaic.routes.set_session_provider() at startup")
     s = _SESSION_PROVIDER(session_id)
     if s is None:
         raise ApiError(404, "no_session", f"no such session: {session_id}")
@@ -261,17 +261,17 @@ def _doc(model: Any) -> dict:
 
 
 def _solve():
-    from camea.features.mosaic import solve
+    from camea.legacy.mosaic import solve
     return solve
 
 
 def _document():
-    from camea.features.mosaic import document
+    from camea.legacy.mosaic import document
     return document
 
 
 def _export():
-    from camea.features.mosaic import export
+    from camea.legacy.mosaic import export
     return export
 
 
@@ -321,7 +321,7 @@ def _cache_dir(s: MosaicSession) -> Path:
 # decides what to *do* with it. A future segmentation feature will want a different rule over the
 # same frames, and it must not have to unpick this one.
 #
-# ⚠️ SPLIT §1.2 gives these a file of their own (`features/mosaic/run.py`), and they should be
+# ⚠️ SPLIT §1.2 gives these a file of their own (`legacy/mosaic/run.py`), and they should be
 # lifted into one. They are written here as **pure module-level functions over core's inventory** so
 # that the lift is a cut-and-paste with no route change. See the report.
 
@@ -685,7 +685,7 @@ def post_build(body: BuildStartRequest) -> dict:
     try:
         job = JOBS.submit_process(
             "build",
-            "camea.features.mosaic.solve.build_worker",
+            "camea.legacy.mosaic.solve.build_worker",
             {
                 "data_dir": str(s.dataset.path),
                 "trials": trials,
@@ -779,7 +779,7 @@ def post_seed(body: SeedRequest) -> dict:
     # the warning is absent — the self-contradiction R28 exists to prevent. `stamp()` re-derives the
     # verdict from the document's HISTORY (the build block just added), forcing
     # `independent_of_method: false` + `PROVENANCE_WARNING`. It is the same `stamp()` the export path
-    # runs (`features/mosaic/export.as_exported`), and it is idempotent — save/autosave/export re-stamp
+    # runs (`legacy/mosaic/export.as_exported`), and it is idempotent — save/autosave/export re-stamp
     # anyway; this just makes the /seed RESPONSE already honest.
     return {"doc": docmod.stamp(doc), **info}
 
