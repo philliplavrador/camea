@@ -15,7 +15,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { getProject } from '../api';
 import type { AnalysisSummary } from '../api';
 import { Button, Card } from '../design';
-import { MosaicFeature } from '../features/mosaic/MosaicFeature';
+// ⭐ RETIRED, STILL MOUNTED (2026-08-11): the SNAPSHOT builder moved to `src/legacy/mosaic` and is
+// no longer offered on the New-project screen — but a project already built with it must still
+// open, so this gate keeps dispatching `feature === 'mosaic'` to it. ⛔ Do not remove this arm.
+import { MosaicFeature } from '../legacy/mosaic/MosaicFeature';
 import { VideoMosaicFeature } from '../features/videomosaic/VideoMosaicFeature';
 import styles from './FeatureGate.module.css';
 

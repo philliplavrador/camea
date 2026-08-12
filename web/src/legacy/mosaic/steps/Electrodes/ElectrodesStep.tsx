@@ -35,17 +35,20 @@ import {
 import { Button, Help, LiveWarning, Panel, cx } from '../../../../design';
 import { useSweepStore } from '../../store';
 import { useDocument } from '../../../../store/documentStore';
-import { CoverageChoice } from '../../../electrodes/CoverageChoice';
-import { useCoverageHelp } from '../../../electrodes/device';
-import { ElectrodePanel, type ElectrodeSelection } from '../../../electrodes/ElectrodePanel';
-import { GridOverlay, IDS_MIN_STEP_PX } from '../../../electrodes/GridOverlay';
+import { CoverageChoice } from '../../../../features/electrodes/CoverageChoice';
+import { useCoverageHelp } from '../../../../features/electrodes/device';
+import {
+  ElectrodePanel,
+  type ElectrodeSelection,
+} from '../../../../features/electrodes/ElectrodePanel';
+import { GridOverlay, IDS_MIN_STEP_PX } from '../../../../features/electrodes/GridOverlay';
 import {
   buildElectrodeIndex,
   electrodeAt,
   hitRadiusAt,
   lookupElectrode,
   type ElectrodeIndex,
-} from '../../../electrodes/lookup';
+} from '../../../../features/electrodes/lookup';
 import styles from './ElectrodesStep.module.css';
 
 // One layer, drawn and feathered — the whole placed field, marked `reference` so a stray D

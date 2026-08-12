@@ -16,7 +16,13 @@
 // R44 removes the question rather than moving it again.
 //
 // ⛔ NO DATASET KNOWLEDGE: which trials are the mosaic is decided by `mosaicTrials` — ONE shared
-// implementation (features/mosaic/trials.ts), read off what the backend measured. No number here.
+// implementation (legacy/mosaic/trials.ts), read off what the backend measured. No number here.
+//
+// ⭐ **THE SNAPSHOT TASK IS NO LONGER OFFERED HERE** (2026-08-11). It moved to `src/legacy/mosaic`
+// and was taken out of `TASKS`, so a new project is always the video pipeline. Everything below it
+// — the `dataset` phase, `onCreate`, `ProjectPaths` — is deliberately LEFT IN PLACE: it is what
+// still creates a snapshot project if the task ever comes back, and existing snapshot projects
+// still open through the FeatureGate. See `src/legacy/mosaic` and `src/camea/legacy/__init__.py`.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useState } from 'react';
@@ -30,7 +36,7 @@ import {
 } from '../../api';
 import { useToast } from '../../app';
 import { Button, Card } from '../../design';
-import { mosaicTrials } from '../mosaic/trials';
+import { mosaicTrials } from '../../legacy/mosaic/trials';
 import { ProjectPaths } from './ProjectPaths';
 import { VideoPaths } from './VideoPaths';
 import styles from './NewProjectFlow.module.css';
@@ -48,8 +54,11 @@ interface VideoChoice {
   videoName: string;
 }
 
+// ⭐ ONE TASK, SO NO TASK QUESTION. The snapshot builder (`{ key: 'mosaic', label: 'Build mosaic',
+// blurb: 'Place tiles, sweep to verify, export.' }`) was retired from this list on 2026-08-11.
+// Add a second entry here and the `task` phase — its cards, its step in the stepper, its Back
+// button — comes back on its own. That is why the phase machinery below is kept, not deleted.
 const TASKS = [
-  { key: 'mosaic', label: 'Build mosaic', blurb: 'Place tiles, sweep to verify, export.' },
   {
     key: 'videomosaic',
     label: 'Build mosaic from video',
@@ -57,9 +66,15 @@ const TASKS = [
   },
 ];
 
+/** The only task, when there is only one — then asking "what do you want to do?" is a list of one,
+ *  so we skip straight past it. `null` as soon as a second task returns. */
+const ONLY_TASK: string | null = TASKS.length === 1 ? TASKS[0].key : null;
+
 const STEPS: { key: Phase; label: string }[] = [
   { key: 'name', label: 'Name' },
-  { key: 'task', label: 'Task' },
+  // The Task step is dropped from the stepper while there is nothing to choose — a numbered step
+  // he never sees would only make the count lie.
+  ...(ONLY_TASK ? [] : [{ key: 'task' as Phase, label: 'Task' }]),
   { key: 'dataset', label: 'Data' },
 ];
 
@@ -69,7 +84,7 @@ export function NewProjectFlow() {
 
   const [phase, setPhase] = useState<Phase>('name');
   const [name, setName] = useState('');
-  const [task, setTask] = useState('mosaic');
+  const [task, setTask] = useState(TASKS[0].key);
   const [choice, setChoice] = useState<Choice | null>(null);
   const [videoChoice, setVideoChoice] = useState<VideoChoice | null>(null);
   const [creating, setCreating] = useState<string | null>(null); // progress message while creating
@@ -77,6 +92,17 @@ export function NewProjectFlow() {
   // Identity-stable so `ProjectPaths`/`VideoPaths`' effects do not re-fire on every render.
   const onReady = useCallback((c: Choice | null) => setChoice(c), []);
   const onVideoReady = useCallback((c: VideoChoice | null) => setVideoChoice(c), []);
+
+  // The two seams the single-task case moves through. With one task there is nothing to ask, so
+  // Name goes straight to Data and Back comes straight back — the `task` phase is skipped, not
+  // removed. Both revert to a real stop the moment `TASKS` has a second entry.
+  const afterName = useCallback(() => {
+    if (ONLY_TASK) {
+      setTask(ONLY_TASK);
+      setPhase('dataset');
+    } else setPhase('task');
+  }, []);
+  const beforeData = useCallback(() => setPhase(ONLY_TASK ? 'name' : 'task'), []);
 
   async function onCreate(): Promise<void> {
     if (creating || !choice) return;
@@ -173,7 +199,7 @@ export function NewProjectFlow() {
               placeholder="e.g. Retina run"
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && name.trim()) setPhase('task');
+                if (e.key === 'Enter' && name.trim()) afterName();
               }}
             />
           </label>
@@ -184,7 +210,7 @@ export function NewProjectFlow() {
             <Button
               variant="primary"
               disabled={!name.trim()}
-              onClick={() => setPhase('task')}
+              onClick={afterName}
               data-testid="np-next"
             >
               Next
@@ -225,7 +251,7 @@ export function NewProjectFlow() {
       {!creating && phase === 'dataset' && task !== 'videomosaic' && (
         <div className={styles.panel}>
           <div className={styles.nav}>
-            <Button variant="ghost" onClick={() => setPhase('task')} data-testid="np-back">
+            <Button variant="ghost" onClick={beforeData} data-testid="np-back">
               Back
             </Button>
           </div>
@@ -239,7 +265,7 @@ export function NewProjectFlow() {
       {phase === 'dataset' && task === 'videomosaic' && (
         <div className={styles.panel} style={creating ? { display: 'none' } : undefined}>
           <div className={styles.nav}>
-            <Button variant="ghost" onClick={() => setPhase('task')} data-testid="np-back">
+            <Button variant="ghost" onClick={beforeData} data-testid="np-back">
               Back
             </Button>
           </div>

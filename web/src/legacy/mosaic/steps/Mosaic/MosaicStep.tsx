@@ -32,7 +32,7 @@ import {
 } from '../../../../api';
 import { useSweepStore, counts as tileCounts } from '../../store';
 import { useDocument } from '../../../../store/documentStore';
-import { OutputsPanel } from '../../../outputs/OutputsPanel';
+import { OutputsPanel } from '../../../../features/outputs/OutputsPanel';
 import styles from './MosaicStep.module.css';
 
 type RenderMode = ExportRequest['render_mode'];
