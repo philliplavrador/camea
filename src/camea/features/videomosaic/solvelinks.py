@@ -42,8 +42,8 @@ def _components(n: int, links: list[Link]) -> np.ndarray:
             x = parent[x]
         return x
 
-    for l in links:
-        ra, rb = find(l.a), find(l.b)
+    for lk in links:
+        ra, rb = find(lk.a), find(lk.b)
         if ra != rb:
             parent[ra] = rb
     roots = [find(i) for i in range(n)]
@@ -63,16 +63,16 @@ def _solve_component(nodes: list[int], links: list[Link], weights: np.ndarray,
     L = np.zeros((m, m))
     cx = np.zeros(m)
     cy = np.zeros(m)
-    for l, w in zip(links, weights):
-        ia, ib = index[l.a], index[l.b]
+    for lk, w in zip(links, weights):
+        ia, ib = index[lk.a], index[lk.b]
         L[ia, ia] += w
         L[ib, ib] += w
         L[ia, ib] -= w
         L[ib, ia] -= w
-        cx[ia] -= w * l.dx
-        cx[ib] += w * l.dx
-        cy[ia] -= w * l.dy
-        cy[ib] += w * l.dy
+        cx[ia] -= w * lk.dx
+        cx[ib] += w * lk.dx
+        cy[ia] -= w * lk.dy
+        cy[ib] += w * lk.dy
     # pin the first node: delete its row/column (the gauge; L alone is singular)
     K = L[1:, 1:]
     px = np.zeros(m)
@@ -85,7 +85,7 @@ def _solve_component(nodes: list[int], links: list[Link], weights: np.ndarray,
 
 def solve_links(n: int, links: list[Link], cfg: VideoConfig) -> SolveResult:
     """IRLS solve over the OK links. Mutates nothing; a link the gate drops is only counted."""
-    ok = [l for l in links if l.ok]
+    ok = [lk for lk in links if lk.ok]
     active = list(ok)
     dropped = 0
 
@@ -94,26 +94,26 @@ def solve_links(n: int, links: list[Link], cfg: VideoConfig) -> SolveResult:
             break
         comp = _components(n, active)
         pos = np.zeros((n, 2))
-        for c in sorted({int(comp[l.a]) for l in active}):
+        for c in sorted({int(comp[lk.a]) for lk in active}):
             nodes = [i for i in range(n) if comp[i] == c]
-            clinks = [l for l in active if comp[l.a] == c]
-            cw = np.array([max(l.ncc, 0.05) for l in clinks])
+            clinks = [lk for lk in active if comp[lk.a] == c]
+            cw = np.array([max(lk.ncc, 0.05) for lk in clinks])
             for _it in range(cfg.irls_iters):
                 sol = _solve_component(nodes, clinks, cw)
-                r = np.array([np.hypot(sol[l.b][0] - sol[l.a][0] - l.dx,
-                                       sol[l.b][1] - sol[l.a][1] - l.dy) for l in clinks])
+                r = np.array([np.hypot(sol[lk.b][0] - sol[lk.a][0] - lk.dx,
+                                       sol[lk.b][1] - sol[lk.a][1] - lk.dy) for lk in clinks])
                 hub = np.where(r <= cfg.huber_px, 1.0, cfg.huber_px / np.maximum(r, 1e-9))
-                cw = np.array([max(l.ncc, 0.05) for l in clinks]) * hub
+                cw = np.array([max(lk.ncc, 0.05) for lk in clinks]) * hub
             for node in nodes:
                 pos[node] = sol[node]
         # residuals against the final positions; gate
-        resid = np.array([np.hypot(pos[l.b][0] - pos[l.a][0] - l.dx,
-                                   pos[l.b][1] - pos[l.a][1] - l.dy) for l in active])
+        resid = np.array([np.hypot(pos[lk.b][0] - pos[lk.a][0] - lk.dx,
+                                   pos[lk.b][1] - pos[lk.a][1] - lk.dy) for lk in active])
         bad = resid > cfg.max_residual_px
         if not bad.any():
             break
         dropped += int(bad.sum())
-        active = [l for l, b in zip(active, bad) if not b]
+        active = [lk for lk, b in zip(active, bad) if not b]
 
     if not active:                                   # nothing survived — everyone is alone
         comp = _components(n, [])
@@ -122,8 +122,8 @@ def solve_links(n: int, links: list[Link], cfg: VideoConfig) -> SolveResult:
                            stats={"links_in": len(ok), "links_used": 0})
 
     comp = _components(n, active)
-    resid = np.array([np.hypot(pos[l.b][0] - pos[l.a][0] - l.dx,
-                               pos[l.b][1] - pos[l.a][1] - l.dy) for l in active])
+    resid = np.array([np.hypot(pos[lk.b][0] - pos[lk.a][0] - lk.dx,
+                               pos[lk.b][1] - pos[lk.a][1] - lk.dy) for lk in active])
     placed = comp == 0
     return SolveResult(
         pos=pos, component=comp, placed=placed, dropped_links=dropped,

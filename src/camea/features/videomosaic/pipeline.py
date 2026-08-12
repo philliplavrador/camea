@@ -199,19 +199,19 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
     def measure_round(cands: list[Link], round_no: int, pos_of: Callable[[int], np.ndarray],
                       frac0: float, frac1: float) -> int:
         fresh = 0
-        todo = [l for l in cands if (l.a, l.b) not in all_links
-                or not all_links[(l.a, l.b)].ok]
+        todo = [lk for lk in cands if (lk.a, lk.b) not in all_links
+                or not all_links[(lk.a, lk.b)].ok]
         t_reg = time.monotonic()
-        for n_done, l in enumerate(todo):
+        for n_done, lk in enumerate(todo):
             check_cancelled(cancel, "registration")
-            prior = tuple(pos_of(l.b) - pos_of(l.a)) if l.kind != "bridge" else (0.0, 0.0)
-            measured = measure_link(fetch(l.a), fetch(l.b), prior, l, cfg)
-            key = (l.a, l.b)
+            prior = tuple(pos_of(lk.b) - pos_of(lk.a)) if lk.kind != "bridge" else (0.0, 0.0)
+            measured = measure_link(fetch(lk.a), fetch(lk.b), prior, lk, cfg)
+            key = (lk.a, lk.b)
             if key not in all_links or (measured.ok and not all_links[key].ok):
                 all_links[key] = measured
                 fresh += int(measured.ok)
             if not measured.ok:
-                say(f"  round {round_no}: link kf{l.a}->kf{l.b} ({l.kind}) rejected: "
+                say(f"  round {round_no}: link kf{lk.a}->kf{lk.b} ({lk.kind}) rejected: "
                     f"{measured.reject_reason} (resp {measured.response:.2f}, "
                     f"ncc {measured.ncc:.2f})")
             rate = (n_done + 1) / max(1e-6, time.monotonic() - t_reg)
@@ -240,7 +240,7 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
 
     emit("solve", 1.0, "alignment solved")
     links = list(all_links.values())
-    n_ok = sum(1 for l in links if l.ok)
+    n_ok = sum(1 for lk in links if lk.ok)
     if int(sol.placed.sum()) < cfg.min_keyframes:
         raise PipelineError(
             f"registration failed: of {len(links)} candidate pairs only {n_ok} could be "
@@ -306,11 +306,11 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
                          k.segment, k.reason, rr.gains.get(i, ""), bool(sol.placed[i])])
     os.replace(out / ".tmp-positions.csv", out / names["positions"])
 
-    ok_links = [l for l in links if l.ok]
+    ok_links = [lk for lk in links if lk.ok]
     reject_hist: dict[str, int] = {}
-    for l in links:
-        if not l.ok:
-            reject_hist[l.reject_reason or "?"] = reject_hist.get(l.reject_reason or "?", 0) + 1
+    for lk in links:
+        if not lk.ok:
+            reject_hist[lk.reject_reason or "?"] = reject_hist.get(lk.reject_reason or "?", 0) + 1
     stats = {
         "video": info.to_json(),
         "track": tr.stats,
@@ -319,11 +319,11 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
             "links_ok": n_ok,
             "links_rejected": len(links) - n_ok,
             "reject_reasons": reject_hist,
-            "median_response": round(float(np.median([l.response for l in ok_links])), 4)
+            "median_response": round(float(np.median([lk.response for lk in ok_links])), 4)
             if ok_links else 0.0,
-            "median_ncc": round(float(np.median([l.ncc for l in ok_links])), 4)
+            "median_ncc": round(float(np.median([lk.ncc for lk in ok_links])), 4)
             if ok_links else 0.0,
-            "by_kind": {kind: sum(1 for l in ok_links if l.kind == kind)
+            "by_kind": {kind: sum(1 for lk in ok_links if lk.kind == kind)
                         for kind in ("seq", "cross", "bridge")},
         },
         "solve": sol.stats,
@@ -338,7 +338,7 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
         "stats": stats,
         "config": cfg.to_json(),
         "keyframes": [k.to_json() for k in keyframes],
-        "links": [l.to_json() for l in links],
+        "links": [lk.to_json() for lk in links],
     }, indent=2), encoding="utf-8"))
 
     emit("save", 1.0, "done")
