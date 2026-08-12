@@ -72,3 +72,8 @@ export function pickSaveFilePath(
     opts.defaultName,
   );
 }
+
+// ⛔ **`revealPath` / `POST /api/fs/reveal` were DELETED on 2026-08-10 (R44).** Showing a project
+// in Explorer was the last door out of the app to a project'''s files, and his ruling closed it: the
+// app is how you browse your project data. What replaced it is `copyOutputs` (./outputs.ts) — you
+// take a copy of what you chose, to where you chose, deliberately.

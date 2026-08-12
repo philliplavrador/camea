@@ -81,11 +81,19 @@ export type ValidateDocumentRequest = Schemas['ValidateDocumentRequest'];
 export type ValidationReport = Schemas['ValidationReport'];
 export type DocumentProblem = Schemas['DocumentProblem'];
 
-// ── Projects — one project is ONE FOLDER, named by the user ──────────────────────
-export type ProjectFolderInfo = Schemas['ProjectFolderInfo'];
+// ── Projects — one project is ONE FOLDER, and Camea owns it (R44) ────────────────
 export type AnalysisSummary = Schemas['AnalysisSummary'];
 export type AnalysisListResponse = Schemas['AnalysisListResponse'];
 export type CreateAnalysisRequest = Schemas['CreateAnalysisRequest'];
+export type MigrationReport = Schemas['MigrationReport'];
+export type MigratedProject = Schemas['MigratedProject'];
+export type FailedMigration = Schemas['FailedMigration'];
+
+// ── Outputs — ⭐ the only door to a project's files (R44) ─────────────────────────
+export type OutputEntry = Schemas['OutputEntry'];
+export type OutputListResponse = Schemas['OutputListResponse'];
+export type CopyOutputsRequest = Schemas['CopyOutputsRequest'];
+export type CopyOutputsResponse = Schemas['CopyOutputsResponse'];
 
 // ── Mosaic: run / gaps / screen ──────────────────────────────────────────────────
 export type RunDetectRequest = Schemas['RunDetectRequest'];
@@ -125,6 +133,35 @@ export type MachineEvidenceRequest = Schemas['MachineEvidenceRequest'];
 export type MachineEvidenceResponse = Schemas['MachineEvidenceResponse'];
 export type DiscardMachineRequest = Schemas['DiscardMachineRequest'];
 export type DiscardMachineResponse = Schemas['DiscardMachineResponse'];
+
+// ── Electrodes — the fitted MEA lattice (shared by both features) ─────────────────
+// R45.8: `array_coverage` is the user's own declaration about the PICTURE — "full" = the whole chip
+// is in frame (so the fit may be checked against the device's 220 × 120), "partial" = only some of
+// it (so nothing but the 17.5 µm scale applies and 1-1 is the top-left of the IMAGED REGION). The
+// union is read off the generated request, never re-typed here.
+export type ArrayCoverage = Schemas['ElectrodeMapRequest']['array_coverage'];
+/**
+ * ⭐ THE CHIP, OFF THE WIRE (`GET /api/electrodes/device`). Every device number lives in the
+ * backend's `DeviceSpec`/`MAXWELL` and nowhere else — this alias is how the UI READS them instead of
+ * retyping them into button prose, where nothing would keep them honest.
+ */
+export type ElectrodeDevice = Schemas['ElectrodeDevice'];
+export type ElectrodeCells = Schemas['ElectrodeCells'];
+export type ElectrodeMapBlock = Schemas['ElectrodeMapBlock'];
+export type ElectrodeMapPayload = Schemas['ElectrodeMapPayload'];
+export type ElectrodeMapRequest = Schemas['ElectrodeMapRequest'];
+export type ElectrodeMapResult = Schemas['ElectrodeMapResult'];
+export type VideoElectrodeMapRequest = Schemas['VideoElectrodeMapRequest'];
+
+// ── Videomosaic: probe / create / build / save ────────────────────────────────────
+export type VideoSource = Schemas['VideoSource'];
+export type VideoProbeRequest = Schemas['VideoProbeRequest'];
+export type CreateVideoProjectRequest = Schemas['CreateVideoProjectRequest'];
+export type VideoBuildRequest = Schemas['VideoBuildRequest'];
+export type VideoCanvasSize = Schemas['VideoCanvasSize'];
+export type VideoKeyframeRecord = Schemas['VideoKeyframeRecord'];
+export type VideoMosaicBuildResult = Schemas['VideoMosaicBuildResult'];
+export type VideoMosaicDocument = Schemas['VideoMosaicDocument'];
 
 // ── System: settings / fs / dialogs / health ──────────────────────────────────────
 export type Settings = Schemas['Settings'];
