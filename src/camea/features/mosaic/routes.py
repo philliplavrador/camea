@@ -62,6 +62,8 @@ from camea.api.schemas import (
     BuildStartRequest,
     DiscardMachineRequest,
     DiscardMachineResponse,
+    ElectrodeMapPayload,
+    ElectrodeMapRequest,
     ErrorCode,
     ExportRequest,
     GapsRequest,
@@ -172,6 +174,39 @@ def set_session_provider(fn: Any) -> None:
     """`fn(session_id: str) -> MosaicSession | None`. Called once, by `camea.api.app`."""
     global _SESSION_PROVIDER
     _SESSION_PROVIDER = fn
+
+
+#: ⭐ **THE STORE (R44).** The export writes into the PROJECT's `outputs/`, so this router needs to
+#: resolve an `analysis_id` the same way core does. Injected by `app.py`, for the same reason the
+#: session provider is: a feature must not import the api layer.
+_PROJECTS_PROVIDER: Any = None
+
+
+def set_store(projects: Any) -> None:
+    """`projects() -> ProjectSet`. Called once, by `camea.api.app`."""
+    global _PROJECTS_PROVIDER
+    _PROJECTS_PROVIDER = projects
+
+
+def _outputs_dir(analysis_id: str):
+    """⭐ Where an export lands (R44): `<store>/<analysis_id>/outputs/`.
+
+    ⚠️ The id comes from the DOCUMENT being exported (`doc["id"]`), not from the wire — so an export
+    can only ever write into the project whose document it is, which is the same rule
+    `guard_slot` enforces on every save.
+    """
+    if _PROJECTS_PROVIDER is None:
+        raise ApiError(500, "io_error",
+                       "the mosaic router has no store provider — camea.api.app must call "
+                       "camea.features.mosaic.routes.set_store() at startup")
+    if not analysis_id:
+        raise ApiError(400, "bad_request",
+                       "this document carries no project id, so Camea does not know which "
+                       "project's outputs to write into")
+    try:
+        return _PROJECTS_PROVIDER().outputs_dir(analysis_id)
+    except Exception as e:                              # noqa: BLE001
+        raise ApiError(404, "not_found", f"no project with id {analysis_id!r}: {e}") from e
 
 
 def _session(session_id: str) -> MosaicSession:
@@ -1128,11 +1163,18 @@ def post_export(body: ExportRequest) -> dict:
     header saying "hand-placed from scratch".
     """
     s = _session(body.session_id)
+    doc = _doc(body.doc)
 
-    # ⛔ `data/` is the read-only raw mirror, and an analysis NEVER lands inside the dataset it is
-    # an analysis OF. One implementation of this guard, in core — v1 had three, and they had drifted.
+    # ⭐ **THE PROJECT'S OWN `outputs/` (R44)** — the user is not asked where this goes, and there is
+    # no `dir` on the wire to ask with. He browses and copies out what he wants afterwards
+    # (`GET /api/projects/{id}/outputs`), which is the only door to a project's files.
+    #
+    # ⛔ `refuse_write` still runs. The store cannot be inside a dataset, but this guard has exactly
+    # one implementation and every write in the app goes through it; skipping it "because we know the
+    # path is safe" is how v1 ended up with three copies that had drifted apart.
+    out = _outputs_dir(str(doc.get("id") or ""))
     try:
-        out = refuse_write(body.dir, dataset_dir=s.dataset.path)
+        refuse_write(out, dataset_dir=s.dataset.path)
     except DatasetIsReadOnly as e:
         raise ApiError(409, "refused", str(e)) from e
     try:
@@ -1145,7 +1187,6 @@ def post_export(body: ExportRequest) -> dict:
     except OSError as e:
         raise ApiError(500, "io_error", f"cannot create {out}: {e}") from e
 
-    doc = _doc(body.doc)
     outputs = [str(o) for o in body.outputs]
     export = _export()
 
@@ -1190,4 +1231,93 @@ def post_qc(body: QcRequest) -> dict:
     return _document().qc_report(_doc(body.doc))
 
 
-__all__ = ["router", "ApiError", "MosaicSession", "set_session_provider", "TILE", "BLANK_PCT"]
+# =================================================================================================
+# Step 7 · Electrodes — the grid identity of the BUILT mosaic (2026-08-11)
+# =================================================================================================
+@router.post("/electrodes/map", response_model=JobRef, status_code=202)
+def post_electrodes_map(body: ElectrodeMapRequest) -> dict:
+    """`POST /api/mosaic/electrodes/map` -> **202 `JobRef`**. Optional post-build stage: render
+    the placed tiles (the export's own compositor) and fit the electrode lattice — pitch,
+    rotation and phase MEASURED from this mosaic, never assumed (no dataset knowledge).
+
+    ⭐ Files land in the project's `outputs/` (R44), `<name>-electrodes.json/.csv`; the job result
+    carries the summary block for the CLIENT to merge into its document and save (this feature's
+    document is client-owned, like export and unlike the videomosaic build).
+
+    ⭐ `array_coverage` is HIS declaration (R45.8), made before the button is even enabled:
+    `"full"` holds the fit to the MaxOne/MaxTwo's 220 × 120 (a near miss corrected and reported,
+    a far miss refused by the fitter); `"partial"` enforces only the 17.5 µm scale and leaves
+    `1-1` meaning the top-left of the IMAGED REGION. Defaulted `"partial"` here so an older
+    client that does not send it cannot accidentally claim a whole chip.
+
+    Holds the `gpu` lease: the render walks the same frame store the export does."""
+    s = _session(body.session_id)
+    doc = _doc(body.doc)
+
+    if not _document().positions(doc, include_unverified=body.include_unverified):
+        raise ApiError(409, "refused",
+                       "nothing is placed yet — build the mosaic before mapping electrodes")
+
+    out = _outputs_dir(str(doc.get("id") or ""))
+    try:
+        refuse_write(out, dataset_dir=s.dataset.path)
+    except DatasetIsReadOnly as e:
+        raise ApiError(409, "refused", str(e)) from e
+    try:
+        basename = safe_basename(str(doc.get("name") or "") or s.dataset.name)
+    except ValueError:
+        basename = safe_basename(str(doc.get("id") or "electrodes"))
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise ApiError(500, "io_error", f"cannot create {out}: {e}") from e
+
+    analysis_id = str(doc.get("id") or "")
+
+    def fn(report, cancel) -> dict:
+        from . import electrodes  # noqa: PLC0415
+        result = electrodes.map_electrodes(
+            s.frames, doc, out, basename,
+            include_unverified=body.include_unverified,
+            array_coverage=body.array_coverage,
+            report=report, cancel=cancel)
+        return {"kind": "electrode_map", "analysis_id": analysis_id, **result}
+
+    try:
+        job = JOBS.submit_thread("electrode_map", fn, exclusive="gpu")
+    except Busy as e:
+        raise ApiError(409, "busy", str(e) or "a job already holds the GPU") from e
+    return {"job_id": job.job_id, "kind": "electrode_map"}
+
+
+@router.get("/electrodes/{analysis_id}", response_model=ElectrodeMapPayload)
+def get_electrodes(analysis_id: str) -> dict:
+    """The full electrode map of a project, plus `stale` — computed against the SAVED document's
+    current tile positions, so an edited/recomputed mosaic says "re-run" instead of silently
+    highlighting drifted centres. (Unsaved client edits are the client's own staleness to track.)"""
+    from camea.core import electrodegrid  # noqa: PLC0415
+    from . import electrodes  # noqa: PLC0415
+
+    out = _outputs_dir(analysis_id)
+    doc: dict = {}
+    try:
+        loaded, _ = core_document.load_analysis(_PROJECTS_PROVIDER(), analysis_id)
+        doc = loaded
+    except Exception:  # noqa: BLE001 — no readable document: the file fallback still serves
+        pass
+
+    payload = electrodegrid.load_map_file(out, electrodes.recorded_map_name(doc))
+    if payload is None:
+        raise ApiError(404, "not_found",
+                       "this project has no electrode map yet — run Map electrodes first")
+
+    stale = False
+    if doc.get("tiles"):
+        now = electrodes.positions_stamp(
+            doc, include_unverified=bool(payload.get("include_unverified", True)))
+        stale = now != str(payload.get("source_stamp") or "")
+    return {**payload, "stale": stale}
+
+
+__all__ = ["router", "ApiError", "MosaicSession", "set_session_provider", "set_store",
+           "TILE", "BLANK_PCT"]

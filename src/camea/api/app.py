@@ -49,6 +49,7 @@ from fastapi.staticfiles import StaticFiles
 import camea
 from camea.api import routes_core
 from camea.api.schemas import ErrorCode
+from camea.core import migrate as core_migrate
 
 __all__ = ["create_app", "APP", "CORS_ORIGINS"]
 
@@ -159,7 +160,31 @@ def create_app(*, cors: bool = True) -> FastAPI:
 
     # ⭐ The injection (see the module docstring, point 2). A feature never imports `camea.api`.
     mosaic_routes.set_session_provider(routes_core.SESSIONS.get)
+    # ⭐ R44: the export writes into the project's own `outputs/`, so this router resolves an
+    # `analysis_id` through the same fresh-per-call store the core routes serve from.
+    mosaic_routes.set_store(routes_core._projects)
     app.include_router(mosaic_routes.router)
+
+    # The second feature: a mosaic built AUTOMATICALLY from a survey video. Same
+    # import-registers-hooks pattern; its store seam gets the same fresh-per-call ProjectSet
+    # the core routes use.
+    from camea.features.videomosaic import document as videomosaic_document  # noqa: F401
+    from camea.features.videomosaic import routes as videomosaic_routes
+
+    videomosaic_routes.set_store(projects=routes_core._projects)
+    app.include_router(videomosaic_routes.router)
+
+    # ⭐ **BRING PRE-R44 PROJECTS HOME** (`core.migrate`). Runs on every launch and does nothing on
+    # all but the first: a folder already in the store is skipped. It never raises, and what it did
+    # (or could not do) is held for the home screen to state once — a project that silently moved
+    # would be indistinguishable from one that silently vanished.
+    routes_core.MIGRATION = core_migrate.migrate_to_store(
+        routes_core.SETTINGS.ensure_loaded().legacy_projects
+    )
+    if routes_core.MIGRATION.ran and not routes_core.MIGRATION.failed:
+        # Only when everything came home: the old index is the only record of where those folders
+        # were, so a launch that hit an unplugged drive keeps it for the next one to finish.
+        routes_core.SETTINGS.drop_legacy_projects()
 
     # ---------------------------------------------------------------------------------------------
     # The built UI. `--window` and `--browser` both load from THIS origin (see the CORS note above) —

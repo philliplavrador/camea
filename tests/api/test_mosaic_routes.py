@@ -15,6 +15,8 @@ in `test_260620d.py`, under `-m slow`.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import math
 
 import pytest
@@ -86,7 +88,7 @@ def test_the_gate_drops_by_SHAPE_loudly_and_never_by_trial_number(client, synth)
     assert run["detected"] is False                          # chosen by hand
 
 
-def test_rescope_makes_the_range_stick_and_keeps_the_work(client, synth, workspace):
+def test_rescope_makes_the_range_stick_and_keeps_the_work(client, synth):
     """⭐ `Apply` on the Range step. A project opens on every square snapshot the dataset holds —
     including the strays before the scan started (5, 7, 8 here; 1 and 5-7 on 260620d). They are not
     tiles of this mosaic, and until this route they were swept, solved and exported as if they were.
@@ -97,7 +99,7 @@ def test_rescope_makes_the_range_stick_and_keeps_the_work(client, synth, workspa
     sid = open_session(client, synth.path, everything)["session_id"]
     aid = client.post("/api/projects",
                       json={"session_id": sid, "feature": "mosaic", "name": "s",
-                            "trials": everything, "folder": str(workspace / "s")}).json()["analysis_id"]
+                            "trials": everything}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
     assert len(doc["tiles"]) == len(everything)              # the strays came in as tiles
 
@@ -124,11 +126,11 @@ def test_rescope_makes_the_range_stick_and_keeps_the_work(client, synth, workspa
     assert out["doc"]["pass_split"] == synth.pass_split         # re-detected for the new range
 
 
-def test_rescope_refuses_a_range_with_no_snapshot_in_it(client, synth, workspace):
+def test_rescope_refuses_a_range_with_no_snapshot_in_it(client, synth):
     sid = open_session(client, synth.path, synth.trials)["session_id"]
     aid = client.post("/api/projects",
                       json={"session_id": sid, "feature": "mosaic", "name": "s",
-                            "trials": synth.trials, "folder": str(workspace / "s")}).json()["analysis_id"]
+                            "trials": synth.trials}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
 
     r = client.post("/api/mosaic/document/rescope",
@@ -161,7 +163,7 @@ def test_the_app_cannot_import_a_dataset_ruling(client):
 # =================================================================================================
 
 
-def test_the_blank_scan_proposes_and_excludes_NOTHING(client, synth, workspace):
+def test_the_blank_scan_proposes_and_excludes_NOTHING(client, synth):
     sid = open_session(client, synth.path, synth.trials)["session_id"]
     r = client.post("/api/mosaic/screen/propose",
                     json={"session_id": sid, "trials": synth.trials,
@@ -175,7 +177,7 @@ def test_the_blank_scan_proposes_and_excludes_NOTHING(client, synth, workspace):
     # ⭐ THE POINT: a proposal changes NO document. Nothing is auto-excluded, here or anywhere.
     aid = client.post("/api/projects",
                       json={"session_id": sid, "feature": "mosaic", "name": "s",
-                            "trials": synth.trials, "folder": str(workspace / "s")}).json()["analysis_id"]
+                            "trials": synth.trials}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
     assert [t for t, v in doc["tiles"].items() if v["state"] == "excluded"] == []
 
@@ -363,14 +365,14 @@ def test_the_match_preconditions_are_400s_not_500s(client, synth, body, why):
 
 
 @pytest.fixture()
-def seeded(client, synth, workspace):
+def seeded(client, synth):
     """A session, a document, and a finished build in the register. -> `(sid, aid, doc, build_id)`."""
     from camea.features.mosaic import routes as mosaic_routes
 
     sid = open_session(client, synth.path, synth.trials)["session_id"]
     aid = client.post("/api/projects",
                       json={"session_id": sid, "feature": "mosaic", "name": "seeded",
-                            "trials": synth.trials, "folder": str(workspace / "seeded")}).json()["analysis_id"]
+                            "trials": synth.trials}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
 
     a0 = synth.trials[0]
@@ -529,11 +531,14 @@ def test_qc_states_its_denominator(client, synth, seeded):
     assert "usable_trials" not in str(qc)                    # ⛔ renamed on purpose. See the schema.
 
 
-def test_export_writes_the_seven_files_and_the_coverage_mask_is_MANDATORY(client, synth, seeded,
-                                                                          tmp_path):
+def test_export_writes_the_seven_files_and_the_coverage_mask_is_MANDATORY(client, synth, seeded):
     """⚠️⚠️ 13.1 % of the canvas is background encoded as exactly `0.0`, indistinguishable from a
     legitimately black pixel — and a TIFF has **no alpha channel**. Without the sidecar, "empty" and
-    "black" merge forever. **Asking for `tiff` implies `coverage`.**"""
+    "black" merge forever. **Asking for `tiff` implies `coverage`.**
+
+    ⭐ **AND IT LANDS IN THE PROJECT'S `outputs/` (R44)** — there is no `dir` on the wire, because
+    the user is not asked where an export goes. He browses and copies out what he wants afterwards.
+    """
     sid, aid, doc, bid = seeded
     a0 = synth.trials[0]
     for t in synth.trials[:6]:
@@ -541,9 +546,8 @@ def test_export_writes_the_seven_files_and_the_coverage_mask_is_MANDATORY(client
                                      "x": synth.truth(t, a0)[0], "y": synth.truth(t, a0)[1],
                                      "human": True})
 
-    out = tmp_path / "exported"
     r = client.post("/api/mosaic/export",
-                    json={"session_id": sid, "dir": str(out), "basename": "m", "doc": doc,
+                    json={"session_id": sid, "basename": "m", "doc": doc,
                           "outputs": ["tiff", "png", "positions", "gt", "qc"],
                           "render_mode": "feather"})
     assert r.status_code == 202, r.text
@@ -555,17 +559,28 @@ def test_export_writes_the_seven_files_and_the_coverage_mask_is_MANDATORY(client
     assert {"tiff", "png", "positions", "gt", "qc"} <= kinds
     assert all(f["bytes"] > 0 for f in job["result"]["files"])
 
+    out = Path(client.get(f"/api/projects/{aid}").json()["folder"]) / "outputs"
     csv = (out / "m_positions.csv").read_text().splitlines()
     assert csv[0] == "trial,x,y,state"                       # score.load_positions DictReads these
 
+    # ⭐ …and the outputs browser lists exactly what the job says it wrote (R44). This is the whole
+    # promise of the panel: what is on the card is what is on disk.
+    listed = {o["name"] for o in client.get(f"/api/projects/{aid}/outputs").json()["outputs"]}
+    assert listed == {Path(f["path"]).name for f in job["result"]["files"]}
 
-def test_an_export_INTO_the_dataset_is_refused(client, synth, seeded):
+
+def test_an_export_CANNOT_NAME_A_FOLDER_AT_ALL(client, synth, seeded):
+    """⛔ **R44 removed `dir` from the contract**, so the old "export into the dataset" refusal has
+    nothing left to refuse: there is no way to ask for it. `Req` is `extra="forbid"`, so a client
+    that still sends one is a 422 rather than a silent write somewhere nobody expects."""
     sid, aid, doc, bid = seeded
+    props = client.get("/openapi.json").json()["components"]["schemas"]["ExportRequest"]
+    assert "dir" not in props["properties"]
+
     r = client.post("/api/mosaic/export",
                     json={"session_id": sid, "dir": str(synth.path / "out"), "basename": "m",
                           "doc": doc})
-    assert r.status_code == 409
-    assert err(r)["code"] == "refused"
+    assert r.status_code == 422
 
 
 def test_recheck_is_GLOBAL_and_is_allowed_to_say_no(client, synth, seeded):

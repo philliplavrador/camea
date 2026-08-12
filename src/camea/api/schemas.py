@@ -242,22 +242,17 @@ class Settings(Res):
     """Everything the app remembers between launches. ⛔ **No dataset knowledge lives here.**
     A remembered *path* is not knowledge about the data at that path.
 
-    ⭐ `workspace` and `dataset_roots` were removed on 2026-07-25: there is no single app-managed
-    store and no root registry. A project names its own save folder, and these are the folders the
-    user has actually used."""
+    ⭐ **ONE KEY, since R44 (2026-08-10).** `projects` went with the folders it indexed: projects
+    live in Camea's own store and the store IS the index. (`workspace` and `dataset_roots` went on
+    2026-07-25.) What is left is the one thing the app cannot re-derive — where the user keeps his
+    data, which is his to decide and nobody else's to remember."""
 
-    projects: list[str] = Field(
-        default_factory=list,
-        description="Folders the user has saved a project into. An index for the home screen — the "
-        "truth is the camea-project.json in each folder.",
-    )
     recent_datasets: list[str] = Field(
         default_factory=list, description="Data folders recently opened. Offered back as completions."
     )
 
 
 class SettingsUpdate(Req):
-    projects: list[str] | None = None
     recent_datasets: list[str] | None = None
 
 
@@ -584,31 +579,49 @@ class OpenJobResult(Res):
 
 
 # =================================================================================================
-# PROJECTS — a project is ONE FOLDER, named by the user.  CORE.
+# PROJECTS — a project is ONE FOLDER, and CAMEA OWNS IT.  CORE.
 # =================================================================================================
 #
-# ⛔ A project folder is NEVER inside a dataset and NEVER inside the repo. `core.project` refuses
-# `data/`, the repo, and any raw acquisition folder — reusing `core.workspace`'s one implementation
-# of each guard, not the three that had drifted apart in v1.
+# ⭐ **R44 (2026-08-10).** Every project lives in the app's own store — `%LOCALAPPDATA%/Camea/
+# projects/<analysis_id>/` — created automatically, never named by the user, and browsed only
+# through the app (`GET /api/projects/{id}/outputs`). The user names exactly one path: where the
+# DATA comes from. There is no save-folder question and therefore no save-folder schema.
+#
+# ⛔ The guards did not soften. `core.project` still refuses `data/`, the repo and any raw
+# acquisition folder for every path it is handed — the store is exempt from the *repo* rule only,
+# because it is the app's own state directory. The evidence rule has no exceptions.
 #
 # ⭐ `analysis_id` is still the addressing token: `core.document`, every feature and the whole front
 # end name a project by its id, and none of them know where it is stored. See `core/project.py`.
 
 
-class ProjectFolderInfo(Res):
-    """What Camea can say about a candidate save folder BEFORE anything is written to it."""
+class MigratedProject(Res):
+    """One project that came home to the store."""
+
+    name: str
+    from_: str = Field(alias="from", description="The folder the user had saved it into.")
+    to: str = Field(description="Where it is now, inside Camea's store.")
+
+
+class FailedMigration(Res):
+    """One project that did **not** move. ⭐ It is still exactly where it was."""
 
     path: str
-    exists: bool
-    writable: bool
-    is_project: bool = Field(
-        default=False, description="True when the folder already holds a Camea project."
-    )
-    empty: bool = Field(default=True, description="False when the folder already has files in it.")
+    reason: str = Field(description="Said out loud, because the user's work is in that folder.")
+
+
+class MigrationReport(Res):
+    """`core.migrate`'s account of the one-time move into the store (R44).
+
+    ⚠️ Reported, never silent. A project that moved without saying so would be indistinguishable
+    from one that vanished, and these are folders the user chose and can still find in Explorer."""
+
+    migrated: list[MigratedProject] = Field(default_factory=list)
+    failed: list[FailedMigration] = Field(default_factory=list)
 
 
 class AnalysisSummary(Res):
-    """A project = a document + its outputs, in the folder the user named. Bound to ONE dataset."""
+    """A project = a document + its outputs, in Camea's store. Bound to ONE dataset."""
 
     analysis_id: str
     feature: str = Field(description='"mosaic". Features register their own name.')
@@ -616,7 +629,11 @@ class AnalysisSummary(Res):
     dataset_key: str
     dataset: str
     path: str
-    folder: str = Field(default="", description="The project's own folder — the one he named.")
+    folder: str = Field(
+        default="",
+        description="Where the project lives in Camea's store. ⚠️ Shown for support and diagnosis, "
+        "not as somewhere to go: browsing a project means GET /api/projects/{id}/outputs.",
+    )
     data_dir: str = Field(default="", description="Where this project's dataset lives.")
     created: str
     modified: str
@@ -635,8 +652,13 @@ class AnalysisListResponse(Res):
     analyses: list[AnalysisSummary]
     unreadable: list[str] = Field(
         default_factory=list,
-        description="Remembered folders that could not be read this launch (an unplugged drive). "
+        description="Project folders in the store that could not be read (a corrupt manifest). "
         "Listed, never silently dropped — and never a failure of the whole home screen.",
+    )
+    migration: MigrationReport | None = Field(
+        default=None,
+        description="⭐ Set on the first launch after R44, when pre-R44 projects were brought into "
+        "the store. The home screen states it once. null on every ordinary launch.",
     )
 
 
@@ -652,13 +674,12 @@ class CreateAnalysisRequest(Req):
     session_id: str
     feature: str
     name: str
-    folder: str = Field(
-        description="⭐ WHERE TO SAVE IT — the folder the user named. The project IS this folder. "
-        "Refused (409) inside a dataset or inside the repo."
-    )
     trials: list[int] | None = Field(
         default=None, description="The feature's selection. null = the session's whole trial list."
     )
+
+    # ⭐ **NO `folder` (R44, 2026-08-10).** The app puts the project in its own store and tells the
+    # user where it went. He named the data path; that was the only path question worth asking.
 
 
 class RenameAnalysisRequest(Req):
@@ -668,17 +689,53 @@ class RenameAnalysisRequest(Req):
     name: str
 
 
-class ForgetProjectRequest(Req):
-    """`DELETE /api/projects/{id}` — what to do with the files.
+# =================================================================================================
+# OUTPUTS — ⭐ THE ONLY DOOR TO A PROJECT'S FILES.  CORE.  (R44)
+# =================================================================================================
+#
+# **His ruling, 2026-08-10:** *"if users want to browse their project data they have to do it
+# through the app itself"* — and, asked how a mosaic then reaches a paper: *"click into a project and
+# browse your outputs, select the one(s) you want and save it into somewhere."*
+#
+# So there are exactly three routes, and between them they are the whole story: **list** what a
+# project built, **read** one of those files, and **copy** the chosen ones out to a folder the user
+# names at that moment. ⛔ There is no route that opens Explorer, and none that hands out a path to
+# paste into one.
 
-    ⭐ Two different things the user might mean, and the app must not guess: **forget** takes it off
-    the home screen and leaves every byte on disk; **delete** removes Camea's own files from the
-    folder (the manifest, the document, the autosave, `outputs/`) and leaves anything else he put
-    there alone."""
 
-    delete_files: bool = Field(
-        default=False, description="False = forget only. True = also remove Camea's files."
+class OutputEntry(Res):
+    """One file in a project's `outputs/`."""
+
+    name: str = Field(description="Its filename. ⛔ A name, never a path — there are no subfolders.")
+    bytes: int
+    modified: str
+    media_type: str = Field(description="Guessed from the extension. What GET .../outputs/{name} serves.")
+    previewable: bool = Field(
+        default=False, description="True for images the browser can show inline."
     )
+
+
+class OutputListResponse(Res):
+    """`GET /api/projects/{id}/outputs` — everything this project has built, newest first."""
+
+    outputs: list[OutputEntry] = Field(default_factory=list)
+
+
+class CopyOutputsRequest(Req):
+    """`POST /api/projects/{id}/outputs/copy` — **the one way work leaves Camea.**
+
+    ⛔ The destination is refused (409) inside a dataset or inside `data/`, exactly as every other
+    path the app writes to is. ⛔ A file already at the destination is **refused, never overwritten**
+    — the user's folder is his, and this route is not allowed to be the reason something in it is
+    gone."""
+
+    names: list[str] = Field(description="Which outputs to copy. Names from the listing.")
+    dest: str = Field(description="The folder to copy them into. Created if it does not exist.")
+
+
+class CopyOutputsResponse(Res):
+    copied: list[str] = Field(default_factory=list, description="The full paths written.")
+    dest: str
 
 
 # =================================================================================================
@@ -893,6 +950,12 @@ class DialogSaveFileRequest(Req):
 
 class DialogPathResponse(Res):
     path: str | None = Field(default=None, description="null = the user cancelled.")
+
+
+# ⛔ **`RevealRequest` / `POST /api/fs/reveal` were DELETED on 2026-08-10 (R44).** Showing a project
+# in Explorer was the last door out of the app to a project's files, and his ruling closed it: the
+# app is how you browse your project data. What replaced it is `POST .../outputs/copy` — you take a
+# copy of what you chose, to where you chose, deliberately.
 
 
 # =================================================================================================
@@ -1129,6 +1192,9 @@ class MosaicDocument(Document):
     run: RunBlock = Field(default_factory=RunBlock)
     build: BuildBlock | None = None
     tone: ToneSnapshot = Field(default_factory=ToneSnapshot)
+    electrodes: "ElectrodeMapBlock | None" = Field(
+        default=None, description="The fitted electrode-grid summary (2026-08-11); the full "
+        "per-electrode table is an outputs/ file it names. None until Map electrodes runs.")
 
 
 # -------------------------------------------------------------------------------------------------
@@ -1729,8 +1795,10 @@ class ExportRequest(Req):
     header saying "hand-placed from scratch"."""
 
     session_id: str
-    dir: str
-    basename: str
+    basename: str = Field(
+        description="What the exported files are CALLED. ⭐ Not where they go — since R44 they go "
+        "into this project's outputs/, and the user is never asked for a folder."
+    )
     doc: MosaicDocument
     outputs: list[ExportKind] = Field(default_factory=lambda: list(DEFAULT_OUTPUTS))
     render_mode: RenderMode = "feather"
@@ -1815,6 +1883,285 @@ class QcReport(Open):
 
 
 # =================================================================================================
+# Video mosaic (`features/videomosaic`) — a mosaic built AUTOMATICALLY from a survey video.
+# =================================================================================================
+class VideoSource(Res):
+    """The probe receipt. `fps`/`n_frames` are what the container CLAIMS (phone video is often
+    VFR) — good for a receipt, never for arithmetic. Probing decodes a real frame, so a receipt
+    means 'this will decode', not 'a header parsed'."""
+
+    path: str
+    name: str
+    width: int
+    height: int
+    fps: float
+    n_frames: int
+    duration_s: float
+    size_bytes: int
+
+
+class VideoProbeRequest(Req):
+    path: str = Field(description="Path of a video file (mp4/avi/…) — anything cv2 decodes.")
+
+
+class CreateVideoProjectRequest(Req):
+    """⭐ THE SERVER CREATES THE DOCUMENT — `POST /api/videomosaic/projects`. The video-source
+    sibling of `CreateAnalysisRequest`: no session, the probed receipt becomes `doc.source`.
+
+    ⭐ **NO `folder` — and neither has the dataset task since R44 (2026-08-10).** Both create their
+    project in Camea's store. R43 got here first for this feature, by deferring the folder question
+    until the mosaic existed; R44 removed the question instead."""
+
+    name: str
+    video_path: str
+
+
+class VideoBuildRequest(Req):
+    analysis_id: str
+    config: dict[str, ConfigValue] | None = Field(
+        default=None,
+        description="VideoConfig overrides, for development and tests. The UI sends null: a "
+        "normal user never tunes computer-vision parameters to get a mosaic.")
+
+
+class VideoKeyframeRecord(Open):
+    """One automatically selected video frame. `x`/`y` are canvas top-left corners (R19),
+    null when the frame could not be tied to the mosaic (`placed: false`)."""
+
+    x: float | None = None
+    y: float | None = None
+    segment: int | None = None
+    reason: str | None = None
+    placed: bool = False
+
+
+class VideoMosaicDocument(Document):
+    """A videomosaic document: envelope + `source`/`config`/`build`/`keyframes`, flat."""
+
+    source: VideoSource | None = None
+    config: dict[str, ConfigValue] | None = None
+    build: dict | None = Field(
+        default=None, description="{built_at, canvas, outputs, stats} — the last build's "
+        "summary; the full forensics live in outputs/build.json.")
+    keyframes: dict[str, VideoKeyframeRecord] = Field(default_factory=dict)
+    electrodes: "ElectrodeMapBlock | None" = Field(
+        default=None, description="The fitted electrode-grid summary (2026-08-11); stale when "
+        "its source_stamp no longer equals build.built_at. None until Map electrodes runs.")
+
+
+class VideoCanvasSize(Res):
+    w: int
+    h: int
+
+
+class VideoMosaicBuildResult(Res):
+    """`job.result` of a `videomosaic_build` job. The document is already SAVED server-side
+    when this appears — the UI refetches or takes `doc` as-is; it never authors."""
+
+    kind: Literal["videomosaic_build"] = "videomosaic_build"
+    doc: VideoMosaicDocument
+    canvas: VideoCanvasSize
+    stats: dict
+    outputs: dict[str, str] = Field(
+        description="logical name -> FILENAME of each artifact (mosaic, preview, positions, "
+        "build). They sit in the project folder itself, named after the project. Filenames, not "
+        "paths: a saved project moves (R43), and a recorded absolute path would go stale.")
+
+
+# ⛔ **`VideoSaveRequest` / `POST /api/videomosaic/save` were DELETED on 2026-08-10 (R44).** There is
+# nothing to save into: the project was in Camea's store from the moment it was created, and the
+# mosaic is in its `outputs/`. Getting a copy out is `POST /api/projects/{id}/outputs/copy`, which
+# every feature shares.
+
+
+# =================================================================================================
+# Electrodes — the grid mapping BOTH features share (2026-08-11)
+# =================================================================================================
+#
+# ⭐ The MEA's electrode pads form a near-square lattice; `core.electrodegrid` measures it from the
+# FINISHED mosaic (pitch, rotation, phase — never assumed: the app carries no dataset knowledge) and
+# gives every position a `column-row` id, `1-1` top-left, columns rightward, rows downward ALONG THE
+# LATTICE (the real grid sits ~2 deg off the image axes). Occluded positions carry interpolated
+# centres flagged `inferred` — every position is numbered (his ruling, 2026-08-11).
+#
+# 🔶 Coordinates: the MOSAIC feature stores centres in DOCUMENT WORLD px (the viewer's space), with
+# `canvas_offset` recording `world - rendered_canvas`; the VIDEOMOSAIC stores canvas px (its canvas
+# IS the mosaic.png). `coordinates` carries the session's frame note, same as the document.
+#
+# ⭐ **THE DEVICE IS KNOWN, AND HE SAYS WHETHER IT IS ALL IN FRAME (R45.8, 2026-08-11).** The chip is
+# a MaxWell MaxOne/MaxTwo: 220 × 120 = 26,400 electrodes at 17.5 µm pitch. That spec lives in exactly
+# one place (`core.electrodegrid.DeviceSpec` / `MAXWELL`) and it **checks and completes** a measured
+# fit — it never replaces one, so R45.1 stands: the lattice is still measured off the pixels. It
+# binds only as far as the user lets it, and he says so BEFORE mapping via `array_coverage`:
+#   * `"full"`  — the whole chip is in frame: the fit must come out 220 × 120 (either orientation);
+#                 a near miss is corrected (edge lines added as `inferred` / a phantom line dropped)
+#                 and the correction is reported in `stats.shape_corrected`, never silent; a fit far
+#                 off REFUSES, naming both shapes.
+#   * `"partial"` — only part of the chip is imaged: no shape rule at all, and `1-1` is the top-left
+#                 of the IMAGED REGION, not of the chip.
+# Both modes get the 17.5 µm scale: `um_per_px = 17.5 / measured pitch_px`, and every electrode
+# carries `x_um`/`y_um` in the array's own frame **alongside** its pixels.
+# ⚠️ This `um_per_px` is NOT the export/provenance `Scale.um_per_px` (R30: pixels only, a hand-typed
+# magnification is a lie). It is a MEASURED quantity — a known device pitch over the pitch this image
+# actually shows — and it stays on the electrode surfaces. Do not plumb it into `Scale`.
+# ⛔ The server defaults `array_coverage` to `"partial"`, the mode that assumes nothing; the UI
+# refuses to map at all until he has picked one (no default may map silently).
+# ⭐ And the spec is **SERVED**, not retyped: `GET /api/electrodes/device` (core — both features map
+# the same chip) hands the UI `MAXWELL` itself, so the sentence the user agrees to before mapping
+# quotes the numbers that will actually be enforced. See `ElectrodeDevice`.
+
+
+ARRAY_COVERAGE_DESC = (
+    "Did the user say the WHOLE chip is in frame? 'full' enforces the device shape "
+    "(220 x 120 = 26,400 electrodes, either orientation) and corrects a near miss; 'partial' "
+    "enforces nothing but the 17.5 um scale, and 1-1 is the top-left of the imaged region. "
+    "R45.8 — he picks before mapping; the server default is the assumption-free one.")
+
+
+class ElectrodeDevice(Res):
+    """`GET /api/electrodes/device` — ⭐ **THE CHIP, ON THE WIRE, so nothing has to retype it.**
+
+    🔴 R45.8 put every device number in exactly one place (`core.electrodegrid.DeviceSpec` /
+    `MAXWELL`) — and then the coverage question the UI asks *before* mapping wrote them out a second
+    time as button prose ("220 × 120", "26,400", "17.5 µm"), in TypeScript, where nothing keeps them
+    honest. Change `DeviceSpec.axes` and the panel goes on promising the old array while the fitter
+    enforces the new one: **the UI describing a rule it is not the one enforcing.** This model is the
+    fix — the spec is served, typed, and the UI reads it instead of repeating it.
+
+    ⛔ **No field here has a default.** A default would be a second copy of the device fact, which is
+    the very duplication this endpoint exists to close. The values are `MAXWELL`'s, whatever they are.
+    """
+
+    name: str = Field(description='Whose numbers these are, e.g. "MaxWell MaxOne/MaxTwo".')
+    axes: tuple[int, int] = Field(
+        description="The two array axis lengths, **ORIENTATION-FREE** — the chip can sit portrait or "
+        "landscape in a mosaic, so neither the fitter nor the UI may assume which one is columns.")
+    pitch_um: float = Field(
+        description="Centre-to-centre electrode spacing, µm. The physical ruler that turns the "
+        "MEASURED pixel pitch into a scale (`um_per_px = pitch_um / pitch_px`) — in BOTH coverage "
+        "modes. It is never used to assume a pitch: R45.1 stands, the lattice is measured.")
+    electrodes: int = Field(
+        description="axes[0] * axes[1]. Derived by the spec, never typed in twice — and the number a "
+        "'whole chip imaged' map must contain, exactly.")
+
+
+class ElectrodeMapRequest(Req):
+    """`POST /api/mosaic/electrodes/map` — fit the electrode grid of the built mosaic."""
+
+    session_id: str
+    doc: "MosaicDocument"
+    include_unverified: bool = Field(
+        default=True, description="Render (and therefore map) the same tile set the export "
+        "defaults to: anchored plus unverified. False = certified field only.")
+    array_coverage: Literal["full", "partial"] = Field(
+        default="partial", description=ARRAY_COVERAGE_DESC)
+
+
+class VideoElectrodeMapRequest(Req):
+    """`POST /api/videomosaic/electrodes/map` — fit the grid of the saved video mosaic."""
+
+    analysis_id: str
+    array_coverage: Literal["full", "partial"] = Field(
+        default="partial", description=ARRAY_COVERAGE_DESC)
+
+
+class ElectrodeMapBlock(Open):
+    """`doc[\"electrodes\"]` — the SUMMARY of a fitted grid (the full per-electrode table lives in
+    `outputs/<name>-electrodes.json`, listed here by filename). `source_stamp` identifies the tile
+    positions / build the map was computed from; when it no longer matches, the map is STALE and
+    the UI says so instead of silently highlighting drifted centres."""
+
+    built_at: str | None = None
+    cols: int = 0
+    rows: int = 0
+    pitch_px: float = 0.0
+    angle_deg: float = 0.0
+    hit_radius_px: float = 0.0
+    stats: dict = Field(
+        default_factory=dict, description="the fit's own numbers, plus `um_per_px` and — when the "
+        "whole chip was declared imaged and the fit was a near miss — `shape_corrected` "
+        "({'cols': +1, 'rows': -1}), which the panel MUST show: a corrected shape is never silent.")
+    outputs: dict[str, str] = Field(
+        default_factory=dict, description="logical name ('map', 'csv') -> FILENAME in outputs/.")
+    source_stamp: str | None = None
+    coordinates: str | None = None
+    array_coverage: str = Field(
+        default="partial", description="what the user declared before mapping: 'full' or 'partial'. "
+        "Recorded so a reopened project still knows whether 1-1 is the chip's corner or only the "
+        "imaged region's (R45.8). Old blocks predate the field and read as 'partial'.")
+    um_per_px: float | None = Field(
+        default=None, description="device pitch / measured pitch_px. None when no device applied.")
+    device: str | None = Field(
+        default=None, description="the device NAME the spec came from ('MaxWell MaxOne/MaxTwo'). "
+        "The full spec (axes, pitch, electrode count) rides on the payload, not on this summary.")
+
+
+class ElectrodeCells(Res):
+    """Flat parallel arrays, one entry per EXISTING grid position (absent corners omitted).
+    `kind`: 1 = detected on the pixels, 2 = inferred from the lattice (occluded/dead pad).
+
+    `x`/`y` are pixels in the feature's own space; `x_um`/`y_um` are the SAME positions in the
+    ARRAY's frame — origin at electrode 1-1's lattice position, rotation taken out, so x grows
+    along columns and y along rows. They land near `(col-1) * 17.5` / `(row-1) * 17.5` but carry
+    the real measured deviation. Both are served: µm is added ALONGSIDE pixels, never instead."""
+
+    col: list[int]
+    row: list[int]
+    x: list[float]
+    y: list[float]
+    kind: list[int]
+    x_um: list[float] = Field(
+        default_factory=list, description="µm along the column axis. Empty on maps written before "
+        "R45.8 (and whenever no device spec applied) — never assume it is populated.")
+    y_um: list[float] = Field(default_factory=list, description="µm along the row axis.")
+
+
+class ElectrodeMapPayload(Res):
+    """The full electrode map, served typed so the client never re-derives geometry. A pixel
+    resolves to electrode `col-row` only within `hit_radius_px` of that centre (his click rule:
+    the pad plus a slim margin; the gaps select nothing — arrow keys step to neighbours)."""
+
+    cols: int
+    rows: int
+    pitch_px: float
+    angle_deg: float
+    hit_radius_px: float
+    a1: tuple[float, float] = Field(description="mean column step vector (one cell rightward), px")
+    a2: tuple[float, float] = Field(description="mean row step vector (one cell downward), px")
+    canvas_offset: tuple[float, float] = Field(
+        description="world = rendered-canvas px + this offset. (0,0) for the videomosaic.")
+    coordinates: str | None = None
+    built_at: str | None = None
+    stale: bool = Field(description="True when the mosaic changed after this map was built "
+                        "(tile positions edited / rebuilt) — re-run the mapping.")
+    stats: dict = Field(default_factory=dict)
+    um_per_px: float | None = Field(
+        default=None, description="MEASURED scale: the device's known pitch (17.5 µm) over the "
+        "pitch this image actually shows. None when the map was written without a device spec. "
+        "⚠️ Not the provenance `Scale.um_per_px` (R30) — that one stays absent.")
+    device: dict | None = Field(
+        default=None, description="the spec that supplied the µm scale: "
+        "{name, axes, pitch_um, electrodes}. None on maps written before R45.8.")
+    array_coverage: str = Field(
+        default="partial", description="'full' = the user declared the whole chip imaged, so the "
+        "shape was checked against the device (and any near miss corrected — see "
+        "`stats.shape_corrected`). 'partial' = only part of the chip: **1-1 is the top-left of the "
+        "IMAGED REGION, not of the chip**, and the UI must say so.")
+    cells: ElectrodeCells
+
+
+class ElectrodeMapResult(Res):
+    """`job.result` of an `electrode_map` job (either feature). The videomosaic job saves its
+    document server-side and returns it; the mosaic feature's document is CLIENT-owned, so the UI
+    merges `electrodes` into its doc and saves — same split as build vs export."""
+
+    kind: Literal["electrode_map"] = "electrode_map"
+    analysis_id: str
+    electrodes: ElectrodeMapBlock
+    doc: Document | None = None
+
+
+# =================================================================================================
 # The job-result union — declared last, because it names every feature's result.
 # =================================================================================================
 #
@@ -1824,11 +2171,14 @@ class QcReport(Open):
 # of an `any`. **A new feature adds a member here, and nowhere else.**
 
 JobResult = Annotated[
-    Union[OpenJobResult, BuildResult, ExportResult, RecheckResult, RecomputeResult],
+    Union[OpenJobResult, BuildResult, ExportResult, RecheckResult, RecomputeResult,
+          VideoMosaicBuildResult, ElectrodeMapResult],
     Field(discriminator="kind"),
 ]
 
 Job.model_rebuild()
+MosaicDocument.model_rebuild()
+VideoMosaicDocument.model_rebuild()
 
 
 __all__ = [
@@ -1854,6 +2204,23 @@ __all__ = [
     "Job",
     "JobListResponse",
     "JobResult",
+    # videomosaic
+    "VideoSource",
+    "VideoProbeRequest",
+    "CreateVideoProjectRequest",
+    "VideoBuildRequest",
+    "VideoKeyframeRecord",
+    "VideoMosaicDocument",
+    "VideoCanvasSize",
+    "VideoMosaicBuildResult",
+    # electrodes (both features)
+    "ElectrodeDevice",
+    "ElectrodeMapRequest",
+    "VideoElectrodeMapRequest",
+    "ElectrodeMapBlock",
+    "ElectrodeCells",
+    "ElectrodeMapPayload",
+    "ElectrodeMapResult",
     # health / gpu / settings
     "HealthResponse",
     "GpuInfo",
@@ -1881,11 +2248,16 @@ __all__ = [
     "ThumbsResponse",
     "OpenJobResult",
     # projects — one project is ONE FOLDER, named by the user (R42)
-    "ProjectFolderInfo",
     "AnalysisSummary",
     "RenameAnalysisRequest",
-    "ForgetProjectRequest",
     "AnalysisListResponse",
+    "MigratedProject",
+    "FailedMigration",
+    "MigrationReport",
+    "OutputEntry",
+    "OutputListResponse",
+    "CopyOutputsRequest",
+    "CopyOutputsResponse",
     "CreateAnalysisRequest",
     # documents
     "AppStamp",

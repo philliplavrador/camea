@@ -110,10 +110,23 @@ def session(tmp_path):
 
 
 @pytest.fixture
-def client(session, monkeypatch):
+def client(session, tmp_path, monkeypatch):
     """The router, mounted, with `camea.api.app`'s exception handler stood in for."""
     monkeypatch.setattr(routes, "_SESSION_PROVIDER",
                         lambda sid: session if sid == session.session_id else None)
+
+    # ⭐ **THE STORE SEAM (R44).** The export writes into the PROJECT's `outputs/`, so the router
+    # resolves an `analysis_id` through this. A fake, because this file tests the ROUTER: the real
+    # store is `core.project`'s and is tested in `tests/unit/test_project.py`.
+    store = tmp_path / "store"
+
+    def outputs_dir(analysis_id: str):
+        d = store / analysis_id / "outputs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    monkeypatch.setattr(routes, "_PROJECTS_PROVIDER",
+                        lambda: SimpleNamespace(outputs_dir=outputs_dir))
 
     app = FastAPI()
 
@@ -634,9 +647,11 @@ def test_a_recheck_with_no_anchors_is_refused(client, solve):
 # =================================================================================================
 # Step 6 · Mosaic — export
 # =================================================================================================
-def test_export_refuses_to_write_into_the_dataset(client, session, monkeypatch):
-    """⛔ **A DATASET IS THE MICROSCOPE'S EVIDENCE. THE APP DOES NOT WRITE ON THE EVIDENCE.**
-    An analysis never lands inside the dataset it is an analysis of, and never inside `data/`."""
+def test_an_export_CANNOT_NAME_A_FOLDER_AT_ALL(client, session, monkeypatch):
+    """⛔ **A DATASET IS THE MICROSCOPE'S EVIDENCE. THE APP DOES NOT WRITE ON THE EVIDENCE** — and
+    since R44 it cannot even be asked to: `dir` is gone from the contract, the export goes into the
+    project's own `outputs/`, and `Req` is `extra="forbid"`, so a client still sending a folder gets
+    a 422 rather than a quiet write somewhere nobody expects."""
     monkeypatch.setattr(routes, "_export", lambda: SimpleNamespace(export_all=lambda *a, **k: {}))
     session.dataset.path.mkdir(parents=True, exist_ok=True)
     (session.dataset.path / "log.txt").write_text("x", encoding="utf-8")
@@ -648,8 +663,19 @@ def test_export_refuses_to_write_into_the_dataset(client, session, monkeypatch):
         "basename": "m",
         "doc": _doc({}),
     })
-    assert r.status_code == 409
-    assert r.json()["error"]["code"] == "refused"
+    assert r.status_code == 422
+
+
+def test_an_export_of_a_document_with_no_project_is_refused_not_guessed(client, monkeypatch):
+    """⚠️ The destination is derived from the DOCUMENT's `id`, never from the wire — so a document
+    that carries no project id has nowhere to go, and Camea says so instead of inventing a folder."""
+    monkeypatch.setattr(routes, "_export", lambda: SimpleNamespace(export_all=lambda *a, **k: {}))
+    doc = _doc({}) | {"id": ""}
+
+    r = client.post("/api/mosaic/export",
+                    json={"session_id": "sess_1", "basename": "m", "doc": doc})
+    assert r.status_code == 400
+    assert "project" in r.json()["error"]["message"]
 
 
 def test_export_starts_a_job_that_holds_the_gpu(client, session, tmp_path, monkeypatch):
@@ -661,9 +687,8 @@ def test_export_starts_a_job_that_holds_the_gpu(client, session, tmp_path, monke
 
     monkeypatch.setattr(routes, "_export", lambda: SimpleNamespace(export_all=export_all))
 
-    out = tmp_path / "workspace" / "out"
     r = client.post("/api/mosaic/export", json={
-        "session_id": "sess_1", "dir": str(out), "basename": "260620d", "doc": _doc({}),
+        "session_id": "sess_1", "basename": "260620d", "doc": _doc({}),
     })
     assert r.status_code == 202, r.text
     job_id = r.json()["job_id"]
@@ -675,6 +700,8 @@ def test_export_starts_a_job_that_holds_the_gpu(client, session, tmp_path, monke
     assert job.state == "done", job.error
 
     assert job.exclusive == "gpu"
+    # ⭐ R44: it wrote into the PROJECT's outputs/, addressed by the document's own id.
+    assert seen["out"].name == "outputs" and seen["out"].parent.name == "d1"
     assert seen["basename"] == "260620d"
     # The default set. `coverage` is absent because it is NOT optional — the exporter writes it
     # either way, and without it "empty" and "black" merge forever in a TIFF with no alpha channel.

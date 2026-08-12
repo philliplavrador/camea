@@ -6,10 +6,24 @@ workspace, documents, jobs, dialogs.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
-from .conftest import OFF_SHAPE, OFF_SHAPE_TRIAL, RUN_HI, RUN_LO, TILE, err, open_session, run_job
+from .conftest import (
+    OFF_SHAPE,
+    OFF_SHAPE_TRIAL,
+    RUN_HI,
+    RUN_LO,
+    TILE,
+    err,
+    new_project,
+    open_session,
+    run_job,
+    store_dir,
+    store_entries,
+)
 
 # =================================================================================================
 # settings — ⛔ two keys, and both of them are LISTS OF PATHS
@@ -17,12 +31,14 @@ from .conftest import OFF_SHAPE, OFF_SHAPE_TRIAL, RUN_HI, RUN_LO, TILE, err, ope
 
 
 def test_settings_start_empty_and_round_trip(client, tmp_path):
+    """⭐ **ONE KEY, since R44.** `projects` went with the folders it indexed — the store is the
+    index now, so there is nothing for settings to keep in sync with it."""
     s = client.get("/api/settings").json()
-    assert s == {"projects": [], "recent_datasets": []}
+    assert s == {"recent_datasets": []}
 
-    s = client.put("/api/settings", json={"projects": [str(tmp_path)]}).json()
-    assert s["projects"] == [str(tmp_path).replace("\\", "/")]
-    assert client.get("/api/settings").json()["projects"] == s["projects"]
+    s = client.put("/api/settings", json={"recent_datasets": [str(tmp_path)]}).json()
+    assert s["recent_datasets"] == [str(tmp_path).replace("\\", "/")]
+    assert client.get("/api/settings").json()["recent_datasets"] == s["recent_datasets"]
 
 
 def test_settings_carry_no_dataset_knowledge(client, synth):
@@ -30,13 +46,13 @@ def test_settings_carry_no_dataset_knowledge(client, synth):
     file that remembered an exclusion would answer, on the user's behalf, the exact question the app
     exists to help him answer — the second time he opened the dataset. There is no toggle.
 
-    ⚠️ Still true after the 2026-07-25 move to per-project folders: what is remembered is *where he
-    saved* and *where he looked*, never anything about what is there."""
+    ⚠️ Still true after R44 moved projects into the app's own store: the only thing remembered is
+    *where he looked for data*, never anything about what is there."""
     client.post("/api/datasets/at", json={"path": str(synth.path.parent)})
     open_session(client, synth.path, synth.trials)
 
     s = client.get("/api/settings").json()
-    assert set(s) == {"projects", "recent_datasets"}
+    assert set(s) == {"recent_datasets"}
     blob = str(s)
     for forbidden in ("excluded", "blank", "blurry", "trials", "threshold", "pass_split"):
         assert forbidden not in blob.lower(), f"settings leaked {forbidden!r}: {s}"
@@ -60,8 +76,8 @@ def test_there_is_no_root_registry_to_scan(client, synth):
     r = client.post("/api/datasets/at", json={"path": str(synth.path.parent)})
     assert r.status_code == 200, r.text
     assert synth.path.name in {d["name"] for d in r.json()["datasets"]}
-    # ...and nothing was written down.
-    assert client.get("/api/settings").json()["projects"] == []
+    # ...and no project folder was written down: there is no such index any more (R44).
+    assert set(client.get("/api/settings").json()) == {"recent_datasets"}
 
 
 def test_pointing_AT_a_dataset_says_so(client, synth):
@@ -73,6 +89,48 @@ def test_pointing_AT_a_dataset_says_so(client, synth):
     assert body["is_dataset"] is True
     assert len(body["datasets"]) == 1
     assert body["datasets"][0]["name"] == synth.path.name
+
+
+# =================================================================================================
+# electrodes — ⭐ THE DEVICE SPEC IS SERVED, so the UI never has to retype it (R45.8)
+# =================================================================================================
+
+
+def test_the_device_spec_is_served_and_it_IS_MAXWELL(client):
+    """🔴 **THE NUMBERS ON THE WIRE ARE `MAXWELL`'S — asserted against the dataclass, never against
+    literals.** R45.8 makes 220 x 120 at 17.5 µm *binding* when the user declares "whole chip
+    imaged", and the UI has to state that bargain before he can press Map. It was stating it from a
+    hard-coded copy in TypeScript, so changing `DeviceSpec` would have left the panel promising one
+    array while the fitter enforced another — a lie the type system cannot catch and the user
+    cannot see.
+
+    ⚠️ A literal in this test would rebuild exactly that second copy, one layer down. It compares
+    the response with the spec object, so the day the device changes this test changes with it — and
+    a route that answered from its own constants goes red."""
+    from camea.core.electrodegrid import MAXWELL
+
+    r = client.get("/api/electrodes/device")
+    assert r.status_code == 200, r.text
+    d = r.json()
+
+    assert d["name"] == MAXWELL.name
+    assert d["axes"] == [int(MAXWELL.axes[0]), int(MAXWELL.axes[1])]
+    assert d["pitch_um"] == MAXWELL.pitch_um
+    assert d["electrodes"] == MAXWELL.electrodes
+    # the count is DERIVED, so the wire can never carry a shape and a total that disagree
+    assert d["electrodes"] == d["axes"][0] * d["axes"][1]
+
+
+def test_the_device_route_is_CORE_and_knows_nothing_about_a_feature(client):
+    """⛔ Both features map electrodes off the same `core.electrodegrid`, and the coverage control is
+    mounted by both — so the spec hangs off `/api/electrodes/…`, not under `/api/mosaic/…`. It also
+    costs nothing: no session, no project, no pixels, on a completely cold app."""
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/electrodes/device" in paths
+    assert "/api/mosaic/electrodes/device" not in paths
+
+    assert client.get("/api/electrodes/device").status_code == 200
+    assert client.get("/api/sessions").json()["sessions"] == []   # nothing was opened to answer it
 
 
 # =================================================================================================
@@ -123,6 +181,14 @@ def test_no_window_means_501_AND_A_WAY_OUT(client):
     assert client.get("/api/fs/list").status_code == 200
 
 
+def test_there_is_no_route_that_opens_a_project_in_explorer(client):
+    """⛔ **R44: the app is the only door to project data.** `POST /api/fs/reveal` opened a project
+    folder in Explorer and is DELETED — asserted against the contract, because the SPA catch-all
+    serves index.html for an unmatched path and a deleted route would otherwise 200 with HTML."""
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/fs/reveal" not in paths
+
+
 # =================================================================================================
 # datasets — the browser
 # =================================================================================================
@@ -141,7 +207,7 @@ def test_looking_at_a_folder_reports_what_is_in_it(client, synth):
     assert shapes[OFF_SHAPE] == 1                            # ⛔ REPORTED. Core does not gate on it.
 
     # ⛔ and NOTHING was remembered — there is no root registry any more.
-    assert client.get("/api/settings").json()["projects"] == []
+    assert set(client.get("/api/settings").json()) == {"recent_datasets"}
 
 
 def test_dataset_detail_and_thumbnail_cost_no_session(client, synth):
@@ -275,60 +341,54 @@ def test_delete_a_session(client, synth):
 
 
 # =================================================================================================
-# project folders — ⛔ NEVER inside a dataset, NEVER inside the repo
+# projects — ⭐ CAMEA'S OWN STORE (R44). The user names the DATA path and nothing else.
 # =================================================================================================
 
 
 def test_the_home_screen_starts_empty_and_that_is_not_an_error(client):
-    """⭐ There is no store to choose first (his ruling, 2026-07-25), so there is no `no_workspace`
-    409 to hit. No projects yet is a 200 and an empty list — the honest first-run state."""
+    """⭐ There is no store to choose first — the app owns it (R44) — so there is no `no_workspace`
+    409 to hit. No projects yet is a 200 and an empty list, the honest first-run state."""
     r = client.get("/api/projects")
     assert r.status_code == 200
     assert r.json()["analyses"] == []
 
 
-def test_a_project_folder_inside_the_dataset_is_refused(client, synth):
-    """⛔ **THE APP DOES NOT WRITE ON THE EVIDENCE.** Refused at the one moment he names the place."""
+def test_the_app_names_the_project_folder_and_the_user_is_never_asked(client, synth, state_dir):
+    """⭐ **R44, THE WHOLE RULING IN ONE TEST.** *"camea saves project-specific files to its own repo
+    automatically."* Create carries **no** folder, and the project lands in the store under an id."""
     s = open_session(client, synth.path, synth.trials)
-    r = client.post("/api/projects",
-                    json={"session_id": s["session_id"], "feature": "mosaic", "name": "x",
-                          "folder": str(synth.path / "work")})
-    assert r.status_code == 409
-    assert err(r)["code"] == "refused"
+    r = new_project(client, s["session_id"], name="pass 1", trials=synth.trials)
+    assert r.status_code == 201, r.text
+    a = r.json()
+
+    folder = Path(a["folder"])
+    assert folder.parent == store_dir(state_dir), f"{folder} is not in Camea's store"
+    assert folder.name == a["analysis_id"], "the id IS the folder name"
+    assert (folder / "camea-project.json").is_file()
+    assert (folder / "document.camea.json").is_file()
 
 
-def test_a_project_folder_inside_the_repo_is_refused(client, synth):
-    """A project under the checkout would be committed, `.gitignore`d, or blown away by a clean.
-    The user's work does not live in the app's source tree."""
-    from camea.core.workspace import repo_root
+def test_create_refuses_a_folder_it_was_never_offered(client, synth):
+    """⛔ **THE CONTRACT HAS NO `folder` (R44).** Not "ignored" — absent. A build that still sent one
+    would be a front end that still believes it chooses where the user's work lives."""
+    props = client.get("/openapi.json").json()["components"]["schemas"]["CreateAnalysisRequest"]
+    assert "folder" not in props["properties"]
+    assert "/api/projects/folder" not in client.get("/openapi.json").json()["paths"]
 
-    root = repo_root()
-    assert root is not None, "these tests run from the checkout"
+
+def test_two_projects_of_the_same_name_are_two_folders(client, synth):
+    """🔴 Under R42 a second project in the same folder was **refused**, because overwriting one is
+    how a day of sweeping disappears. In the store there is nothing to overwrite: the id is the
+    folder name, so the same name twice is simply two projects."""
     s = open_session(client, synth.path, synth.trials)
-    r = client.post("/api/projects",
-                    json={"session_id": s["session_id"], "feature": "mosaic", "name": "x",
-                          "folder": str(root / "my-project")})
-    assert r.status_code == 409
-    assert err(r)["code"] == "refused"
+    first = new_project(client, s["session_id"], name="same")
+    second = new_project(client, s["session_id"], name="same")
+    assert first.status_code == 201 and second.status_code == 201
 
-
-def test_folder_writability_is_proved_not_assumed(client, workspace):
-    info = client.get("/api/projects/folder", params={"path": str(workspace)}).json()
-    assert info["exists"] is True and info["writable"] is True
-    assert info["is_project"] is False
-
-
-def test_a_folder_that_already_holds_a_project_is_refused_not_overwritten(client, synth, workspace):
-    """🔴 Silently overwriting a project folder is how a day of sweeping disappears. He is told to
-    pick another folder, and the existing project is named so he knows what he nearly lost."""
-    s = open_session(client, synth.path, synth.trials)
-    body = {"session_id": s["session_id"], "feature": "mosaic", "name": "first",
-            "folder": str(workspace / "p")}
-    assert client.post("/api/projects", json=body).status_code == 201
-
-    again = client.post("/api/projects", json={**body, "name": "second"})
-    assert again.status_code == 400
-    assert "first" in err(again)["message"]
+    a, b = first.json(), second.json()
+    assert a["analysis_id"] != b["analysis_id"]
+    assert a["folder"] != b["folder"]
+    assert len(client.get("/api/projects").json()["analyses"]) == 2
 
 
 # =================================================================================================
@@ -336,14 +396,14 @@ def test_a_folder_that_already_holds_a_project_is_refused_not_overwritten(client
 # =================================================================================================
 
 
-def test_the_SERVER_creates_the_document(client, synth, workspace):
+def test_the_SERVER_creates_the_document(client, synth):
     """🔴 In v1 `new_doc()` was dead code and the front end built the document in JavaScript — which
     is how the divert counters were dropped on every save. **The document is authored on the
     server.**"""
     s = open_session(client, synth.path, synth.trials)
     r = client.post("/api/projects",
                     json={"session_id": s["session_id"], "feature": "mosaic", "name": "pass 1",
-                          "trials": synth.trials, "folder": str(workspace / "pass-1")})
+                          "trials": synth.trials})
     assert r.status_code == 201, r.text
     a = r.json()
     assert a["n_tiles"] == len(synth.trials)
@@ -360,22 +420,21 @@ def test_the_SERVER_creates_the_document(client, synth, workspace):
     assert doc["coordinates"].endswith("translation before measuring.") or "TOP-LEFT" in doc["coordinates"]
 
 
-def test_an_unknown_feature_is_a_400_not_a_guess(client, synth, workspace):
+def test_an_unknown_feature_is_a_400_not_a_guess(client, synth):
     s = open_session(client, synth.path, synth.trials)
     r = client.post("/api/projects",
-                    json={"session_id": s["session_id"], "feature": "segmentation", "name": "x",
-                          "folder": str(workspace / "x")})
+                    json={"session_id": s["session_id"], "feature": "segmentation", "name": "x"})
     assert r.status_code == 400
 
 
-def test_save_load_autosave_and_the_derived_gaps(client, synth, workspace):
+def test_save_load_autosave_and_the_derived_gaps(client, synth):
     """⚠️ `gaps` is DERIVED and is recomputed on every save. Trial numbers are acquisition ORDER but
     stop being CONTIGUOUS the moment the human excludes one — and across a gap the serpentine
     one-axis step prior does NOT hold."""
     s = open_session(client, synth.path, synth.trials)
     aid = client.post("/api/projects",
                       json={"session_id": s["session_id"], "feature": "mosaic", "name": "sweep",
-                            "trials": synth.trials, "folder": str(workspace / "sweep")}).json()["analysis_id"]
+                            "trials": synth.trials}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
     assert doc["gaps"] == []
 
@@ -396,14 +455,14 @@ def test_save_load_autosave_and_the_derived_gaps(client, synth, workspace):
     assert r.json()["path"].endswith("autosave.camea.json")   # BESIDE the document, never over it
 
 
-def test_the_slot_guard_refuses_someone_elses_document(client, synth, workspace):
+def test_the_slot_guard_refuses_someone_elses_document(client, synth):
     """🔴 Pass 2's autosave once silently overwrote pass 1's ground-truth records. A document may only
     be written into the analysis whose `id` it carries. **Not merged, not renamed, not "repaired".**"""
     s = open_session(client, synth.path, synth.trials)
     mk = lambda name: client.post(  # noqa: E731
         "/api/projects",
         json={"session_id": s["session_id"], "feature": "mosaic", "name": name,
-              "trials": synth.trials, "folder": str(workspace / name)}).json()["analysis_id"]
+              "trials": synth.trials}).json()["analysis_id"]
     a1, a2 = mk("one"), mk("two")
 
     doc1 = client.get(f"/api/analyses/{a1}/document").json()["doc"]
@@ -412,13 +471,13 @@ def test_the_slot_guard_refuses_someone_elses_document(client, synth, workspace)
     assert err(r)["code"] == "range_mismatch"
 
 
-def test_save_as_and_a_COLD_load(client, synth, workspace, tmp_path):
+def test_save_as_and_a_COLD_load(client, synth, tmp_path):
     """⭐ *"Load a project…"* must work **cold**, with no session. The app remembers nothing between
     launches, so this file is its only memory: save -> quit -> load restores the session whole."""
     s = open_session(client, synth.path, synth.trials)
     aid = client.post("/api/projects",
                       json={"session_id": s["session_id"], "feature": "mosaic", "name": "cold",
-                            "trials": synth.trials, "folder": str(workspace / "cold")}).json()["analysis_id"]
+                            "trials": synth.trials}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
 
     out = tmp_path / "handed-out.camea.json"
@@ -436,11 +495,11 @@ def test_save_as_and_a_COLD_load(client, synth, workspace, tmp_path):
     assert body["doc"]["id"] == aid
 
 
-def test_save_as_INTO_the_dataset_is_refused(client, synth, workspace):
+def test_save_as_INTO_the_dataset_is_refused(client, synth):
     s = open_session(client, synth.path, synth.trials)
     aid = client.post("/api/projects",
                       json={"session_id": s["session_id"], "feature": "mosaic", "name": "x",
-                            "trials": synth.trials, "folder": str(workspace / "x")}).json()["analysis_id"]
+                            "trials": synth.trials}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
     r = client.post("/api/documents/save-as",
                     json={"path": str(synth.path / "sneaky.camea.json"), "doc": doc})
@@ -448,13 +507,13 @@ def test_save_as_INTO_the_dataset_is_refused(client, synth, workspace):
     assert err(r)["code"] == "refused"
 
 
-def test_validate_never_rejects_a_document_for_WHICH_trials_it_placed(client, synth, workspace):
+def test_validate_never_rejects_a_document_for_WHICH_trials_it_placed(client, synth):
     """⛔ **NO TRIAL NUMBER IS SPECIAL.** v1's guard ("tile 284 is thrown out and carries a position")
     made the user's own session unsaveable the moment he anchored 284."""
     s = open_session(client, synth.path, synth.trials)
     aid = client.post("/api/projects",
                       json={"session_id": s["session_id"], "feature": "mosaic", "name": "v",
-                            "trials": synth.trials, "folder": str(workspace / "v")}).json()["analysis_id"]
+                            "trials": synth.trials}).json()["analysis_id"]
     doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
 
     for t in synth.trials:                                   # anchor EVERY tile, by hand
@@ -466,23 +525,160 @@ def test_validate_never_rejects_a_document_for_WHICH_trials_it_placed(client, sy
     assert client.put(f"/api/analyses/{aid}/document", json={"doc": doc}).status_code == 200
 
 
-def test_delete_an_analysis(client, synth, workspace):
+def test_delete_an_analysis(client, synth, state_dir):
+    """⭐ **DELETE MEANS DELETE (R44).** R42.8's Remove-vs-Delete is retired: the folder is Camea's,
+    so a project the app stops listing is one nobody could ever reach again. `delete_files` is gone
+    and the whole folder goes."""
     s = open_session(client, synth.path, synth.trials)
-    aid = client.post("/api/projects",
-                      json={"session_id": s["session_id"], "feature": "mosaic", "name": "d",
-                            "trials": synth.trials, "folder": str(workspace / "d")}).json()["analysis_id"]
+    a = new_project(client, s["session_id"], name="d", trials=synth.trials).json()
+    aid, folder = a["analysis_id"], Path(a["folder"])
+    assert folder.is_dir()
+
     assert client.delete(f"/api/projects/{aid}").json() == {"ok": True}
     assert client.get("/api/projects").json()["analyses"] == []
+    assert not folder.exists(), "the store folder is Camea's; delete takes all of it"
+    assert store_entries() == [], "and leaves nothing behind in the store"
     assert client.delete(f"/api/projects/{aid}").status_code == 404
 
 
-def test_rename_a_project_rewrites_the_manifest_and_keeps_the_id(client, synth, workspace):
+# =================================================================================================
+# OUTPUTS — ⭐ THE ONLY DOOR TO A PROJECT'S FILES (R44)
+# =================================================================================================
+
+
+def _built(client, synth, name: str = "p", files: dict[str, bytes] | None = None):
+    """A project with some files in its `outputs/`. -> `(analysis_id, outputs_dir)`.
+
+    ⚠️ Written straight to disk rather than by running a build: these tests are about the *browser*,
+    and a real mosaic build here would test the mosaic feature instead.
+    """
+    s = open_session(client, synth.path, synth.trials)
+    a = new_project(client, s["session_id"], name=name, trials=synth.trials).json()
+    out = Path(a["folder"]) / "outputs"
+    out.mkdir(parents=True, exist_ok=True)
+    for fn, data in (files or {"mosaic.png": b"\x89PNG\r\n\x1a\n fake", "qc.md": b"# qc"}).items():
+        (out / fn).write_bytes(data)
+    return a["analysis_id"], out
+
+
+def test_outputs_are_listed_off_the_directory_not_the_document(client, synth):
+    """⭐ The browser's whole source. It answers *what is there*, not what the last build recorded —
+    a file written by an older Camea, or deleted underneath us, has to show up as it actually is."""
+    aid, out = _built(client, synth)
+    r = client.get(f"/api/projects/{aid}/outputs")
+    assert r.status_code == 200, r.text
+    by_name = {o["name"]: o for o in r.json()["outputs"]}
+
+    assert set(by_name) == {"mosaic.png", "qc.md"}
+    assert by_name["mosaic.png"]["previewable"] is True
+    assert by_name["mosaic.png"]["media_type"] == "image/png"
+    assert by_name["qc.md"]["previewable"] is False          # offered as a copy, never rendered
+    assert by_name["qc.md"]["bytes"] == 4
+
+    (out / "qc.md").unlink()                                 # gone from disk -> gone from the list
+    assert {o["name"] for o in client.get(f"/api/projects/{aid}/outputs").json()["outputs"]} \
+        == {"mosaic.png"}
+
+
+def test_a_project_with_nothing_built_lists_empty_and_that_is_not_a_404(client, synth):
+    s = open_session(client, synth.path, synth.trials)
+    aid = new_project(client, s["session_id"], trials=synth.trials).json()["analysis_id"]
+    r = client.get(f"/api/projects/{aid}/outputs")
+    assert r.status_code == 200
+    assert r.json()["outputs"] == []
+
+
+def test_an_output_is_served_and_can_be_asked_for_as_a_download(client, synth):
+    aid, _ = _built(client, synth)
+    r = client.get(f"/api/projects/{aid}/outputs/mosaic.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert "attachment" not in r.headers.get("content-disposition", "")
+
+    d = client.get(f"/api/projects/{aid}/outputs/mosaic.png", params={"download": True})
+    assert 'attachment; filename="mosaic.png"' in d.headers["content-disposition"]
+
+
+@pytest.mark.parametrize("name", ["...", "..\\secret", "mosaic.png:stream", "*.png", " "])
+def test_an_output_name_cannot_escape_the_outputs_folder(client, synth, name):
+    """🔴 `name` arrives over HTTP and is never used to build a path blind. `outputs/` is flat by
+    construction, so a name that needs a separator is a name that is trying something."""
+    aid, _ = _built(client, synth)
+    r = client.get(f"/api/projects/{aid}/outputs/{name}")
+    assert r.status_code in (400, 404), r.text
+
+
+@pytest.mark.parametrize("name", ["..", "../../camea-project.json", "../../../settings.json",
+                                  "sub/mosaic.png"])
+def test_a_traversing_output_name_never_reaches_the_handler_at_all(client, synth, name):
+    """⚠️ `".."` is here rather than above because httpx **normalises it out of the URL** before the
+    request is sent, so it never tests the server at all from that side.
+
+    A name containing a **separator** does not match this route — the SPA catch-all answers it
+    with `index.html`, so the status is a 200 and means nothing. What matters is what it is NOT: the
+    file it was reaching for. Asserted on the bytes, because a status code would pass either way."""
+    aid, _ = _built(client, synth)
+    r = client.get(f"/api/projects/{aid}/outputs/{name}")
+    assert b"camea_project" not in r.content
+    assert b"recent_datasets" not in r.content
+    assert not r.headers["content-type"].startswith("image/")
+
+
+def test_copying_outputs_out_is_a_COPY_and_the_project_keeps_them(client, synth, outbox):
+    """⭐ *"click into a project and browse your outputs, select the one(s) you want and save it into
+    somewhere."* The store stays the home; what leaves is a copy he asked for."""
+    aid, out = _built(client, synth)
+    dest = outbox / "for-the-paper"
+
+    r = client.post(f"/api/projects/{aid}/outputs/copy",
+                    json={"names": ["mosaic.png", "qc.md"], "dest": str(dest)})
+    assert r.status_code == 200, r.text
+    assert sorted(Path(p).name for p in r.json()["copied"]) == ["mosaic.png", "qc.md"]
+    assert (dest / "mosaic.png").read_bytes() == (out / "mosaic.png").read_bytes()
+    assert (out / "mosaic.png").is_file(), "a copy is not a move"
+
+
+def test_copying_out_refuses_to_write_over_HIS_files(client, synth, outbox):
+    """⛔ The destination is the user's folder. A clash refuses the WHOLE request and names the
+    files — never half a copy with one of his overwritten."""
+    aid, _ = _built(client, synth)
+    (outbox / "mosaic.png").write_bytes(b"something of his")
+
+    r = client.post(f"/api/projects/{aid}/outputs/copy",
+                    json={"names": ["mosaic.png", "qc.md"], "dest": str(outbox)})
+    assert r.status_code == 409
+    assert err(r)["code"] == "refused"
+    assert "mosaic.png" in err(r)["message"]
+    assert (outbox / "mosaic.png").read_bytes() == b"something of his"
+    assert not (outbox / "qc.md").exists(), "refused means nothing was written, not some of it"
+
+
+def test_copying_out_INTO_the_dataset_is_refused(client, synth):
+    """⛔ **THE APP DOES NOT WRITE ON THE EVIDENCE** — and an export is still a write."""
+    aid, _ = _built(client, synth)
+    r = client.post(f"/api/projects/{aid}/outputs/copy",
+                    json={"names": ["mosaic.png"], "dest": str(synth.path / "exports")})
+    assert r.status_code == 409
+    assert err(r)["code"] == "refused"
+
+
+def test_copying_an_output_that_is_not_this_projects_is_refused(client, synth):
+    aid, _ = _built(client, synth, name="mine")
+    other, _ = _built(client, synth, name="theirs", files={"secret.csv": b"x"})
+
+    r = client.post(f"/api/projects/{aid}/outputs/copy",
+                    json={"names": ["secret.csv"], "dest": str(synth.path.parent / "nope")})
+    assert r.status_code == 404
+    assert other != aid
+
+
+def test_rename_a_project_rewrites_the_manifest_and_keeps_the_id(client, synth):
     """The project manager's rename: `PATCH /api/projects/{id}`. It rewrites the manifest
     name; the id (the directory) is forever, so the slot guard and every stored path keep working."""
     s = open_session(client, synth.path, synth.trials)
     aid = client.post("/api/projects",
                       json={"session_id": s["session_id"], "feature": "mosaic", "name": "before",
-                            "trials": synth.trials, "folder": str(workspace / "before")}).json()["analysis_id"]
+                            "trials": synth.trials}).json()["analysis_id"]
     r = client.patch(f"/api/projects/{aid}", json={"name": "after"})
     assert r.status_code == 200
     body = r.json()

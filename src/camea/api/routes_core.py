@@ -1,6 +1,7 @@
 """routes_core.py — **everything a SECOND feature would reuse unchanged.**
 
-    health · gpu · settings · fs · datasets · sessions · tiles · workspace · documents · jobs · dialogs
+    health · gpu · settings · electrodes/device · fs · datasets · sessions · tiles · workspace ·
+    documents · jobs · dialogs
 
 ⛔ **THERE IS NO MOSAIC IN THIS FILE.** No tile, no anchor, no pass split, no exclusion, no trial
 number is special. Grep it: the word `mosaic` appears only as a *string the user chose* (a feature
@@ -36,6 +37,7 @@ spectralign: `/openapi.json` has to be inspectable on a machine where the engine
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -45,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi.responses import FileResponse
 
 import camea
 from camea.api.schemas import (
@@ -61,6 +64,7 @@ from camea.api.schemas import (
     DialogPathResponse,
     DialogSaveFileRequest,
     DocumentResponse,
+    ElectrodeDevice,
     ErrorCode,
     FsEntry,
     FsListResponse,
@@ -75,7 +79,9 @@ from camea.api.schemas import (
     LogResponse,
     OkResponse,
     OpenSessionRequest,
-    ProjectFolderInfo,
+    OutputListResponse,
+    CopyOutputsRequest,
+    CopyOutputsResponse,
     SaveDocumentRequest,
     SaveResult,
     SessionListResponse,
@@ -91,6 +97,11 @@ from camea.api.schemas import (
 )
 from camea.core import dataset as core_dataset
 from camea.core import document as core_document
+# ⚠️ Safe at import time, and deliberately so: `core.electrodegrid` keeps cv2/scipy INSIDE its
+# functions precisely so a route module can hold the device spec without dragging the engine in —
+# `/openapi.json` still has to be inspectable on a machine where cv2 cannot load (that is how the
+# TypeScript client is generated in CI).
+from camea.core import electrodegrid as core_electrodegrid
 from camea.core import project as core_project
 from camea.core import workspace as core_workspace
 from camea.core.jobs import JOBS, OPEN_PHASES, NotCancellable, phase_reporter
@@ -306,16 +317,44 @@ def get_settings() -> dict:
 
 @router.put("/api/settings", response_model=Settings)
 def put_settings(body: SettingsUpdate) -> dict:
-    """⛔ Two keys, both lists of paths. See `camea.settings` — a settings file that remembered an
-    exclusion would be answering, on the user's behalf, the question the app exists to help him
-    answer."""
+    """⛔ One key, and it is a list of paths. See `camea.settings` — a settings file that remembered
+    an exclusion would be answering, on the user's behalf, the question the app exists to help him
+    answer. (`projects` went with R44: the store is the index.)"""
     SETTINGS.ensure_loaded()
     fields = body.model_dump(exclude_unset=True)
     SETTINGS.update(
-        projects=fields.get("projects") if "projects" in fields else None,
         recent_datasets=fields.get("recent_datasets") if "recent_datasets" in fields else None,
     )
     return SETTINGS.to_json()
+
+
+# =================================================================================================
+# electrodes — ⭐ THE DEVICE SPEC, SERVED.  CORE: both features map the same chip.  (R45.8)
+# =================================================================================================
+#
+# 🔴 **ONE PLACE, AND IT IS NOT THE FRONT END.** R45.8 — *"the standard MaxOne/MaxTwo sensor area is
+# 26,400 electrodes = 220 x 120, with 17.5 um pitch"* — put every device number in
+# `core.electrodegrid.DeviceSpec`/`MAXWELL` and made the shape BINDING the moment the user declares
+# *"whole chip imaged"*. The coverage question the UI asks him before mapping then quoted those same
+# numbers back as button prose, in TypeScript, where nothing keeps them honest: change
+# `DeviceSpec.axes` and the panel goes on promising the old array while the fitter enforces the new
+# one. **That is the UI describing a rule it is not the one enforcing**, and it is exactly the drift
+# `schemas.py` exists to make impossible. So the spec goes on the wire and the UI reads it.
+#
+# ⛔ **It is CORE, not mosaic.** `core.electrodegrid` is shared, both features map electrodes, and
+# the coverage control is mounted by both — nothing about a mosaic, a tile or a trial reaches here.
+# ⛔ It is also the *only* thing served: a device is a FACT about hardware the user asserts, never a
+# tunable, so there is no PUT and no per-project override.
+
+
+@router.get("/api/electrodes/device", response_model=ElectrodeDevice)
+def get_electrode_device() -> dict:
+    """The chip a *"whole chip imaged"* fit is held to — `MAXWELL`, read at call time, not copied.
+
+    ⚠️ `as_dict()` derives `electrodes` from `axes`, so the count on the wire cannot disagree with
+    the shape beside it. Cheap and total: it touches no image, no session and no disk.
+    """
+    return core_electrodegrid.MAXWELL.as_dict()
 
 
 # =================================================================================================
@@ -463,14 +502,16 @@ def _dataset_for_key(key: str) -> Any:
 
 
 def _projects() -> core_project.ProjectSet:
-    """The projects the user has saved, addressed by `analysis_id`.
+    """⭐ **THE STORE** (R44) — every project, addressed by `analysis_id`.
 
-    ⭐ Built fresh per call off `settings.projects` so a folder added or forgotten in another tab is
-    picked up. **It never raises** — there is no "no workspace chosen" state to be in any more, and
-    an empty list is the honest first-run answer, not an error. (`_workspace()`'s `409 no_workspace`
-    is gone with the store it guarded; see `core/project.py`.)
+    Built fresh per call off `core.project.store_root()`, so a project created or deleted in another
+    tab (or by a second Camea) is picked up without a restart. **It never raises**: an empty store is
+    the honest first-run answer, not an error.
+
+    (Before R44 this was `settings.projects` plus the live drafts, and *reachable but not listed* was
+    a distinction the video task needed. Both are gone — a project in the store is both.)
     """
-    return core_project.ProjectSet(list(SETTINGS.ensure_loaded().projects))
+    return core_project.ProjectSet.of_store()
 
 
 def _analyses_index() -> dict[str, list[dict]]:
@@ -828,53 +869,10 @@ def _project_error(e: Exception) -> ApiError:
     return ApiError(400, "bad_request", str(e))
 
 
-@router.get("/api/projects/folder", response_model=ProjectFolderInfo)
-def get_project_folder(path: str = Query(description="The candidate save folder.")) -> dict:
-    """*"Can I save here?"* — asked as the user types, **before** anything is written.
-
-    `writable` is **proved, not assumed** (it writes and deletes a probe file): a folder on a drive
-    that has been unplugged must show up as `writable: false`, not as a 500 an hour into a sweep.
-    A refusal (inside a dataset, inside the repo) raises 409 so he is told *why*, not just "no".
-    """
-    try:
-        pr = core_project.Project.open(path, create=False)
-    except core_project.ProjectError:
-        # It does not exist YET — the normal case for a new project. Do not refuse him: walk up to
-        # the first ancestor that does exist and judge THAT. `D:/work/2026/retina-run` is a perfectly
-        # good answer even when neither `2026` nor `retina-run` has been made yet.
-        #
-        # ⚠️ The refusals still bite: `Project.open` on each ancestor raises `DatasetIsReadOnly` /
-        # `PathRefused` before we get here, so a path deep inside a dataset or the repo is refused on
-        # the way up rather than reported as "will be created".
-        p = Path(path).expanduser()
-        try:
-            rp = p.resolve()
-        except OSError:
-            rp = p.absolute()
-        anchor = next((d for d in rp.parents if d.exists()), None)
-        if anchor is None:
-            raise ApiError(400, "bad_request",
-                           f"there is no such drive or folder: {rp.as_posix()}") from None
-        try:
-            core_project.Project.open(anchor, create=False)
-        except Exception as e:                          # noqa: BLE001
-            raise _project_error(e) from e
-        return {"path": rp.as_posix(), "exists": False, "writable": _writable(anchor),
-                "is_project": False, "empty": True}
-    except Exception as e:                              # noqa: BLE001
-        raise _project_error(e) from e
-
-    try:
-        empty = not any(pr.path.iterdir())
-    except OSError:
-        empty = False
-    return {
-        "path": pr.path.as_posix(),
-        "exists": True,
-        "writable": _writable(pr.path),
-        "is_project": pr.is_project(),
-        "empty": empty,
-    }
+# ⛔ **`GET /api/projects/folder` was DELETED on 2026-08-10 (R44).** It answered *"can I save here?"*
+# as the user typed a save folder. There is no save folder to type: the app puts the project in its
+# own store. The probe below survives because `POST .../outputs/copy` still writes to a folder the
+# user names — that is the one remaining place he chooses a destination.
 
 
 def _writable(d: Path) -> bool:
@@ -892,18 +890,32 @@ def _writable(d: Path) -> bool:
 
 @router.get("/api/projects", response_model=AnalysisListResponse)
 def get_projects(dataset_key: str | None = None, feature: str | None = None) -> dict:
-    """**The home screen.** Every project in the folders the user has saved into.
+    """**The home screen.** Every project in Camea's store (R44).
 
-    ⚠️ A folder that has moved or is on an unplugged drive is reported in `unreadable`, **not**
-    silently dropped and **not** a failure of the whole listing: one dead drive must cost him that
+    ⚠️ A project folder whose manifest cannot be read is reported in `unreadable`, **not** silently
+    dropped and **not** a failure of the whole listing: one corrupt file must cost the user that
     project's card, never his home screen.
+
+    ⭐ `migration` is set on the first launch after R44 and null on every launch after that. It is
+    stated once, on the home screen, because those projects moved out of folders the user chose.
     """
     ps = _projects()
-    found = ps.analyses(dataset_key=dataset_key, feature=feature)
-    alive = {a.dir.as_posix().lower() for a in found}
-    unreadable = [f for f in SETTINGS.ensure_loaded().projects
+    # ⚠️ Listed UNFILTERED first: `unreadable` is "a folder in the store that did not yield a
+    # project", and a folder filtered out by `dataset_key`/`feature` read perfectly well. Deriving
+    # it from the filtered list would report every other project as broken.
+    everything = ps.analyses()
+    alive = {a.dir.as_posix().rstrip("/").lower() for a in everything}
+    unreadable = [f for f in core_project.store_folders()
                   if f.rstrip("/").lower() not in alive]
-    return {"analyses": [a.to_json() for a in found], "unreadable": unreadable}
+
+    found = [a for a in everything
+             if (dataset_key is None or a.dataset_key == dataset_key)
+             and (feature is None or a.feature == feature)]
+    return {
+        "analyses": [a.to_json() for a in found],
+        "unreadable": unreadable,
+        "migration": MIGRATION.to_json() if MIGRATION is not None and MIGRATION.ran else None,
+    }
 
 
 @router.post("/api/projects", response_model=AnalysisSummary, status_code=201)
@@ -933,11 +945,10 @@ def post_analyses(body: CreateAnalysisRequest) -> dict:
     if stray:
         raise ApiError(400, "bad_request", f"trials not loaded in this session: {stray[:12]}")
 
-    # ⭐ The folder HE named. Refused inside a dataset (the evidence) or inside the repo — at this
-    # one moment, before a byte is written, with the reason said out loud.
+    # ⭐ **CAMEA'S OWN STORE** (R44) — `store_root()/<analysis_id>/`. The user was never asked where
+    # this goes, so there is no path to refuse and no way to collide with an existing project.
     try:
-        pr = core_project.Project.create(
-            body.folder,
+        pr = core_project.Project.create_in_store(
             feature=body.feature,
             name=body.name,
             dataset_key=s.dataset.key,
@@ -978,13 +989,29 @@ def post_analyses(body: CreateAnalysisRequest) -> dict:
         pr.delete()
         raise ApiError(400, "bad_request", str(e)) from e
 
-    # ⭐ Only NOW is the folder remembered — after the document is safely on disk. A folder added to
-    # the index before the write could survive a failed create and haunt the home screen forever.
-    SETTINGS.ensure_loaded().add_project(pr.path)
-    SETTINGS.touch_dataset(s.dataset.path)
+    # ⭐ The DATA path is the one thing worth remembering — it is his, and the app cannot re-derive
+    # it. The project folder is not remembered anywhere: it is in the store, and the store is the
+    # index (R44).
+    SETTINGS.ensure_loaded().touch_dataset(s.dataset.path)
 
     core_document.DOCUMENTS.put(doc, pr.document_path)
     return pr.summary().to_json()
+
+
+@router.get("/api/projects/{analysis_id}", response_model=AnalysisSummary)
+def get_project(analysis_id: str) -> dict:
+    """ONE project, by id. What `/project/:id` opens.
+
+    ⭐ It asks for **this** project rather than filtering the whole listing, and that is not just
+    cheaper: a **draft** is reachable but deliberately not listed (R43.3), so a screen that found
+    projects by scanning the list could not open a video mosaic that is still building.
+
+    ⚠️ Declared AFTER `/api/projects/folder` so the literal route keeps winning that path.
+    """
+    try:
+        return _projects().get(analysis_id).to_json()
+    except Exception as e:                              # noqa: BLE001
+        raise _project_error(e) from e
 
 
 @router.patch("/api/projects/{analysis_id}", response_model=AnalysisSummary)
@@ -1002,29 +1029,188 @@ def rename_analysis(analysis_id: str, body: RenameAnalysisRequest) -> dict:
 
 
 @router.delete("/api/projects/{analysis_id}", response_model=OkResponse)
-def delete_analysis(analysis_id: str, delete_files: bool = False) -> dict:
-    """⭐ **FORGET, OR DELETE — and the app does not guess which.**
+def delete_analysis(analysis_id: str) -> dict:
+    """⭐ **DELETE MEANS DELETE** (R44) — the project and everything in it, including its outputs.
 
-    `delete_files=false` (the default) takes the project off the home screen and **leaves every byte
-    where it is**: the folder is his, he named it, and "remove this card" must not be a synonym for
-    "destroy a week of sweeping". `delete_files=true` removes Camea's own files from it — the
-    manifest, the document, the autosave, `outputs/` — and leaves anything else he put there alone.
+    ⚠️ **`delete_files` is gone, and with it R42.8's Remove-vs-Delete.** That distinction existed
+    because the folder was one the user had named and might hold his own files: *remove* took the
+    card off the home screen and left every byte. In an app-owned store there is no such folder and
+    no such choice — a project the app is not listing is a project nobody can ever reach again, so
+    "remove the card" and "delete the work" are the same act, and pretending otherwise would just
+    accumulate unreachable bytes on his C: drive.
+
+    🔴 The **confirmation is the front end's job** and it is not optional; this route does what it
+    is told. `Project.delete` is where the rmtree target is re-checked against the store.
     """
     ps = _projects()
     try:
-        folder = ps.folder_of(analysis_id)
+        ps.delete(analysis_id)
     except Exception as e:                              # noqa: BLE001
         raise _project_error(e) from e
 
-    if delete_files:
-        try:
-            ps.delete(analysis_id)
-        except Exception as e:                          # noqa: BLE001
-            raise _project_error(e) from e
-
-    SETTINGS.ensure_loaded().forget_project(folder)
     core_document.DOCUMENTS.close(analysis_id)
     return {"ok": True}
+
+
+# =================================================================================================
+# OUTPUTS — ⭐ THE ONLY DOOR TO A PROJECT'S FILES.  CORE.  (R44, 2026-08-10)
+# =================================================================================================
+#
+# **His ruling:** *"if users want to browse their project data they have to do it through the app
+# itself"*, and *"click into a project and browse your outputs, select the one(s) you want and save
+# it into somewhere."* These three routes are that sentence: **list**, **read**, **copy out**.
+#
+# ⛔ There is no route here that hands back a path for the user to paste into Explorer, and none
+# that opens one. `POST /api/fs/reveal` was deleted the same day for exactly that reason.
+
+#: What the browser can show inline. Everything else is offered as a copy-out, never rendered.
+_PREVIEWABLE = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+_MEDIA = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+    ".webp": "image/webp", ".tif": "image/tiff", ".tiff": "image/tiff",
+    ".json": "application/json", ".csv": "text/csv", ".md": "text/markdown",
+    ".txt": "text/plain",
+}
+
+
+def _media_type(name: str) -> str:
+    return _MEDIA.get(Path(name).suffix.lower(), "application/octet-stream")
+
+
+def _output_file(analysis_id: str, name: str) -> Path:
+    """`(project, filename)` -> the file in its `outputs/`, or a 404.
+
+    🔴 **`name` ARRIVES OVER HTTP AND IS NEVER USED TO BUILD A PATH BLIND.** It goes through
+    `safe_basename` (no separators, no drive letters, no `..`) and the result is re-checked to sit
+    directly in this project's `outputs/` after resolving symlinks. A project's outputs directory is
+    flat by construction, so a name that needs a subfolder is a name that is trying something.
+    """
+    try:
+        base = core_workspace.safe_basename(name)
+    except ValueError as e:
+        raise ApiError(400, "bad_request", f"bad output name: {name!r}") from e
+
+    try:
+        out_dir = _projects().outputs_dir(analysis_id)
+    except Exception as e:                              # noqa: BLE001
+        raise _project_error(e) from e
+
+    p = out_dir / base
+    try:
+        if p.resolve().parent != out_dir.resolve():
+            raise ApiError(400, "bad_request", f"bad output name: {name!r}")
+    except OSError as e:
+        raise ApiError(400, "bad_request", f"bad output name: {name!r}") from e
+    if not p.is_file():
+        raise ApiError(404, "not_found", f"this project has no output called {base!r}")
+    return p
+
+
+@router.get("/api/projects/{analysis_id}/outputs", response_model=OutputListResponse)
+def get_outputs(analysis_id: str) -> dict:
+    """⭐ **WHAT THIS PROJECT HAS BUILT** — newest first. The outputs browser's whole source.
+
+    Read off the directory every call, never from the document: `build.outputs` records what the
+    last build *wrote*, and this must answer what is *there*. A file deleted underneath us, or one
+    an older Camea wrote under a different name, has to show up as it actually is.
+
+    An empty list is a normal answer (nothing built yet), not a 404.
+    """
+    try:
+        out_dir = _projects().outputs_dir(analysis_id)
+    except Exception as e:                              # noqa: BLE001
+        raise _project_error(e) from e
+
+    entries: list[dict] = []
+    try:
+        for f in out_dir.iterdir():
+            if not f.is_file():
+                continue                                # flat by construction; a dir is not ours
+            try:
+                st = f.stat()
+            except OSError:
+                continue                                # vanished under us — not worth a 500
+            entries.append({
+                "name": f.name,
+                "bytes": st.st_size,
+                "modified": core_workspace._iso(st.st_mtime),
+                "media_type": _media_type(f.name),
+                "previewable": f.suffix.lower() in _PREVIEWABLE,
+            })
+    except OSError as e:
+        raise ApiError(500, "io_error", f"could not read this project's outputs: {e}") from e
+
+    entries.sort(key=lambda e: e["modified"], reverse=True)
+    return {"outputs": entries}
+
+
+@router.get("/api/projects/{analysis_id}/outputs/{name}", response_class=Response,
+            include_in_schema=True)
+def get_output_file(analysis_id: str, name: str, download: bool = False) -> Response:
+    """One output's bytes — the preview in the browser, and the click-to-open.
+
+    `download=true` sets `Content-Disposition: attachment`, which is how the web build lets the user
+    take a copy without a native dialog. `no-store`, because a rebuild overwrites in place.
+    """
+    p = _output_file(analysis_id, name)
+    headers = {"Cache-Control": "no-store"}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{p.name}"'
+    return FileResponse(p, media_type=_media_type(p.name), headers=headers)
+
+
+@router.post("/api/projects/{analysis_id}/outputs/copy", response_model=CopyOutputsResponse)
+def post_copy_outputs(analysis_id: str, body: CopyOutputsRequest) -> dict:
+    """⭐ **THE ONE WAY WORK LEAVES CAMEA** (R44) — copy the chosen outputs into a folder the user
+    names, right now, while looking at them.
+
+    🔴 **THE THREE REFUSALS, IN ORDER, BEFORE A SINGLE BYTE IS WRITTEN:**
+      1. `refuse_write(dest)` — ⛔ never onto the evidence. A destination inside `data/`, inside a
+         raw acquisition folder, or inside one on the way up is refused, exactly as every other
+         write in the app is. (The **repo** is *not* refused here: root `output/` has always been a
+         legitimate place to put an export, and this is an export.)
+      2. Every name is resolved through `_output_file` — so a name that is not this project's
+         output cannot be copied out of it.
+      3. ⛔ **Nothing at the destination is overwritten.** A clash refuses the whole request and
+         names the files, rather than half-copying and destroying one of his. The destination is
+         his folder; this route does not get to be the reason something in it is gone.
+
+    A copy is not a move: the project keeps its outputs. That is the point — the store stays the
+    home, and what leaves is a copy the user asked for.
+    """
+    dest_raw = body.dest.strip()
+    if not dest_raw:
+        raise ApiError(400, "bad_request", "give the folder to copy these into")
+    if not body.names:
+        raise ApiError(400, "bad_request", "choose at least one output to copy")
+
+    sources = [_output_file(analysis_id, n) for n in body.names]
+
+    try:
+        dest = core_workspace.refuse_write(dest_raw)    # -> DatasetIsReadOnly
+    except Exception as e:                              # noqa: BLE001
+        raise _project_error(e) from e
+
+    if dest.exists() and not dest.is_dir():
+        raise ApiError(400, "bad_request", f"not a folder: {dest.as_posix()}")
+
+    clashes = sorted({p.name for p in sources if (dest / p.name).exists()})
+    if clashes:
+        raise ApiError(409, "refused",
+                       f"{dest.as_posix()} already contains {', '.join(clashes)}. Camea will not "
+                       f"write over what is already in your folder — choose another one.")
+
+    try:
+        dest.mkdir(parents=True, exist_ok=True)
+        copied = [shutil.copy2(str(p), str(dest / p.name)) for p in sources]
+    except OSError as e:
+        raise ApiError(500, "io_error", f"could not copy into {dest.as_posix()}: {e}") from e
+
+    return {
+        "copied": [Path(c).as_posix() for c in copied],
+        "dest": dest.as_posix(),
+    }
 
 
 # =================================================================================================
@@ -1306,5 +1492,36 @@ def post_dialog_save_file(body: DialogSaveFileRequest) -> dict:
     return {"path": str(path).replace("\\", "/")}
 
 
+# =================================================================================================
+# headless — "is there a desktop at all?"
+# =================================================================================================
+
+#: 🔴 **DEFAULTS TO TRUE — "there is no desktop until somebody says there is."** Importing this
+#: module must never be able to touch the user's desktop; `pytest` builds the app straight from
+#: `create_app()`. `camea.__main__` is the only caller that turns it off, and only for
+#: `--window` / `--browser`.
+#:
+#: ⛔ **`POST /api/fs/reveal` was DELETED on 2026-08-10 (R44)** — it opened a project folder in
+#: Explorer, and his ruling is that the app is the only way to browse project data. The flag stays
+#: because the dialog routes above still need to know whether a desktop exists.
+HEADLESS: bool = True
+
+
+def set_headless(headless: bool) -> None:
+    """Called once, by `camea.__main__`, before the server starts."""
+    global HEADLESS
+    HEADLESS = bool(headless)
+
+
+# =================================================================================================
+# The one-time migration's report (R44)
+# =================================================================================================
+
+#: ⭐ What `core.migrate` did on the way up, held for `GET /api/projects` to state **once**.
+#: `create_app()` sets it; it is `None` in a process that never ran a migration (and its `.ran` is
+#: False on every launch after the first, which is the same thing to the home screen).
+MIGRATION: Any = None
+
+
 __all__ = ["router", "ApiError", "Session", "SESSIONS", "SessionRegistry", "gpu_info", "set_window",
-           "FsEntry", "FsListResponse"]
+           "FsEntry", "FsListResponse", "MIGRATION"]
