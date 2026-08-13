@@ -2165,6 +2165,139 @@ class ElectrodeMapResult(Res):
 
 
 # =================================================================================================
+# THE ELECTRICAL HALF — what an electrode actually measured *(2026-08-13)*
+# =================================================================================================
+#
+# The mosaic names electrodes; a MaxWell recording says what they recorded. Clicking a pad and
+# seeing its trace is the first place the two halves of the ground-truth pairing meet in the UI.
+#
+# ⭐ THREE THINGS THIS CONTRACT REFUSES TO HIDE, because each one silently corrupts the pairing:
+#   1. **Most electrodes were never recorded.** ~1k of 26.4k are routed at acquisition, so
+#      `recorded: false` is the common answer and must render as a fact, not an empty chart.
+#   2. **The raw stream may not decode.** MaxWell compresses it with a proprietary filter whose
+#      decoder ships with MaxLab Live; the published one does not reconstruct this project's files
+#      (98% of samples come back as one fill value). `health` carries that measurement so the UI
+#      can say so — see `core/mearecording.py` for the evidence.
+#   3. **The chip's seating in the mosaic is not knowable from any file.** `orientation.confirmed`
+#      is false until something establishes it, and while it is false an electrode's identity is
+#      provisional. Never present an unconfirmed pairing as settled.
+
+class MeaRecordingSummary(Res):
+    """One `data.raw.h5` found for a project. Header facts only — no raw decode needed."""
+
+    run_id: str = Field(description='The acquisition run, e.g. "000690".')
+    assay: str = Field(description='The assay folder that holds it, e.g. "Network".')
+    label: str = Field(description='What a human calls it: "Network/000690".')
+    path: str
+    n_channels: int = Field(description="Electrodes actually routed and recorded — NOT the chip's "
+                            "electrode count. The rest of the array has no trace at all.")
+    n_samples: int
+    sampling_hz: float
+    duration_s: float
+    lsb_uv: float = Field(description="Microvolts per stored count.")
+    gain: float
+    hpf_hz: float
+    n_spikes: int = Field(description="Spikes MaxWell's on-chip detector wrote into the file. "
+                          "Needs no proprietary decoder, so this number is always trustworthy.")
+
+
+class MeaOrientation(Res):
+    """How the chip's own axes sit in the mosaic — the half no file records (see header)."""
+
+    flip_x: bool = False
+    flip_y: bool = False
+    confirmed: bool = Field(default=False, description="False until something ESTABLISHED this "
+                            "seating. While false the UI must mark electrode identity provisional.")
+    source: str = Field(default="", description="How it was established, for provenance.")
+
+
+class MeaAttachment(Res):
+    """What electrical data a project has, and whether its trace can be believed."""
+
+    attached: bool
+    mea_dir: str | None = Field(default=None, description="The folder the recordings were found "
+                                "in. ⛔ Read-only, outside the project, never written to.")
+    recordings: list[MeaRecordingSummary] = Field(default_factory=list)
+    stride: int | None = Field(default=None, description="The array's long-axis length, DERIVED "
+                               "from the recording's own numbering and verified against every "
+                               "routed electrode — never a datasheet number.")
+    pitch_um: float | None = Field(default=None, description="Also derived from the numbering, "
+                                   "not from the routed spacing (sparse routing would double it).")
+    orientation: MeaOrientation = Field(default_factory=MeaOrientation)
+    decoder_present: bool = Field(default=False, description="A MaxWell decode plug-in is on this "
+                                  "machine. Says NOTHING about whether it decodes correctly — only "
+                                  "a trace's `health` can say that.")
+
+
+class MeaAttachRequest(Req):
+    analysis_id: str
+    mea_dir: str | None = Field(default=None, description="Where to look. When omitted the server "
+                                "searches beside the project's dataset folder and reports what it "
+                                "found — the user still confirms before it is saved.")
+    confirm: bool = Field(default=False, description="False = discover and report only. True = "
+                          "save this attachment onto the project.")
+    orientation: MeaOrientation | None = None
+
+
+class TraceHealthPayload(Res):
+    """How much of a returned window is one repeated value — the honesty check on a waveform."""
+
+    n_samples: int
+    fill_value: int
+    fill_fraction: float = Field(description="Share of samples equal to the commonest value. A "
+                                 "live electrode carries thermal noise, so a healthy window sits "
+                                 "low; near 1.0 means the decoder did not reconstruct the stream.")
+    distinct_values: int
+    flat: bool = Field(description="⛔ True = NOT a usable waveform. The UI must say so rather "
+                       "than draw a convincing flat line.")
+
+
+class MeaSpike(Res):
+    t_s: float
+    amplitude_uv: float
+
+
+class MeaSyncEpisode(Res):
+    """A stretch where hundreds of channels left the rail together — a 2P lamp artefact.
+
+    ⭐ Deliberate, not noise: the experimenters switched the lamp to stamp the MEA record with
+    events also visible optically, so the two clocks can be aligned. Render them, never remove them.
+    """
+
+    start_s: float
+    end_s: float
+    duration_s: float
+    peak_channels: int
+
+
+class ElectrodeTracePayload(Res):
+    """Everything the panel needs for one clicked electrode."""
+
+    electrode: str = Field(description='The Camea grid id that was clicked, e.g. "42-117".')
+    recorded: bool = Field(description="False when this pad was never routed — the ordinary case. "
+                           "Render as a fact; there is no trace to draw.")
+    run_id: str | None = None
+    channel: int | None = Field(default=None, description="The MaxWell channel carrying it.")
+    chip_electrode: int | None = Field(default=None, description="MaxWell's own electrode id.")
+    t0_s: float = 0.0
+    t1_s: float = 0.0
+    sampling_hz: float = 0.0
+    trace_uv: list[float] = Field(default_factory=list, description="The stored waveform in µV. "
+                                  "⚠️ Judge it with `health` before believing it.")
+    health: TraceHealthPayload | None = None
+    spikes: list[MeaSpike] = Field(default_factory=list, description="Detected spikes inside the "
+                                   "window. Trustworthy independently of the trace.")
+    n_spikes_total: int = Field(default=0, description="Across the whole recording, not the window.")
+    first_spike_s: float | None = Field(
+        default=None, description="When this electrode first fired. ⭐ The UI opens its window HERE "
+        "rather than at t=0: a 300 s recording stepped one second at a time would take 200 clicks "
+        "to reach the activity, and a dead opening window makes a working electrode look broken.")
+    duration_s: float = Field(default=0.0, description="The whole recording, so the UI can scrub.")
+    sync_episodes: list[MeaSyncEpisode] = Field(default_factory=list)
+    orientation: MeaOrientation = Field(default_factory=MeaOrientation)
+
+
+# =================================================================================================
 # REGION RECORDINGS — where a fixed-field calcium video sits on the mosaic *(2026-08-11)*
 # =================================================================================================
 #
@@ -2382,6 +2515,14 @@ __all__ = [
     "ElectrodeCells",
     "ElectrodeMapPayload",
     "ElectrodeMapResult",
+    "ElectrodeTracePayload",
+    "MeaAttachRequest",
+    "MeaAttachment",
+    "MeaOrientation",
+    "MeaRecordingSummary",
+    "MeaSpike",
+    "MeaSyncEpisode",
+    "TraceHealthPayload",
     # health / gpu / settings
     "HealthResponse",
     "GpuInfo",

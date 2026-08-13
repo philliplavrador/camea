@@ -1,0 +1,21 @@
+/*
+ * THE TRACE CHART — the canvas that draws one electrode's waveform.
+ * Tokens only, no hex. The canvas reads its ink through custom properties (getComputedStyle),
+ * the same way the mosaic viewer reads --canvas, so the drawing follows the theme.
+ */
+
+.canvas {
+  /* Ink the 2D context reads at paint time. */
+  --trace-ink: var(--data);
+  --trace-axis: var(--text-faint);
+  --trace-spike: var(--thin-margin);
+  /* The 2P lamp episodes: the same "outstanding work" amber, held back so it stays behind the
+     signal rather than competing with it. */
+  --trace-lamp: color-mix(in srgb, var(--unverified) 26%, transparent);
+
+  display: block;
+  width: 100%;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}

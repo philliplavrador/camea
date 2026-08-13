@@ -32,6 +32,13 @@ dependencies = [
     "tifffile>=2024.1",       # the 16-bit TIFF export
     "matplotlib>=3.8",        # layout PNGs only
 
+    # --- the electrical half of the pairing ---
+    # Reads MaxWell data.raw.h5 (core/mearecording.py). ⚠️ h5py alone does NOT decode the raw
+    # voltage stream: MaxWell compresses it with a proprietary HDF5 filter (id 401) whose decoder
+    # ships with MaxLab Live. The spike table, the channel mapping and every header fact are plain
+    # HDF5 and need no such plug-in — which is why those are the parts Camea leans on.
+    "h5py>=3.11",
+
     # --- placement (GPL-3.0-or-later; this is why Camea is GPL-3.0) ---
     "spectralign>=0.4.2",
 ]

@@ -153,6 +153,28 @@ export type ElectrodeMapRequest = Schemas['ElectrodeMapRequest'];
 export type ElectrodeMapResult = Schemas['ElectrodeMapResult'];
 export type VideoElectrodeMapRequest = Schemas['VideoElectrodeMapRequest'];
 
+// ── The electrical half: what an electrode actually recorded ──────────────────────
+/**
+ * ⭐ The mosaic says WHERE each electrode is; a MaxWell recording says WHAT it measured. Three
+ * things these types deliberately keep visible, because each one silently corrupts the pairing the
+ * whole app exists to produce:
+ *   • `recorded: false` is the ORDINARY answer — only ~1k of the chip's 26.4k pads are routed at
+ *     acquisition, so most clicks have no trace and must say so rather than draw an empty chart.
+ *   • `health.flat` means the waveform did not reconstruct. MaxWell compresses the raw stream with
+ *     a proprietary filter whose decoder ships with MaxLab Live; the published one does not decode
+ *     this project's files. A railed window looks exactly like a real silent electrode.
+ *   • `orientation.confirmed: false` means the chip's seating in the mosaic is not yet established
+ *     — no file records it — so the electrode's identity is provisional, not settled.
+ */
+export type MeaAttachment = Schemas['MeaAttachment'];
+export type MeaAttachRequest = Schemas['MeaAttachRequest'];
+export type MeaOrientation = Schemas['MeaOrientation'];
+export type MeaRecordingSummary = Schemas['MeaRecordingSummary'];
+export type MeaSpike = Schemas['MeaSpike'];
+export type MeaSyncEpisode = Schemas['MeaSyncEpisode'];
+export type TraceHealthPayload = Schemas['TraceHealthPayload'];
+export type ElectrodeTracePayload = Schemas['ElectrodeTracePayload'];
+
 // ── Videomosaic: probe / create / build / save ────────────────────────────────────
 export type VideoSource = Schemas['VideoSource'];
 export type VideoProbeRequest = Schemas['VideoProbeRequest'];

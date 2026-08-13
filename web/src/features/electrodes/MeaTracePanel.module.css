@@ -1,0 +1,82 @@
+/*
+ * THE MEA TRACE PANEL. Numbers, not prose (R3/R7) — same readout grammar as the electrode panel
+ * it sits under: mono measurement ink, dim micro-cap labels. Tokens only, no hex.
+ */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.sub {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.runs {
+  display: flex;
+  gap: 4px;
+}
+
+.scrub {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pos {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 8px 16px;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.factLabel {
+  color: var(--text-faint);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.factValue {
+  margin: 0;
+  color: var(--data);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.factHint {
+  color: var(--text-faint);
+  font-size: 10px;
+}

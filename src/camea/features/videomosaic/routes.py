@@ -27,6 +27,7 @@ pipeline is imported inside handlers/jobs only.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -38,9 +39,12 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     AnalysisSummary,
     CreateVideoProjectRequest,
     ElectrodeMapPayload,
+    ElectrodeTracePayload,
     ErrorCode,
     JobRef,
     LocateRegionRequest,
+    MeaAttachment,
+    MeaAttachRequest,
     RegionRecord,
     RegionsPayload,
     RegionUpdateRequest,
@@ -744,6 +748,228 @@ def _regions_payload(analysis_id: str, doc: dict, ws) -> dict:
     return {"analysis_id": analysis_id, "regions": regions, "built_from": built or None,
             "stale": stale,
             "outputs": {"regions": f"{base}-regions.json", "csv": f"{base}-regions.csv"}}
+
+
+# =================================================================================================
+# THE ELECTRICAL HALF — attaching a MaxWell recording, and reading one electrode's trace
+# =================================================================================================
+#
+# ⭐ The optical half of this feature says WHERE each electrode is; these routes say WHAT it
+# recorded. Clicking a pad and seeing its trace is where the ground-truth pairing first becomes
+# visible (see `utils/knowledge/mea-calcium-goal.md`).
+#
+# ⛔ **NOTHING HERE WRITES OUTSIDE THE PROJECT** (R44). The recordings are read in place from the
+# read-only mirror; the project stores only the *path* to them plus the seating the user confirmed.
+# ⛔ **AND NOTHING HERE DECIDES A PAIRING.** Attachment is proposed and confirmed; the chip's
+# seating stays `confirmed: false` until something establishes it. An unconfirmed pairing is
+# reported as provisional, never as an answer.
+
+#: How much trace one request may return. A 300 s window at 20 kHz is 6M floats — far past what a
+#: chart can draw and past what JSON should carry. The UI asks for the window it is showing.
+MAX_TRACE_SECONDS = 30.0
+
+
+def _mea_block(doc: dict) -> dict:
+    return dict(doc.get("mea") or {})
+
+
+def _orientation_of(block: dict):
+    from camea.core import mearecording  # noqa: PLC0415
+
+    o = dict(block.get("orientation") or {})
+    return mearecording.Orientation(
+        flip_x=bool(o.get("flip_x", False)),
+        flip_y=bool(o.get("flip_y", False)),
+        confirmed=bool(o.get("confirmed", False)),
+        source=str(o.get("source") or ""),
+    )
+
+
+def _summarise(paths: list[Path]) -> tuple[list[dict], int | None, float | None]:
+    """Header facts for each recording + the chip layout they agree on.
+
+    The layout is DERIVED per file and must agree across them; a disagreement means the folder
+    holds recordings from different devices, which we refuse rather than average.
+    """
+    from camea.core import mearecording  # noqa: PLC0415
+
+    out: list[dict] = []
+    stride: int | None = None
+    pitch: float | None = None
+    for p in paths:
+        try:
+            with mearecording.MeaRecording(p) as r:
+                out.append(r.info().as_dict())
+                s, q = r.stride(), r.pitch_um()
+        except mearecording.MeaError:
+            continue
+        if stride is None:
+            stride, pitch = s, q
+        elif s != stride:
+            raise ApiError(409, "refused",
+                           "these recordings describe different chip layouts "
+                           f"(stride {stride} vs {s}) — they cannot belong to one project")
+    return out, stride, pitch
+
+
+@router.get("/api/videomosaic/{analysis_id}/mea", response_model=MeaAttachment)
+def get_mea(analysis_id: str) -> dict:
+    """What electrical data this project has. Empty-but-fine when nothing is attached yet."""
+    from camea.core import mearecording  # noqa: PLC0415
+
+    doc, _ = _video_project(analysis_id)
+    block = _mea_block(doc)
+    present = mearecording.plugin_present()
+    if not block.get("mea_dir"):
+        return {"attached": False, "recordings": [], "decoder_present": present,
+                "orientation": _orientation_of(block).as_dict()}
+    paths = mearecording.find_recordings(block["mea_dir"])
+    recs, stride, pitch = _summarise(paths)
+    return {"attached": bool(recs), "mea_dir": block["mea_dir"], "recordings": recs,
+            "stride": stride, "pitch_um": pitch, "decoder_present": present,
+            "orientation": _orientation_of(block).as_dict()}
+
+
+@router.post("/api/videomosaic/mea/attach", response_model=MeaAttachment)
+def post_mea_attach(body: MeaAttachRequest) -> dict:
+    """Find the recordings that belong to a project — and, on `confirm`, remember them.
+
+    ⭐ Two-step ON PURPOSE. Without `confirm` this only *reports* what it found, so the user sees
+    the actual paths before anything is written. Attaching the wrong plate would pair one culture's
+    voltages with another culture's neurons — silently, and in a dataset meant to be ground truth.
+    """
+    from camea.core import mearecording  # noqa: PLC0415
+
+    doc, ws = _video_project(body.analysis_id)
+    if body.mea_dir:
+        root = Path(body.mea_dir)
+        if not root.is_dir():
+            raise ApiError(404, "not_found", f"no folder at {body.mea_dir}")
+        paths = mearecording.find_recordings(root)
+        if not paths:
+            raise ApiError(404, "not_found",
+                           f"no {mearecording.MEA_FILENAME} anywhere under {body.mea_dir}")
+    else:
+        data_dir = str(doc.get("data_dir") or "")
+        if not data_dir:
+            raise ApiError(409, "refused",
+                           "this project does not record where its data came from, so there is "
+                           "nowhere to look — name the recording folder instead")
+        paths = mearecording.suggest_recordings(data_dir, str(doc.get("name") or ""))
+        if not paths:
+            raise ApiError(404, "not_found",
+                           "no MaxWell recordings found near this project's data folder")
+        root = Path(os.path.commonpath([str(p.parent) for p in paths]))
+        # With a single recording the common path IS its run folder, which would freeze the
+        # attachment to that one run — a later run in the same assay would never be found. Step
+        # out to the folder that HOLDS runs so the attachment stays true as the session grows.
+        if (root / mearecording.MEA_FILENAME).is_file():
+            root = root.parent
+
+    recs, stride, pitch = _summarise(paths)
+    if not recs:
+        raise ApiError(422, "refused",
+                       "found recording files but none could be read as a MaxLab recording")
+    orientation = (mearecording.Orientation(**body.orientation.model_dump())
+                   if body.orientation else _orientation_of(_mea_block(doc)))
+    payload = {"attached": True, "mea_dir": str(root).replace("\\", "/"), "recordings": recs,
+               "stride": stride, "pitch_um": pitch,
+               "decoder_present": mearecording.plugin_present(),
+               "orientation": orientation.as_dict()}
+    if body.confirm:
+        fresh, _ = core_document.load_analysis(ws, body.analysis_id)
+        fresh["mea"] = {"mea_dir": payload["mea_dir"], "orientation": orientation.as_dict(),
+                        "stride": stride, "pitch_um": pitch}
+        saved = core_document.save_analysis(ws, body.analysis_id, fresh)
+        core_document.DOCUMENTS.put(saved["doc"], ws.document_path(body.analysis_id))
+    return payload
+
+
+@router.get("/api/videomosaic/{analysis_id}/mea/trace", response_model=ElectrodeTracePayload)
+def get_mea_trace(analysis_id: str, electrode: str, run_id: str | None = None,
+                  t0: float = 0.0, t1: float | None = None) -> dict:
+    """One electrode's stored trace and its spikes, for the window `[t0, t1)`.
+
+    `electrode` is the Camea grid id the user clicked (`"col-row"`). Resolving it to a MaxWell
+    channel needs the chip's seating, which is why `orientation` rides on the response: while it is
+    unconfirmed the caller must present the identity as provisional.
+
+    ⚠️ `health` is not decoration. The published MaxWell decoder does not reconstruct this
+    project's files, and a railed window drawn without that caveat looks exactly like a real
+    silent electrode. See `core/mearecording.py`.
+    """
+    from camea.core import mearecording  # noqa: PLC0415
+
+    doc, ws = _video_project(analysis_id)
+    block = _mea_block(doc)
+    if not block.get("mea_dir"):
+        raise ApiError(409, "refused", "no MEA recording is attached to this project")
+
+    grid = dict(doc.get("electrodes") or {})
+    cols, rows = int(grid.get("cols") or 0), int(grid.get("rows") or 0)
+    if not (cols and rows):
+        raise ApiError(409, "refused",
+                       "this project has no electrode map yet — map the electrodes first")
+    try:
+        col, row = (int(v) for v in electrode.split("-", 1))
+    except ValueError as e:
+        raise ApiError(422, "refused",
+                       f"{electrode!r} is not a 'col-row' electrode id") from e
+    if not (1 <= col <= cols and 1 <= row <= rows):
+        raise ApiError(404, "not_found",
+                       f"electrode {electrode} is outside this {cols}x{rows} map")
+
+    paths = mearecording.find_recordings(block["mea_dir"])
+    if run_id:
+        paths = [p for p in paths if p.parent.name == run_id]
+    if not paths:
+        raise ApiError(404, "not_found", "that recording is no longer where the project left it")
+
+    orientation = _orientation_of(block)
+    with mearecording.MeaRecording(paths[0]) as r:
+        info = r.info()
+        stride = r.stride()
+        chip = orientation.chip_electrode(col, row, cols=cols, rows=rows, stride=stride)
+        channel = r.channel_of_electrode(chip)
+        base = {"electrode": electrode, "run_id": info.run_id, "chip_electrode": chip,
+                "orientation": orientation.as_dict(), "sampling_hz": info.sampling_hz}
+        if channel is None:
+            # The ordinary case: this pad was never routed. A fact, not a failure.
+            return {**base, "recorded": False, "t0_s": 0.0, "t1_s": 0.0}
+
+        end = info.duration_s if t1 is None else float(t1)
+        start = max(0.0, float(t0))
+        end = min(end, start + MAX_TRACE_SECONDS, info.duration_s)
+        if end <= start:
+            raise ApiError(422, "refused", "the requested window is empty")
+
+        spikes = r.spikes_of_channel(channel)
+        # Where the activity starts, so the caller can open ITS window somewhere worth looking
+        # rather than at t=0. Clamped at 0: a few spikes are logged during the pre-roll, i.e.
+        # before the first stored sample, and a negative window start is not a real window.
+        first = float(max(0.0, spikes["t_s"].min())) if spikes.size else None
+        window = spikes[(spikes["t_s"] >= start) & (spikes["t_s"] < end)]
+        out = {**base, "recorded": True, "channel": channel, "t0_s": start, "t1_s": end,
+               "n_spikes_total": int(spikes.size), "first_spike_s": first,
+               "duration_s": info.duration_s,
+               "spikes": [{"t_s": float(s["t_s"]), "amplitude_uv": float(s["amplitude_uv"])}
+                          for s in window]}
+        try:
+            out["trace_uv"] = [float(v) for v in r.trace(channel, start, end)]
+            out["health"] = r.trace_health(channel, start, end).as_dict()
+            # ⭐ The 2P lamp marks, for THIS window only. Bounded deliberately: over the whole
+            # recording this is a full pass of the raw stream (~16 s) and has no business inside a
+            # request. A shorter floor than the default too — a mark clipped by the window edge
+            # would vanish entirely at 0.5 s, and the point of drawing them is that they are there.
+            out["sync_episodes"] = [
+                e.as_dict() for e in r.sync_episodes(start, end, min_duration_s=0.02)
+            ]
+        except mearecording.RawUndecodable as e:
+            # The spikes above are still good — return them and say the waveform is unavailable.
+            out["trace_uv"] = []
+            out["health"] = None
+            out["decode_error"] = str(e)
+        return out
 
 
 __all__ = ["router", "ApiError", "set_store", "JOB_KIND", "REGION_JOB_KIND", "FEATURE"]

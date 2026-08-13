@@ -1621,6 +1621,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/videomosaic/{analysis_id}/mea": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea
+         * @description What electrical data this project has. Empty-but-fine when nothing is attached yet.
+         */
+        get: operations["get_mea_api_videomosaic__analysis_id__mea_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/mea/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Mea Attach
+         * @description Find the recordings that belong to a project — and, on `confirm`, remember them.
+         *
+         *     ⭐ Two-step ON PURPOSE. Without `confirm` this only *reports* what it found, so the user sees
+         *     the actual paths before anything is written. Attaching the wrong plate would pair one culture's
+         *     voltages with another culture's neurons — silently, and in a dataset meant to be ground truth.
+         */
+        post: operations["post_mea_attach_api_videomosaic_mea_attach_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/{analysis_id}/mea/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea Trace
+         * @description One electrode's stored trace and its spikes, for the window `[t0, t1)`.
+         *
+         *     `electrode` is the Camea grid id the user clicked (`"col-row"`). Resolving it to a MaxWell
+         *     channel needs the chip's seating, which is why `orientation` rides on the response: while it is
+         *     unconfirmed the caller must present the identity as provisional.
+         *
+         *     ⚠️ `health` is not decoration. The published MaxWell decoder does not reconstruct this
+         *     project's files, and a railed window drawn without that caveat looks exactly like a real
+         *     silent electrode. See `core/mearecording.py`.
+         */
+        get: operations["get_mea_trace_api_videomosaic__analysis_id__mea_trace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2596,6 +2668,80 @@ export interface components {
             doc?: components["schemas"]["Document"] | null;
         };
         /**
+         * ElectrodeTracePayload
+         * @description Everything the panel needs for one clicked electrode.
+         */
+        ElectrodeTracePayload: {
+            /**
+             * Electrode
+             * @description The Camea grid id that was clicked, e.g. "42-117".
+             */
+            electrode: string;
+            /**
+             * Recorded
+             * @description False when this pad was never routed — the ordinary case. Render as a fact; there is no trace to draw.
+             */
+            recorded: boolean;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Channel
+             * @description The MaxWell channel carrying it.
+             */
+            channel?: number | null;
+            /**
+             * Chip Electrode
+             * @description MaxWell's own electrode id.
+             */
+            chip_electrode?: number | null;
+            /**
+             * T0 S
+             * @default 0
+             */
+            t0_s: number;
+            /**
+             * T1 S
+             * @default 0
+             */
+            t1_s: number;
+            /**
+             * Sampling Hz
+             * @default 0
+             */
+            sampling_hz: number;
+            /**
+             * Trace Uv
+             * @description The stored waveform in µV. ⚠️ Judge it with `health` before believing it.
+             */
+            trace_uv?: number[];
+            health?: components["schemas"]["TraceHealthPayload"] | null;
+            /**
+             * Spikes
+             * @description Detected spikes inside the window. Trustworthy independently of the trace.
+             */
+            spikes?: components["schemas"]["MeaSpike"][];
+            /**
+             * N Spikes Total
+             * @description Across the whole recording, not the window.
+             * @default 0
+             */
+            n_spikes_total: number;
+            /**
+             * First Spike S
+             * @description When this electrode first fired. ⭐ The UI opens its window HERE rather than at t=0: a 300 s recording stepped one second at a time would take 200 clicks to reach the activity, and a dead opening window makes a working electrode look broken.
+             */
+            first_spike_s?: number | null;
+            /**
+             * Duration S
+             * @description The whole recording, so the UI can scrub.
+             * @default 0
+             */
+            duration_s: number;
+            /** Sync Episodes */
+            sync_episodes?: components["schemas"]["MeaSyncEpisode"][];
+            orientation?: components["schemas"]["MeaOrientation"];
+        };
+        /**
          * ExportRequest
          * @description `POST /api/mosaic/export` → 202 `JobRef`. Holds the `gpu` lease.
          *
@@ -3229,6 +3375,155 @@ export interface components {
             ];
             /** Refuse */
             refuse?: number[];
+        };
+        /** MeaAttachRequest */
+        MeaAttachRequest: {
+            /** Analysis Id */
+            analysis_id: string;
+            /**
+             * Mea Dir
+             * @description Where to look. When omitted the server searches beside the project's dataset folder and reports what it found — the user still confirms before it is saved.
+             */
+            mea_dir?: string | null;
+            /**
+             * Confirm
+             * @description False = discover and report only. True = save this attachment onto the project.
+             * @default false
+             */
+            confirm: boolean;
+            orientation?: components["schemas"]["MeaOrientation"] | null;
+        };
+        /**
+         * MeaAttachment
+         * @description What electrical data a project has, and whether its trace can be believed.
+         */
+        MeaAttachment: {
+            /** Attached */
+            attached: boolean;
+            /**
+             * Mea Dir
+             * @description The folder the recordings were found in. ⛔ Read-only, outside the project, never written to.
+             */
+            mea_dir?: string | null;
+            /** Recordings */
+            recordings?: components["schemas"]["MeaRecordingSummary"][];
+            /**
+             * Stride
+             * @description The array's long-axis length, DERIVED from the recording's own numbering and verified against every routed electrode — never a datasheet number.
+             */
+            stride?: number | null;
+            /**
+             * Pitch Um
+             * @description Also derived from the numbering, not from the routed spacing (sparse routing would double it).
+             */
+            pitch_um?: number | null;
+            orientation?: components["schemas"]["MeaOrientation"];
+            /**
+             * Decoder Present
+             * @description A MaxWell decode plug-in is on this machine. Says NOTHING about whether it decodes correctly — only a trace's `health` can say that.
+             * @default false
+             */
+            decoder_present: boolean;
+        };
+        /**
+         * MeaOrientation
+         * @description How the chip's own axes sit in the mosaic — the half no file records (see header).
+         */
+        MeaOrientation: {
+            /**
+             * Flip X
+             * @default false
+             */
+            flip_x: boolean;
+            /**
+             * Flip Y
+             * @default false
+             */
+            flip_y: boolean;
+            /**
+             * Confirmed
+             * @description False until something ESTABLISHED this seating. While false the UI must mark electrode identity provisional.
+             * @default false
+             */
+            confirmed: boolean;
+            /**
+             * Source
+             * @description How it was established, for provenance.
+             * @default
+             */
+            source: string;
+        };
+        /**
+         * MeaRecordingSummary
+         * @description One `data.raw.h5` found for a project. Header facts only — no raw decode needed.
+         */
+        MeaRecordingSummary: {
+            /**
+             * Run Id
+             * @description The acquisition run, e.g. "000690".
+             */
+            run_id: string;
+            /**
+             * Assay
+             * @description The assay folder that holds it, e.g. "Network".
+             */
+            assay: string;
+            /**
+             * Label
+             * @description What a human calls it: "Network/000690".
+             */
+            label: string;
+            /** Path */
+            path: string;
+            /**
+             * N Channels
+             * @description Electrodes actually routed and recorded — NOT the chip's electrode count. The rest of the array has no trace at all.
+             */
+            n_channels: number;
+            /** N Samples */
+            n_samples: number;
+            /** Sampling Hz */
+            sampling_hz: number;
+            /** Duration S */
+            duration_s: number;
+            /**
+             * Lsb Uv
+             * @description Microvolts per stored count.
+             */
+            lsb_uv: number;
+            /** Gain */
+            gain: number;
+            /** Hpf Hz */
+            hpf_hz: number;
+            /**
+             * N Spikes
+             * @description Spikes MaxWell's on-chip detector wrote into the file. Needs no proprietary decoder, so this number is always trustworthy.
+             */
+            n_spikes: number;
+        };
+        /** MeaSpike */
+        MeaSpike: {
+            /** T S */
+            t_s: number;
+            /** Amplitude Uv */
+            amplitude_uv: number;
+        };
+        /**
+         * MeaSyncEpisode
+         * @description A stretch where hundreds of channels left the rail together — a 2P lamp artefact.
+         *
+         *     ⭐ Deliberate, not noise: the experimenters switched the lamp to stamp the MEA record with
+         *     events also visible optically, so the two clocks can be aligned. Render them, never remove them.
+         */
+        MeaSyncEpisode: {
+            /** Start S */
+            start_s: number;
+            /** End S */
+            end_s: number;
+            /** Duration S */
+            duration_s: number;
+            /** Peak Channels */
+            peak_channels: number;
         };
         /**
          * MigratedProject
@@ -4674,6 +4969,28 @@ export interface components {
              * @description true = recompute and discard lo/hi.
              */
             auto?: boolean | null;
+        };
+        /**
+         * TraceHealthPayload
+         * @description How much of a returned window is one repeated value — the honesty check on a waveform.
+         */
+        TraceHealthPayload: {
+            /** N Samples */
+            n_samples: number;
+            /** Fill Value */
+            fill_value: number;
+            /**
+             * Fill Fraction
+             * @description Share of samples equal to the commonest value. A live electrode carries thermal noise, so a healthy window sits low; near 1.0 means the decoder did not reconstruct the stream.
+             */
+            fill_fraction: number;
+            /** Distinct Values */
+            distinct_values: number;
+            /**
+             * Flat
+             * @description ⛔ True = NOT a usable waveform. The UI must say so rather than draw a convincing flat line.
+             */
+            flat: boolean;
         };
         /**
          * TrialMeta
@@ -7081,6 +7398,106 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RegionsPayload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mea_api_videomosaic__analysis_id__mea_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaAttachment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_mea_attach_api_videomosaic_mea_attach_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MeaAttachRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaAttachment"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mea_trace_api_videomosaic__analysis_id__mea_trace_get: {
+        parameters: {
+            query: {
+                electrode: string;
+                run_id?: string | null;
+                t0?: number;
+                t1?: number | null;
+            };
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElectrodeTracePayload"];
                 };
             };
             /** @description Validation Error */

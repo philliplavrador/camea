@@ -30,11 +30,14 @@ import {
   useJob,
   listJobs,
   isTerminalState,
+  getMea,
+  attachMea,
 } from '../../api';
 import type {
   AnalysisSummary,
   ArrayCoverage,
   ElectrodeMapPayload,
+  MeaAttachment,
   VideoMosaicDocument,
 } from '../../api';
 import { Button, ButtonLink, Help, Panel, LiveWarning } from '../../design';
@@ -42,6 +45,7 @@ import { OutputsDrawer } from '../outputs/OutputsDrawer';
 import { CoverageChoice } from '../electrodes/CoverageChoice';
 import { useCoverageHelp } from '../electrodes/device';
 import { ElectrodePanel, type ElectrodeSelection } from '../electrodes/ElectrodePanel';
+import { MeaTracePanel } from '../electrodes/MeaTracePanel';
 import { buildElectrodeIndex, electrodeAt, lookupElectrode } from '../electrodes/lookup';
 import { fmtDuration, fmtFps } from './format';
 import { PipelineNav, PIPELINE_STEPS, type PipelineStepId } from './PipelineNav';
@@ -122,6 +126,13 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
   // The device's own numbers, SERVED (never retyped here — see features/electrodes/device.ts). Null
   // while in flight or if the fetch failed, and the help simply names no numbers then.
   const coverageHelp = useCoverageHelp();
+  // ── the electrical half: which MaxWell recordings this project is paired with ───────────────
+  // ⭐ Attachment is PROPOSED and confirmed, never assumed (see api/mea.ts). We only read here;
+  // the panel below offers the confirm, because attaching the wrong plate would pair one culture's
+  // voltages with another culture's neurons.
+  const [mea, setMea] = useState<MeaAttachment | null>(null);
+  const [meaBusy, setMeaBusy] = useState(false);
+  const [meaError, setMeaError] = useState<string | null>(null);
   const eIndex = useMemo(() => (emap ? buildElectrodeIndex(emap) : null), [emap]);
   const emapRef = useRef(emap);
   emapRef.current = emap;
@@ -299,6 +310,40 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
     }
     setMapJobId(null); // done or cancelled
   }, [mapJobId, mapJob.isTerminal, mapJob.state, mapJob.job, mapJob.error, analysisId, fetchEmap]);
+
+  // What electrical data this project already has. Read-only: `attached: false` is a normal
+  // first-visit state, and attaching is an explicit act the user takes in the panel below.
+  useEffect(() => {
+    let live = true;
+    setMea(null);
+    setMeaError(null);
+    getMea(analysisId).then(
+      (m) => {
+        if (live) setMea(m);
+      },
+      () => {
+        /* a project with no MEA block is not an error — the panel offers to look. */
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [analysisId]);
+
+  const findRecordings = useCallback(async (): Promise<void> => {
+    setMeaBusy(true);
+    setMeaError(null);
+    try {
+      // Discover, then save in one gesture — the paths land in the panel where he can read them,
+      // and re-running it is harmless. What is NOT assumed is the chip's seating: `confirmed`
+      // stays false, so every electrode identity stays marked provisional until it is settled.
+      setMea(await attachMea(analysisId, { confirm: true }));
+    } catch (e: unknown) {
+      setMeaError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMeaBusy(false);
+    }
+  }, [analysisId]);
 
   // Arrow keys step the selection one grid cell; Esc clears it. Only while an electrode is
   // selected — the keys otherwise belong to the page (there is no other keyboard on this screen).
@@ -683,6 +728,40 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
                         Re-run
                       </Button>
                     }
+                  />
+                )}
+
+                {/* ⭐ THE ELECTRICAL HALF. Only offered once the electrodes are mapped: without a
+                    grid there is no "which electrode did I click", and a trace with no identity is
+                    not part of the pairing this app exists to build. */}
+                {emap && mea && !mea.attached && (
+                  <Panel
+                    title="Voltage traces"
+                    help={
+                      'Finds the MaxWell recording that goes with this project, so clicking an ' +
+                      'electrode shows what it recorded. Camea looks beside the folder this ' +
+                      "project's video came from and shows you what it found — nothing is read " +
+                      'until you look at the paths.'
+                    }
+                  >
+                    {meaError && <LiveWarning variant="loud">{meaError}</LiveWarning>}
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      disabled={meaBusy}
+                      onClick={() => void findRecordings()}
+                      data-testid="vm-find-mea"
+                    >
+                      {meaBusy ? 'Looking…' : 'Find the MEA recording'}
+                    </Button>
+                  </Panel>
+                )}
+
+                {emap && mea?.attached && (
+                  <MeaTracePanel
+                    analysisId={analysisId}
+                    electrode={sel?.hit.electrode ?? null}
+                    recordings={mea.recordings ?? []}
                   />
                 )}
 
