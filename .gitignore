@@ -50,8 +50,30 @@ test-results/
 # (the re-include above would otherwise resurrect pycache under fixtures)
 /tests/fixtures/**/__pycache__/
 
+# --- the workflow (imported from Labstock, 2026-08-13) ----------------------
+# workflow/ IS TRACKED and it ships. Plans and issues travel with the repo so that any
+# machine and any session sees the same queue — that is the whole reason they are files in
+# directories rather than a running TODO.md. See workflow/README.md.
+# Two things inside it are machine state rather than record:
+/workflow/.locks/
+/workflow/.previews.json
+# scratch space for a /plan-all sweep's intermediate files
+/.scratch/
+# /preview's worktrees live OUTSIDE the repo (../.camea-previews/) so nothing is needed here.
+
 # --- editor / OS ------------------------------------------------------------
 .vscode/
-.claude/
 Thumbs.db
 .DS_Store
+
+# --- Claude's configuration --------------------------------------------------
+# `.claude/` used to be ignored wholesale. It is now TRACKED, because the workflow imported
+# on 2026-08-13 lives half in `workflow/` and half here — the slash commands, the review
+# subagents and the gate hooks are as much a part of it as the plan queue, and a system
+# split across the ignore line is one that arrives half-missing in a fresh clone.
+# Everything machine-local or secret is excluded by name below.
+.claude/settings.local.json
+.claude/*.local.json
+.claude/worktrees/
+.claude/projects/
+.claude/archive/

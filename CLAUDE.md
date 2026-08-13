@@ -29,6 +29,12 @@ question you'd otherwise ask in the message body — design forks, clarification
 you want". Batch them (the tool takes up to 4 at a time) and keep firing follow-up calls rather than
 dumping a wall of prose questions. Give real options with real trade-offs in the `description`; lead
 with your recommendation and mark it `(Recommended)`.
+**Keep the jargon out of the question itself** — he is a biologist with little maths, and
+*serpentine*, *homography*, *phase correlation*, *idempotent*, *anchor* and *lease* each cost a round
+trip. The technical reasoning goes in the prose above, where reading it is optional. If he asks what a
+word means, define it and **re-ask** — don't answer and move on as though it were settled.
+The long form, with the words that have actually tripped him up, is in
+[workflow/README.md § Asking the author a question](workflow/README.md#asking-the-author-a-question).
 Prose is still right for a *statement* he needs to read (a caveat, a correction, a result).
 
 ## ✂️ ANSWER CONCISELY. The user asks for detail if he wants it.
@@ -88,13 +94,53 @@ src/camea/       the app (one installable package)
 web/             the frontend (TS/React/Vite). Feature UIs under web/src/features/.
 tests/           unit · api · slow (the guard) · fixtures/ (a committed ~5.6 MB synthetic dataset)
 docs/            BEHAVIOUR.md (the ~44 rulings) · SPLIT.md · ENGINE_MOVE.md · API.md · FRONTEND.md
+workflow/        ⭐ how work gets from an idea to a commit: plans · issues · hunts · said. TRACKED.
+scripts/         the small node tools the workflow runs (claim-number, check-links, ship, …). TRACKED.
+.claude/         slash commands · review subagents · gate hooks. TRACKED (settings.local.json is not).
 archive/         finished research + the previous app (app-v1). GITIGNORED, kept for reference.
 utils/           Claude's infrastructure (knowledge base, vendored refs, rclone). GITIGNORED.
 data/            the ~35 GB read-only rclone mirror. GITIGNORED. NEVER WRITE HERE.
 ```
-Keep the repo root clean. Claude's notes/plans/scratch go under `utils/`, never at the root.
+Keep the repo root clean. Claude's **notes and scratch** go under `utils/`, never at the root —
+but the **workflow** (`workflow/`, `scripts/`, `.claude/`) is tracked and public on purpose: a plan
+queue that doesn't survive a clone isn't a queue. See the section below.
 The old research tree (`analysis/`) and the old vanilla-JS app (`app/`) now live under `archive/` —
 they are reference, not live code. Don't edit them; the live engine is `src/camea/engine/`.
+
+## ⭐ `workflow/` — plans, issues, hunts. Imported 2026-08-13.
+**Read [workflow/README.md](workflow/README.md) before filing anything.** The system came over from
+the Labstock repo at the author's request and is adapted to Camea's stack and rulings.
+
+**A feature is a plan; a defect is an issue; both are files in directories, and the directory IS the
+state.** `/plan` interviews him and queues one; `/build` takes it, builds it in this checkout on
+`master`, and commits as it goes; `/resolve` triages the issue pile; `/bug-hunter` sweeps unattended
+overnight and files what a panel of skeptics could not refute. `/start-work` → `/preview` →
+`/commit-work` → `/show-commits` is the **pile** flow for work he asks for by name.
+
+**Any session may file an issue without asking** — that is what the directory is for. Claim the
+number with the script, never by counting the directory:
+```bash
+node scripts/claim-number.js issue <high|medium|low> <slug>    # prints the path it created
+node scripts/claim-number.js plan <slug>
+```
+Then say in one line that you filed it. Don't file what you can fix in the same turn, and don't file
+a feature request — that's a plan.
+
+**Tiers are judged against the two things this repo protects**: the science, and the hours of
+hand-verification sitting in a saved project. Camea has no users, so severity is never "somebody's
+morning". [Four things are always `high`](workflow/issues/README.md#the-four-that-are-always-high):
+dataset knowledge in the app · a write to `data/` · a change to the guarded engine · a write outside
+`<project>/outputs/`.
+
+**Branches:** no long-lived fork off `master` to build one feature and merge back, no shared review
+branch, and **no worktree a session invents for itself**. The two that exist are created and removed
+by their own tooling — `/bug-hunter`'s read-only snapshot and `/preview`'s working copy.
+
+**The gates run themselves.** A Stop hook runs the checks your changes make relevant and blocks the
+turn on a red one. The Python suites (3m26s) are too expensive per-turn, so they are reported as
+**owed** rather than run — `/build` and `scripts/ship.js` run them. Nothing ever runs the 312/312
+guard automatically; `scripts/check-engine.js` does the cheap half instead (53 ms) by proving the
+four guarded files are still byte-identical to `archive/analysis/mosaic/`.
 
 ## The rulings live in `docs/BEHAVIOUR.md`.
 The ~44 decisions the user paid days to discover (Esc must not kill the sweep; the solver-fallback
