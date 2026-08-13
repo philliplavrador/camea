@@ -1,0 +1,100 @@
+{
+  "_comment": "Written by /bug-hunter. coverage.json is the index of where to hunt next; workflow/hunts/checked/ is the full record of what was examined. lastHunted null = never hunted, and never goes first. Imported from the Labstock workflow on 2026-08-13 with Camea's own areas; nothing has been hunted yet.",
+  "_runEntryShape": {
+    "date": "YYYY-MM-DD",
+    "duration": "8h",
+    "intensity": "heavy",
+    "snapshot": "<sha the hunt worktree was detached at>",
+    "rounds": 0,
+    "filed": { "bug": 0, "ux": 0 },
+    "reconsider": 0,
+    "note": "one paragraph: what each round found, and what the next run should pick up"
+  },
+  "_lastResult": "one of found | dry | skipped — a skipped area must never look like a clean one.",
+  "runs": [],
+  "areas": {
+    "dataset-knowledge": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null,
+      "note": "HARD RULE 3, and the one the author has paid real cost to enforce. src/camea/ and web/src/ must know nothing about any particular dataset. Hunt this first."
+    },
+    "storage": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null,
+      "note": "BEHAVIOUR R44. Everything a feature builds lands in <project>/outputs/; the user is never asked where anything goes. A finding here is almost always high."
+    },
+    "engine": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null,
+      "note": "READ-ONLY. src/camea/engine/{t27,t33,quality,render}.py is byte-identical to archive/analysis/mosaic/ and under the 312/312 guard. The hunter reads it and its callers; it never edits, and it never runs the guard."
+    },
+    "core": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null
+    },
+    "api": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null
+    },
+    "features": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null
+    },
+    "frontend": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null
+    },
+    "behaviour": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null,
+      "note": "docs/BEHAVIOUR.md's ~44 rulings against the code and against web/tests/e2e/. A ruling with no test is a real finding."
+    },
+    "docs-vs-code": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null
+    },
+    "knowledge-base": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null,
+      "note": "utils/knowledge/ is gitignored, so findings here never travel with the repo — file them anyway; the pile is local and so is the fix."
+    },
+    "claude-md": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null
+    },
+    "ui": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null,
+      "note": "Needs the app running. See bug-hunter.md § the browser — the hunt worktree has no node_modules and no dataset."
+    },
+    "ux": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null,
+      "note": "Needs the app running, and every finding is said-checked against workflow/said/ledger.md before it files."
+    },
+    "edge-cases": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null
+    },
+    "workflow": {
+      "lastHunted": null,
+      "anglesUsed": [],
+      "lastResult": null,
+      "note": "workflow/ and .claude/ — imported 2026-08-13 and never yet swept. A first pass over it is cheap and will find broken links."
+    }
+  }
+}
