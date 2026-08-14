@@ -511,6 +511,42 @@ def _open(analysis_id: str, recording_id: str):
     return rec, entry
 
 
+def _chip_rows(stride: int, mapping) -> tuple[int, str]:
+    """How tall the whole chip is, and **how we know** -> `(rows, "device" | "recorded")`.
+
+    ⭐ **HIS ANSWER, 2026-08-14: draw the WHOLE chip, with the recorded pads in their real place on
+    it.** Which needs the chip's full size — and only half of that is in the file.
+
+    * The **width** is `stride`, which the file's own numbering states and `derive_geometry`
+      verifies against every routed pad. No question there.
+    * The **height** is not in the file at all. A MaxOne routes ~1k channels of tens of thousands,
+      so a recording that routed a corner block evidences *only that corner* — measured on this
+      project's mirror, one recording routes 63x57 at the origin while another routes 216x111. Take
+      the largest routed row and you would draw that first recording's chip less than half its true
+      height, and the whole point of his answer (*"which part of the culture was recorded"*) is lost.
+
+    So the one device fact Camea holds is **consulted**: `core.electrodegrid.MAXWELL` is R45.8's
+    single place for a device number (*"the standard MaxOne/MaxTwo sensor area is 26,400 electrodes
+    = 220 x 120, with 17.5 µm pitch"*), and its `axes` are deliberately **orientation-free**. So if
+    the stride this file derived IS one of those axes, the chip's other axis is the other one.
+
+    ⛔ **CONSULTED, NEVER ASSUMED — and that is the whole safety argument.** A file whose derived
+    stride does not match the device is drawn as **what it actually shows**, and says so through
+    `chip_extent`. Nothing is imposed on a file that did not ask for it, and no device number is
+    written down here: it is read from the one place that holds it. ⛔ It is also not dataset
+    knowledge (I1) — a device's physical shape is not a fact about anybody's culture, and the app
+    still knows nothing about a plate, a run, or how active a chip should be.
+    """
+    from camea.core import electrodegrid as core_electrodegrid  # noqa: PLC0415
+
+    for axis in core_electrodegrid.MAXWELL.axes:
+        if int(axis) == int(stride):
+            other = [a for a in core_electrodegrid.MAXWELL.axes if int(a) != int(stride)]
+            return int(other[0] if other else axis), "device"
+    # No device matches, so claim only what this file evidences — never more.
+    return (int(mapping["ey"].max()) + 1 if mapping.size else 0), "recorded"
+
+
 @router.get("/api/mea/{analysis_id}/recordings/{recording_id}/layout",
             response_model=MeaChipLayout)
 def get_mea_layout(analysis_id: str, recording_id: str) -> dict:
@@ -530,6 +566,8 @@ def get_mea_layout(analysis_id: str, recording_id: str) -> dict:
     try:
         info = rec.info()
         m = rec.mapping()
+        stride = rec.stride()
+        rows, extent = _chip_rows(stride, m)
         return {
             "analysis_id": analysis_id,
             "recording_id": recording_id,
@@ -538,8 +576,11 @@ def get_mea_layout(analysis_id: str, recording_id: str) -> dict:
             "assay": str(entry.get("assay") or info.assay),
             "pads": [{"channel": int(p["channel"]), "electrode": int(p["electrode"]),
                       "x_um": float(p["x_um"]), "y_um": float(p["y_um"])} for p in m],
-            "stride": rec.stride(),
+            "stride": stride,
             "pitch_um": rec.pitch_um(),
+            "chip_cols": stride,
+            "chip_rows": rows,
+            "chip_extent": extent,
             "n_channels": info.n_channels,
             "n_samples": info.n_samples,
             "duration_s": info.duration_s,

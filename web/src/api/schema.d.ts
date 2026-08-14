@@ -3934,6 +3934,25 @@ export interface components {
              */
             pitch_um: number;
             /**
+             * Chip Cols
+             * @description The chip's full width in pads — always `stride`, which the file states and `derive_geometry` verifies against every routed pad.
+             * @default 0
+             */
+            chip_cols: number;
+            /**
+             * Chip Rows
+             * @description ⭐ The chip's full height in pads, so the map can draw **the whole chip** with the recorded pads in their real place on it (his answer, 2026-08-14). ⚠️ Unlike the width, this is NOT in the file: a recording that routed a corner evidences only that corner. See `chip_extent` for which of the two answers this is.
+             * @default 0
+             */
+            chip_rows: number;
+            /**
+             * Chip Extent
+             * @description ⭐ **HOW `chip_rows` WAS ARRIVED AT, said out loud rather than assumed.** `device` = the file's own derived `stride` matches an axis of the one device Camea knows (`core.electrodegrid.MAXWELL`, R45.8's single place for a device number), so the other axis is the height. `recorded` = it does not, so the height is only as much as this file evidences and the outline is the recorded extent rather than the true chip. ⛔ The device is CONSULTED, never assumed: a file whose stride disagrees is drawn as what it shows.
+             * @default recorded
+             * @enum {string}
+             */
+            chip_extent: "device" | "recorded";
+            /**
              * N Channels
              * @default 0
              */

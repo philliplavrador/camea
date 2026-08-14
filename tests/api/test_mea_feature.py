@@ -766,3 +766,49 @@ def test_these_routes_refuse_a_project_of_another_task(client, survey_video):
     r = client.get(f"/api/mea/{aid}/recordings/rec_x/layout")
     assert r.status_code == 409
     assert err(r)["code"] == "refused"
+
+
+def test_layout_reports_the_WHOLE_chip_so_the_map_can_place_the_recorded_block(client, session,
+                                                                              measynth):
+    """⭐ **HIS ANSWER, 2026-08-14: draw the whole chip, recorded pads in their real place on it.**
+
+    The width is `stride`, which the file states and `derive_geometry` verifies. The height is not
+    in the file, so it is either the one device Camea knows (when the derived stride matches one of
+    its orientation-free axes) or, failing that, only what this recording evidences — and
+    `chip_extent` says which. ⛔ This fixture's chip is 13 x 5, which is no device, so it must take
+    the honest fallback rather than being told it is a MaxWell."""
+    aid, rid = _opened(client, session)
+    lay = _layout(client, aid, rid)
+
+    assert lay["chip_cols"] == lay["stride"] == measynth.STRIDE == 13
+    assert lay["chip_extent"] == "recorded", "⛔ 13 is not a MaxWell axis — claim only what is shown"
+    assert lay["chip_rows"] == measynth.N_ROWS == 5
+
+    # ⭐ And the outline actually CONTAINS the pads — a box the dots fall outside of is worse than
+    # no box at all.
+    for pad in lay["pads"]:
+        assert 0 <= pad["x_um"] <= (lay["chip_cols"] - 1) * lay["pitch_um"]
+        assert 0 <= pad["y_um"] <= (lay["chip_rows"] - 1) * lay["pitch_um"]
+
+
+def test_the_chip_height_is_taken_from_the_device_only_when_the_file_agrees():
+    """⛔ **THE DEVICE IS CONSULTED, NEVER ASSUMED**, and this is the unit that pins it.
+
+    `core.electrodegrid.MAXWELL` is R45.8's single place for a device number and its axes are
+    orientation-free, so a file whose own derived stride IS one of them tells us the other one. A
+    file whose stride is anything else is drawn as what it shows — nothing is imposed on it."""
+    import numpy as np
+
+    from camea.core import electrodegrid as eg
+    from camea.features.mea import routes as mea_routes
+
+    long_axis, short_axis = max(eg.MAXWELL.axes), min(eg.MAXWELL.axes)
+    mapping = np.array([(0, 0)], dtype=[("ey", "<i8"), ("x", "<i8")])
+
+    # The file says it is that device, so the other axis is known.
+    assert mea_routes._chip_rows(long_axis, mapping) == (short_axis, "device")
+    assert mea_routes._chip_rows(short_axis, mapping) == (long_axis, "device")
+
+    # It says it is something else, so we claim only the rows it evidences.
+    mapping = np.array([(0, 0), (6, 0)], dtype=[("ey", "<i8"), ("x", "<i8")])
+    assert mea_routes._chip_rows(13, mapping) == (7, "recorded")
