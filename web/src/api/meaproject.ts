@@ -9,15 +9,77 @@
 // ⛔ THE SERVER OWNS THE DOCUMENT. Nothing here authors or mutates one.
 
 import { api, unwrap } from './client';
+import type { components } from './schema';
 import type { AnalysisSummary } from './types';
+
+export type MeaShelfEntry = components['schemas']['MeaShelfEntry'];
+export type MeaShelf = components['schemas']['MeaShelf'];
+export type MeaRecordingCandidate = components['schemas']['MeaRecordingCandidate'];
+export type MeaBrowseResult = components['schemas']['MeaBrowseResult'];
+/** `referenced` · `copying` · `stored` · `failed` — where the app is reading this recording FROM. */
+export type MeaCopyState = MeaShelfEntry['copy_state'];
 
 /**
  * Create an Analyze MEA project (`POST /api/mea/projects` → 201).
  *
- * ⭐ **A NAME, AND NOTHING ELSE.** No session, no probe, no folder — this is the only create in
- * Camea that asks the user for no path at all. The project is a shelf; recordings go on it from
- * inside, afterwards. A blank name is allowed and comes back as a placeholder.
+ * ⭐ **ONE CALL, WITH THE RECORDINGS ALREADY ON IT** (his instruction, 2026-08-14). The wizard's
+ * Files step hands its chosen paths straight to this, so there is never a moment where a project
+ * exists with nothing on it because a second call failed. If one of the paths is not a MaxLab
+ * recording the whole thing is refused, the message names the file, and **no project is created**.
+ *
+ * ⚠️ `paths` is optional and `[]` is the empty-shelf project — the one he is left with after
+ * removing his last recording. A blank name is allowed and comes back as a placeholder.
  */
-export async function createMeaProject(name: string): Promise<AnalysisSummary> {
-  return unwrap(await api.POST('/api/mea/projects', { body: { name } }));
+export async function createMeaProject(name: string, paths: string[] = [])
+  : Promise<AnalysisSummary> {
+  return unwrap(await api.POST('/api/mea/projects', { body: { name, paths } }));
+}
+
+/**
+ * Every recording under a folder (`GET /api/mea/browse`).
+ *
+ * ⭐ **THE ONE CALL WITH NO PROJECT IN IT**, and that is what lets the import component be mounted
+ * in the wizard at all — there is no project yet when he is looking at this list. ⛔ It reads and
+ * writes nothing.
+ */
+export async function browseRecordings(path: string): Promise<MeaBrowseResult> {
+  return unwrap(await api.GET('/api/mea/browse', { params: { query: { path } } }));
+}
+
+/** What this project holds, with live copy state (`GET /api/mea/{id}/recordings`). */
+export async function listRecordings(analysisId: string): Promise<MeaShelf> {
+  return unwrap(
+    await api.GET('/api/mea/{analysis_id}/recordings', {
+      params: { path: { analysis_id: analysisId } },
+    }),
+  );
+}
+
+/**
+ * Put several recordings on an existing project's shelf (`POST /api/mea/{id}/recordings` → 201).
+ *
+ * ⚠️ All or nothing: one path that is not a MaxLab recording and none of them are added, with the
+ * refusal naming it. Same rule as at creation, on purpose — one rule he can state to himself beats
+ * two that differ by which door he came through.
+ */
+export async function addRecordings(analysisId: string, paths: string[]): Promise<MeaShelf> {
+  return unwrap(
+    await api.POST('/api/mea/{analysis_id}/recordings', {
+      params: { path: { analysis_id: analysisId } },
+      body: { paths },
+    }),
+  );
+}
+
+/**
+ * Forget one recording (`DELETE /api/mea/{id}/recordings/{rid}`).
+ *
+ * ⛔ **Deletes CAMEA'S COPY ONLY.** The user's own file is never touched, whatever happens.
+ */
+export async function removeRecording(analysisId: string, recordingId: string): Promise<MeaShelf> {
+  return unwrap(
+    await api.DELETE('/api/mea/{analysis_id}/recordings/{recording_id}', {
+      params: { path: { analysis_id: analysisId, recording_id: recordingId } },
+    }),
+  );
 }

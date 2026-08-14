@@ -49,10 +49,45 @@ export function pickOpenFilePath(opts: { title?: string; filters?: string[] } = 
   return viaDialogOrPrompt(
     () =>
       api.POST('/api/dialog/open-file', {
-        body: { title: opts.title ?? 'Open a file', filters: opts.filters ?? [] },
+        body: {
+          title: opts.title ?? 'Open a file',
+          filters: opts.filters ?? [],
+          allow_multiple: false,
+        },
       }),
     opts.title ?? 'File to open (path):',
   );
+}
+
+/**
+ * Pick SEVERAL existing files in one gesture — *"opens file explorer, can import multiple at a
+ * time"* (his words, 2026-08-14).
+ *
+ *   `string[]` — what he chose (`[]` = he opened the dialog and cancelled)
+ *   `null`     — ⭐ **there is no file explorer in this mode**, which is the ordinary answer over
+ *                VSCode remote, where he actually works.
+ *
+ * ⚠️ **No `window.prompt` fallback, deliberately** — the one place in this file that departs from
+ * the R38 pattern above. A prompt carries one path, not a list, and asking him to type several
+ * separated by something is worse than the alternative: the caller
+ * (`features/mea/ImportRecordings`) already has a served tick-list on screen that works in every
+ * mode. `null` is what lets it say so in one line instead of appearing to do nothing.
+ */
+export async function pickOpenFilePaths(
+  opts: { title?: string; filters?: string[] } = {},
+): Promise<string[] | null> {
+  const res = await api.POST('/api/dialog/open-file', {
+    body: {
+      title: opts.title ?? 'Open files',
+      filters: opts.filters ?? [],
+      allow_multiple: true,
+    },
+  });
+  if (res.response.status === HEADLESS_STATUS) return null;
+  if (res.error !== undefined || res.data === undefined) {
+    throw new Error(`dialog failed (${res.response.status})`);
+  }
+  return res.data.paths ?? [];
 }
 
 /** Pick a save destination (e.g. `Save…`). Falls back to `window.prompt` headless (R38). */

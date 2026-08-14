@@ -798,7 +798,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Post Dialog Open File */
+        /**
+         * Post Dialog Open File
+         * @description ⭐ `allow_multiple` arrived 2026-08-14 (plan 002): *"opens file explorer, can import multiple
+         *     at a time"*. It was hard-coded `False` here, which is still the default, so nothing that already
+         *     called this route changes — and `path` still carries the first choice beside the new `paths`.
+         *
+         *     ⚠️ Reachable only with `--window`. He drives Camea over VSCode remote, where this is a 501 and
+         *     the served tick-list (`GET /api/mea/browse`) is the picker he actually meets.
+         */
         post: operations["post_dialog_open_file_api_dialog_open_file_post"];
         delete?: never;
         options?: never;
@@ -1731,15 +1739,108 @@ export interface paths {
         put?: never;
         /**
          * Post Mea Project
-         * @description ⭐ **THE SERVER CREATES THE DOCUMENT** — `POST /api/projects` for a project that starts
-         *     empty. A name in, a project out, and there is nothing else to ask: no session, no probe, no
-         *     folder. The document is an empty shelf (`features/mea/document.py`).
+         * @description ⭐ **THE SERVER CREATES THE DOCUMENT** — `POST /api/projects` for the standalone MEA task.
+         *     A name and the recordings the wizard picked go in; a project with those already on its shelf
+         *     comes out. No session, no probe, no folder.
+         *
+         *     ⭐ **EVERY PATH IS READ BEFORE THE PROJECT EXISTS.** That ordering is the whole reason this is
+         *     one call: if one of them is not a MaxLab recording, the refusal names it and **no project is
+         *     created**, so there is nothing for him to clean up before trying again.
          *
          *     The project carries `dataset_key=""` / `dataset=""` / `data_dir=""` — see the module
-         *     docstring for why an empty key beats a minted one, and what was read to decide it.
+         *     docstring for why an empty key beats a minted one, and what was read to decide it. ⛔ A
+         *     recording's `source_path` does **not** become `data_dir`: the shelf may hold several, from
+         *     anywhere, and none of them is "the project's dataset".
          */
         post: operations["post_mea_project_api_mea_projects_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mea/browse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea Browse
+         * @description ⭐ **THE ONE ROUTE WITH NO PROJECT.** Every `data.raw.h5` under `path`, with enough of each
+         *     file's own facts that he can tell which ones he means before he ticks them.
+         *
+         *     ⚠️ **It has no `analysis_id`, and must never be given one "for consistency"** — the wizard calls
+         *     it *before a project exists*. That is precisely what makes one import component mountable in two
+         *     places: it browses, it lists, it hands back the paths he ticked, and it creates nothing.
+         *
+         *     ⛔ It reads and never writes. ⭐ And it is the picker he will actually use: the native
+         *     multi-select dialog only exists with `--window`, and he drives Camea over VSCode remote where
+         *     that route is a 501.
+         */
+        get: operations["get_mea_browse_api_mea_browse_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mea/{analysis_id}/recordings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea Recordings
+         * @description Everything on this project's shelf, with **live** copy state.
+         *
+         *     Every number is read off the file on the way past — see `recordings.shelf_entry`. That is what
+         *     makes a recording whose original has moved say so, instead of showing a row of zeros.
+         */
+        get: operations["get_mea_recordings_api_mea__analysis_id__recordings_get"];
+        put?: never;
+        /**
+         * Post Mea Recordings
+         * @description Add several recordings at once — *"opens file explorer, can import multiple at a time"*.
+         *
+         *     Each one is read to confirm it is a MaxLab recording (⛔ refused **by name** if it is not, and
+         *     then none of them are added), recorded as `referenced`, and given a copy job. He can open any of
+         *     them the moment this returns; the copies land behind him.
+         *
+         *     ⭐ This is the same work `POST /api/mea/projects` does with its `paths`, through the same three
+         *     functions — so the wizard's Files step and the in-project button cannot drift apart.
+         */
+        post: operations["post_mea_recordings_api_mea__analysis_id__recordings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mea/{analysis_id}/recordings/{recording_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Mea Recording
+         * @description Forget a recording, and delete **Camea's copy** of it.
+         *
+         *     ⛔ **THE USER'S ORIGINAL IS NEVER TOUCHED**, and there is no confirm box, because there is
+         *     nothing of his to lose: the only bytes removed are a copy Camea made itself, inside the project
+         *     folder (his ruling, 2026-08-14). A copy still in flight is cancelled first.
+         */
+        delete: operations["delete_mea_recording_api_mea__analysis_id__recordings__recording_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1749,6 +1850,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AddMeaRecordingsRequest
+         * @description `POST /api/mea/{analysis_id}/recordings` — several at once, the way he asked for them.
+         *
+         *     ⭐ **ALL OR NOTHING, AND THE REFUSAL NAMES THE FILE.** If one path on the list does not read as
+         *     a MaxLab recording, none of them are added. The alternative — take the good ones and report the
+         *     rest — cannot be offered at *creation* (the response there is the project, with nowhere to put a
+         *     refusal), and one rule he can state to himself beats two that differ by which door he came
+         *     through.
+         */
+        AddMeaRecordingsRequest: {
+            /** Paths */
+            paths?: string[];
+        };
         /** AnalysisListResponse */
         AnalysisListResponse: {
             /** Analyses */
@@ -2233,6 +2348,11 @@ export interface components {
              * @default
              */
             name: string;
+            /**
+             * Paths
+             * @description ⭐ The recordings the wizard's Files step picked, if any. **Create-with-recordings is ONE call, not create-then-add**: a second call that failed would strand a project he can see on the home screen and cannot use. Omit it (or send `[]`) and this is exactly the empty-shelf create, which stays supported — that is the project whose recordings he has since removed.
+             */
+            paths?: string[];
         };
         /**
          * CreateVideoProjectRequest
@@ -2374,14 +2494,25 @@ export interface components {
             title: string;
             /** Filters */
             filters?: string[];
+            /**
+             * Allow Multiple
+             * @description ⭐ Several files in one gesture — what *'opens file explorer, can import multiple at a time'* means when there IS a desktop. Defaults False, which is what every existing caller wants and what this route did before. ⚠️ Only reachable with `--window`; over VSCode remote this route is a 501 and Camea's own served picker is the real door.
+             * @default false
+             */
+            allow_multiple: boolean;
         };
         /** DialogPathResponse */
         DialogPathResponse: {
             /**
              * Path
-             * @description null = the user cancelled.
+             * @description null = the user cancelled. With `allow_multiple` this is the FIRST of `paths`, so every existing caller keeps working unchanged.
              */
             path?: string | null;
+            /**
+             * Paths
+             * @description Everything he chose, in order. Empty = cancelled. A single-file dialog returns a list of one.
+             */
+            paths?: string[];
         };
         /** DialogSaveFileRequest */
         DialogSaveFileRequest: {
@@ -3150,7 +3281,7 @@ export interface components {
              * Result
              * @description null until state == 'done'. Discriminated on `kind`.
              */
-            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"] | components["schemas"]["OrientationTestResult"]) | null;
+            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"] | components["schemas"]["OrientationTestResult"] | components["schemas"]["MeaCopyResult"]) | null;
             /** @description Set iff state == 'failed'. */
             error?: components["schemas"]["JobError"] | null;
         };
@@ -3505,6 +3636,44 @@ export interface components {
             decoder_present: boolean;
         };
         /**
+         * MeaBrowseResult
+         * @description `GET /api/mea/browse?path=` — every recording under a folder. ⛔ Reads; never writes.
+         */
+        MeaBrowseResult: {
+            /** Path */
+            path: string;
+            /** Recordings */
+            recordings?: components["schemas"]["MeaRecordingCandidate"][];
+            /**
+             * Truncated
+             * @description The walk hit its ceiling. The UI says so rather than quietly showing a prefix of what is really down there.
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * MeaCopyResult
+         * @description `job.result` of a `mea_copy` job — one recording's copy has landed in the project.
+         */
+        MeaCopyResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "mea_copy";
+            /** Analysis Id */
+            analysis_id: string;
+            /** Recording Id */
+            recording_id: string;
+            /** Stored Path */
+            stored_path: string;
+            /**
+             * Bytes
+             * @default 0
+             */
+            bytes: number;
+        };
+        /**
          * MeaOrientation
          * @description How the chip's own axes sit in the mosaic — the half no file records (see header).
          */
@@ -3543,6 +3712,52 @@ export interface components {
             region_id?: string | null;
             /** Run Id */
             run_id?: string | null;
+        };
+        /**
+         * MeaRecordingCandidate
+         * @description One row of the import tick-list — a `data.raw.h5` found under the folder he pointed at.
+         */
+        MeaRecordingCandidate: {
+            /** Path */
+            path: string;
+            /**
+             * Label
+             * @description What a human calls it — `Network/000690`.
+             * @default
+             */
+            label: string;
+            /**
+             * Run Id
+             * @default
+             */
+            run_id: string;
+            /**
+             * Assay
+             * @default
+             */
+            assay: string;
+            /**
+             * Bytes
+             * @default 0
+             */
+            bytes: number;
+            /** Duration S */
+            duration_s?: number | null;
+            /** N Channels */
+            n_channels?: number | null;
+            /** N Spikes */
+            n_spikes?: number | null;
+            /**
+             * Readable
+             * @description ⭐ False = this file is named `data.raw.h5` but does not read as a MaxLab recording. It is still LISTED, greyed and un-tickable, with `problem` saying why — a file that silently vanished from the list would look like a folder Camea could not see into.
+             * @default true
+             */
+            readable: boolean;
+            /**
+             * Problem
+             * @default
+             */
+            problem: string;
         };
         /**
          * MeaRecordingSummary
@@ -3591,6 +3806,95 @@ export interface components {
              * @description Spikes MaxWell's on-chip detector wrote into the file. Needs no proprietary decoder, so this number is always trustworthy.
              */
             n_spikes: number;
+        };
+        /**
+         * MeaShelf
+         * @description `GET|POST|DELETE /api/mea/{analysis_id}/recordings` — everything on one project's shelf.
+         */
+        MeaShelf: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Recordings */
+            recordings?: components["schemas"]["MeaShelfEntry"][];
+        };
+        /**
+         * MeaShelfEntry
+         * @description One recording a project holds — the row on the shelf.
+         */
+        MeaShelfEntry: {
+            /**
+             * Id
+             * @description Minted, stable, and never the path: he may add the same file twice, and a path is not an identity.
+             */
+            id: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Run Id
+             * @default
+             */
+            run_id: string;
+            /**
+             * Assay
+             * @default
+             */
+            assay: string;
+            /**
+             * Source Path
+             * @description Where it came from. ⛔ A path, not dataset knowledge — same standing as the manifest's `data_dir`. Read-only, always.
+             */
+            source_path: string;
+            /**
+             * Stored Path
+             * @description The project's own copy, project-relative (`recordings/<id>/data.raw.h5`). Blank until the copy lands.
+             * @default
+             */
+            stored_path: string;
+            /**
+             * Copy State
+             * @description ⭐ Where the app is reading this recording from RIGHT NOW. His answer,2026-08-14: *'reference it until the copy is finished'* — usable the instant it is added, read from where it sits, with a copy pulled in behind it. ⚠️ **Derived from the disk and the job registry, not just from the document**, so a copy interrupted by a restart reports as `referenced` (which it is) instead of as a `copying` that will never finish.
+             * @enum {string}
+             */
+            copy_state: "referenced" | "copying" | "stored" | "failed";
+            /**
+             * Copy Pct
+             * @description 0–100 while `copying`.
+             * @default 0
+             */
+            copy_pct: number;
+            /**
+             * Copy Error
+             * @description Why the copy failed. The recording still works — it is read from the original — and this says what did not.
+             * @default
+             */
+            copy_error: string;
+            /**
+             * Added
+             * @default
+             */
+            added: string;
+            /**
+             * Bytes
+             * @default 0
+             */
+            bytes: number;
+            /**
+             * Missing
+             * @description ⛔ **The original is no longer where he left it, and there is no copy yet.** Said on the shelf as a live warning; the row refuses to open rather than showing empty numbers. Every field below is null in this state.
+             * @default false
+             */
+            missing: boolean;
+            /** Duration S */
+            duration_s?: number | null;
+            /** N Channels */
+            n_channels?: number | null;
+            /** N Samples */
+            n_samples?: number | null;
+            /** N Spikes */
+            n_spikes?: number | null;
         };
         /** MeaSpike */
         MeaSpike: {
@@ -7753,6 +8057,136 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalysisSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mea_browse_api_mea_browse_get: {
+        parameters: {
+            query: {
+                /** @description The folder to look under. */
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaBrowseResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mea_recordings_api_mea__analysis_id__recordings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaShelf"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_mea_recordings_api_mea__analysis_id__recordings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddMeaRecordingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaShelf"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_mea_recording_api_mea__analysis_id__recordings__recording_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaShelf"];
                 };
             };
             /** @description Validation Error */

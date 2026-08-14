@@ -1707,6 +1707,7 @@
           "core"
         ],
         "summary": "Post Dialog Open File",
+        "description": "\u2b50 `allow_multiple` arrived 2026-08-14 (plan 002): *\"opens file explorer, can import multiple\nat a time\"*. It was hard-coded `False` here, which is still the default, so nothing that already\ncalled this route changes \u2014 and `path` still carries the first choice beside the new `paths`.\n\n\u26a0\ufe0f Reachable only with `--window`. He drives Camea over VSCode remote, where this is a 501 and\nthe served tick-list (`GET /api/mea/browse`) is the picker he actually meets.",
         "operationId": "post_dialog_open_file_api_dialog_open_file_post",
         "requestBody": {
           "content": {
@@ -3171,7 +3172,7 @@
     "/api/mea/projects": {
       "post": {
         "summary": "Post Mea Project",
-        "description": "\u2b50 **THE SERVER CREATES THE DOCUMENT** \u2014 `POST /api/projects` for a project that starts\nempty. A name in, a project out, and there is nothing else to ask: no session, no probe, no\nfolder. The document is an empty shelf (`features/mea/document.py`).\n\nThe project carries `dataset_key=\"\"` / `dataset=\"\"` / `data_dir=\"\"` \u2014 see the module\ndocstring for why an empty key beats a minted one, and what was read to decide it.",
+        "description": "\u2b50 **THE SERVER CREATES THE DOCUMENT** \u2014 `POST /api/projects` for the standalone MEA task.\nA name and the recordings the wizard picked go in; a project with those already on its shelf\ncomes out. No session, no probe, no folder.\n\n\u2b50 **EVERY PATH IS READ BEFORE THE PROJECT EXISTS.** That ordering is the whole reason this is\none call: if one of them is not a MaxLab recording, the refusal names it and **no project is\ncreated**, so there is nothing for him to clean up before trying again.\n\nThe project carries `dataset_key=\"\"` / `dataset=\"\"` / `data_dir=\"\"` \u2014 see the module\ndocstring for why an empty key beats a minted one, and what was read to decide it. \u26d4 A\nrecording's `source_path` does **not** become `data_dir`: the shelf may hold several, from\nanywhere, and none of them is \"the project's dataset\".",
         "operationId": "post_mea_project_api_mea_projects_post",
         "requestBody": {
           "content": {
@@ -3206,10 +3207,204 @@
           }
         }
       }
+    },
+    "/api/mea/browse": {
+      "get": {
+        "summary": "Get Mea Browse",
+        "description": "\u2b50 **THE ONE ROUTE WITH NO PROJECT.** Every `data.raw.h5` under `path`, with enough of each\nfile's own facts that he can tell which ones he means before he ticks them.\n\n\u26a0\ufe0f **It has no `analysis_id`, and must never be given one \"for consistency\"** \u2014 the wizard calls\nit *before a project exists*. That is precisely what makes one import component mountable in two\nplaces: it browses, it lists, it hands back the paths he ticked, and it creates nothing.\n\n\u26d4 It reads and never writes. \u2b50 And it is the picker he will actually use: the native\nmulti-select dialog only exists with `--window`, and he drives Camea over VSCode remote where\nthat route is a 501.",
+        "operationId": "get_mea_browse_api_mea_browse_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The folder to look under.",
+              "title": "Path"
+            },
+            "description": "The folder to look under."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeaBrowseResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mea/{analysis_id}/recordings": {
+      "get": {
+        "summary": "Get Mea Recordings",
+        "description": "Everything on this project's shelf, with **live** copy state.\n\nEvery number is read off the file on the way past \u2014 see `recordings.shelf_entry`. That is what\nmakes a recording whose original has moved say so, instead of showing a row of zeros.",
+        "operationId": "get_mea_recordings_api_mea__analysis_id__recordings_get",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeaShelf"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Post Mea Recordings",
+        "description": "Add several recordings at once \u2014 *\"opens file explorer, can import multiple at a time\"*.\n\nEach one is read to confirm it is a MaxLab recording (\u26d4 refused **by name** if it is not, and\nthen none of them are added), recorded as `referenced`, and given a copy job. He can open any of\nthem the moment this returns; the copies land behind him.\n\n\u2b50 This is the same work `POST /api/mea/projects` does with its `paths`, through the same three\nfunctions \u2014 so the wizard's Files step and the in-project button cannot drift apart.",
+        "operationId": "post_mea_recordings_api_mea__analysis_id__recordings_post",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMeaRecordingsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeaShelf"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/mea/{analysis_id}/recordings/{recording_id}": {
+      "delete": {
+        "summary": "Delete Mea Recording",
+        "description": "Forget a recording, and delete **Camea's copy** of it.\n\n\u26d4 **THE USER'S ORIGINAL IS NEVER TOUCHED**, and there is no confirm box, because there is\nnothing of his to lose: the only bytes removed are a copy Camea made itself, inside the project\nfolder (his ruling, 2026-08-14). A copy still in flight is cancelled first.",
+        "operationId": "delete_mea_recording_api_mea__analysis_id__recordings__recording_id__delete",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          },
+          {
+            "name": "recording_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Recording Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeaShelf"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AddMeaRecordingsRequest": {
+        "properties": {
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paths"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AddMeaRecordingsRequest",
+        "description": "`POST /api/mea/{analysis_id}/recordings` \u2014 several at once, the way he asked for them.\n\n\u2b50 **ALL OR NOTHING, AND THE REFUSAL NAMES THE FILE.** If one path on the list does not read as\na MaxLab recording, none of them are added. The alternative \u2014 take the good ones and report the\nrest \u2014 cannot be offered at *creation* (the response there is the project, with nowhere to put a\nrefusal), and one rule he can state to himself beats two that differ by which door he came\nthrough."
+      },
       "AnalysisListResponse": {
         "properties": {
           "analyses": {
@@ -4235,6 +4430,14 @@
             "title": "Name",
             "description": "What he wants to call it. Blank is allowed and becomes a placeholder \u2014 there is no filename to fall back to.",
             "default": ""
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paths",
+            "description": "\u2b50 The recordings the wizard's Files step picked, if any. **Create-with-recordings is ONE call, not create-then-add**: a second call that failed would strand a project he can see on the home screen and cannot use. Omit it (or send `[]`) and this is exactly the empty-shelf create, which stays supported \u2014 that is the project whose recordings he has since removed."
           }
         },
         "additionalProperties": false,
@@ -4497,6 +4700,12 @@
             },
             "type": "array",
             "title": "Filters"
+          },
+          "allow_multiple": {
+            "type": "boolean",
+            "title": "Allow Multiple",
+            "description": "\u2b50 Several files in one gesture \u2014 what *'opens file explorer, can import multiple at a time'* means when there IS a desktop. Defaults False, which is what every existing caller wants and what this route did before. \u26a0\ufe0f Only reachable with `--window`; over VSCode remote this route is a 501 and Camea's own served picker is the real door.",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -4515,7 +4724,15 @@
               }
             ],
             "title": "Path",
-            "description": "null = the user cancelled."
+            "description": "null = the user cancelled. With `allow_multiple` this is the FIRST of `paths`, so every existing caller keeps working unchanged."
+          },
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Paths",
+            "description": "Everything he chose, in order. Empty = cancelled. A single-file dialog returns a list of one."
           }
         },
         "type": "object",
@@ -5956,6 +6173,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/OrientationTestResult"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MeaCopyResult"
                   }
                 ],
                 "discriminator": {
@@ -5965,6 +6185,7 @@
                     "electrode_map": "#/components/schemas/ElectrodeMapResult",
                     "export": "#/components/schemas/ExportResult",
                     "locate_region": "#/components/schemas/LocateRegionResult",
+                    "mea_copy": "#/components/schemas/MeaCopyResult",
                     "mea_orientation": "#/components/schemas/OrientationTestResult",
                     "open": "#/components/schemas/OpenJobResult",
                     "recheck": "#/components/schemas/RecheckResult",
@@ -6736,6 +6957,68 @@
         "title": "MeaAttachment",
         "description": "What electrical data a project has, and whether its trace can be believed."
       },
+      "MeaBrowseResult": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "recordings": {
+            "items": {
+              "$ref": "#/components/schemas/MeaRecordingCandidate"
+            },
+            "type": "array",
+            "title": "Recordings"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "The walk hit its ceiling. The UI says so rather than quietly showing a prefix of what is really down there.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "MeaBrowseResult",
+        "description": "`GET /api/mea/browse?path=` \u2014 every recording under a folder. \u26d4 Reads; never writes."
+      },
+      "MeaCopyResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "mea_copy",
+            "title": "Kind",
+            "default": "mea_copy"
+          },
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "recording_id": {
+            "type": "string",
+            "title": "Recording Id"
+          },
+          "stored_path": {
+            "type": "string",
+            "title": "Stored Path"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "recording_id",
+          "stored_path"
+        ],
+        "title": "MeaCopyResult",
+        "description": "`job.result` of a `mea_copy` job \u2014 one recording's copy has landed in the project."
+      },
       "MeaOrientation": {
         "properties": {
           "flip_x": {
@@ -6801,6 +7084,85 @@
           "analysis_id"
         ],
         "title": "MeaOrientationRequest"
+      },
+      "MeaRecordingCandidate": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "What a human calls it \u2014 `Network/000690`.",
+            "default": ""
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id",
+            "default": ""
+          },
+          "assay": {
+            "type": "string",
+            "title": "Assay",
+            "default": ""
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes",
+            "default": 0
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "n_channels": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Channels"
+          },
+          "n_spikes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Spikes"
+          },
+          "readable": {
+            "type": "boolean",
+            "title": "Readable",
+            "description": "\u2b50 False = this file is named `data.raw.h5` but does not read as a MaxLab recording. It is still LISTED, greyed and un-tickable, with `problem` saying why \u2014 a file that silently vanished from the list would look like a folder Camea could not see into.",
+            "default": true
+          },
+          "problem": {
+            "type": "string",
+            "title": "Problem",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "MeaRecordingCandidate",
+        "description": "One row of the import tick-list \u2014 a `data.raw.h5` found under the folder he pointed at."
       },
       "MeaRecordingSummary": {
         "properties": {
@@ -6876,6 +7238,153 @@
         ],
         "title": "MeaRecordingSummary",
         "description": "One `data.raw.h5` found for a project. Header facts only \u2014 no raw decode needed."
+      },
+      "MeaShelf": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "recordings": {
+            "items": {
+              "$ref": "#/components/schemas/MeaShelfEntry"
+            },
+            "type": "array",
+            "title": "Recordings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id"
+        ],
+        "title": "MeaShelf",
+        "description": "`GET|POST|DELETE /api/mea/{analysis_id}/recordings` \u2014 everything on one project's shelf."
+      },
+      "MeaShelfEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Minted, stable, and never the path: he may add the same file twice, and a path is not an identity."
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "default": ""
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id",
+            "default": ""
+          },
+          "assay": {
+            "type": "string",
+            "title": "Assay",
+            "default": ""
+          },
+          "source_path": {
+            "type": "string",
+            "title": "Source Path",
+            "description": "Where it came from. \u26d4 A path, not dataset knowledge \u2014 same standing as the manifest's `data_dir`. Read-only, always."
+          },
+          "stored_path": {
+            "type": "string",
+            "title": "Stored Path",
+            "description": "The project's own copy, project-relative (`recordings/<id>/data.raw.h5`). Blank until the copy lands.",
+            "default": ""
+          },
+          "copy_state": {
+            "type": "string",
+            "enum": [
+              "referenced",
+              "copying",
+              "stored",
+              "failed"
+            ],
+            "title": "Copy State",
+            "description": "\u2b50 Where the app is reading this recording from RIGHT NOW. His answer,2026-08-14: *'reference it until the copy is finished'* \u2014 usable the instant it is added, read from where it sits, with a copy pulled in behind it. \u26a0\ufe0f **Derived from the disk and the job registry, not just from the document**, so a copy interrupted by a restart reports as `referenced` (which it is) instead of as a `copying` that will never finish."
+          },
+          "copy_pct": {
+            "type": "number",
+            "title": "Copy Pct",
+            "description": "0\u2013100 while `copying`.",
+            "default": 0.0
+          },
+          "copy_error": {
+            "type": "string",
+            "title": "Copy Error",
+            "description": "Why the copy failed. The recording still works \u2014 it is read from the original \u2014 and this says what did not.",
+            "default": ""
+          },
+          "added": {
+            "type": "string",
+            "title": "Added",
+            "default": ""
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes",
+            "default": 0
+          },
+          "missing": {
+            "type": "boolean",
+            "title": "Missing",
+            "description": "\u26d4 **The original is no longer where he left it, and there is no copy yet.** Said on the shelf as a live warning; the row refuses to open rather than showing empty numbers. Every field below is null in this state.",
+            "default": false
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "n_channels": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Channels"
+          },
+          "n_samples": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Samples"
+          },
+          "n_spikes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Spikes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source_path",
+          "copy_state"
+        ],
+        "title": "MeaShelfEntry",
+        "description": "One recording a project holds \u2014 the row on the shelf."
       },
       "MeaSpike": {
         "properties": {

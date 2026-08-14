@@ -1,0 +1,111 @@
+/* IMPORT RECORDINGS — the tick-list, mounted in the wizard's Files step AND in the shelf's modal.
+   ⭐ ONE stylesheet for one component, for the same reason there is one component: two would drift.
+
+   It is deliberately a plain block with no width of its own — the wizard's panel and the shelf's
+   modal each set their own measure, and a picker that insisted on one would fit neither. */
+
+.import {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.folder {
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* The list has a ceiling and scrolls: a folder can hold dozens of recordings, and a wizard step
+   that grows past the viewport hides its own Create button. */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  padding: 8px;
+}
+
+.state {
+  margin: 0;
+  padding: 12px 6px;
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+}
+
+.all {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.row:hover {
+  background: var(--bg-card-hover);
+}
+
+/* A refused row is still a row. It is dimmed and its box is disabled, but it is READABLE — the
+   whole point is that he sees the file and is told why it cannot come. */
+.row[data-readable='false'] {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.rowLabel {
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.facts {
+  margin-left: auto;
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.refused {
+  margin-left: auto;
+  font-size: var(--fs-readout);
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+}
