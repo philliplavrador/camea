@@ -84,8 +84,53 @@ test('Analyze MEA: no path box anywhere, and the click IS the create', async ({ 
     // promise, and a screen that grows a control later reads as a different screen.
     await expect(page.getByTestId(TID.meaAddRecordings)).toBeDisabled();
 
+    // ⭐ R3 (his ruling, 2026-08-14): the reason the button is off lives behind the `?`, not on the
+    // page. Nothing on this screen explains itself in prose.
+    const empty = page.getByTestId(TID.meaEmpty);
+    const longParas = await empty
+      .locator('p')
+      .evaluateAll((ps) => ps.filter((p) => (p.textContent ?? '').trim().length > 80).length);
+    expect(longParas, 'the empty state must not carry an explanatory paragraph').toBe(0);
+
     // ⛔ And none of the video pipeline came with it: no stepper, no mosaic, no regions.
     await expect(page.getByTestId(TID.pipelineSteps)).toHaveCount(0);
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('the empty state explains itself only behind the `?`, and the `?` answers the keyboard', async ({
+  page,
+}) => {
+  const id = await createMeaProject(page, 'help mark');
+  try {
+    await expect(page.getByTestId(TID.meaFeature)).toBeVisible({ timeout: FIRST_PAINT });
+    const mark = page.getByTestId(TID.help);
+    await expect(mark).toHaveCount(1);
+
+    // ⛔ **A SIBLING OF THE BUTTON, NEVER A CHILD.** A `Help` trigger is itself a <button>, and a
+    // button inside a button is invalid markup no keyboard can reach — the trap PipelineNav
+    // documents. Asserted structurally so it cannot come back as a nesting.
+    await expect(
+      page.locator(`[data-testid="${TID.meaAddRecordings}"] [data-testid="${TID.help}"]`),
+    ).toHaveCount(0);
+
+    // 🔴 The button beside it is DISABLED, so it takes no focus at all: the `?` is the only thing
+    // on this screen a Tab can land on, and it is the only route to the reason. Driven by keyboard
+    // alone — focus is what opens it (R3.2), so Tab is enough.
+    await expect(page.getByTestId(TID.helpTooltip)).toHaveCount(0);
+    await mark.focus();
+    await expect(mark).toBeFocused();
+    const tip = page.getByTestId(TID.helpTooltip);
+    await expect(tip).toBeVisible({ timeout: SHORT });
+    await expect(tip).toContainText('.h5');
+
+    // Enter on a focused `?` must not slam it shut — it stays readable while he holds focus.
+    await page.keyboard.press('Enter');
+    await expect(tip).toBeVisible();
+    // ...and Escape dismisses it (R3.2), the app's one way out of a tooltip.
+    await page.keyboard.press('Escape');
+    await expect(tip).toBeHidden();
   } finally {
     await deleteProject(page, id);
   }

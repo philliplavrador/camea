@@ -211,20 +211,33 @@ so in the commit message. No engine, no saved anchors, no export is in scope her
   Decisions table above, and `features/mea/routes.py`'s module docstring for the four things that
   were read to decide it.
 
-**Left open for him**, raised at the end of the build and not settled by it:
+Three things were put to him at the end of the build. **Two came back and are done; one is held,
+and it is the reason this plan is still `active`.**
 
-1. **`docs/BEHAVIOUR.md` now says two things that are literally false.** R41's header defines a
-   project as *"one dataset + one task"* (and `CLAUDE.md` repeats it verbatim); R44.2 says
-   *"New project asks for ONE path. The dataset task names a data folder; the video task names a
-   video file."* An `Analyze MEA` project has **no dataset** and asks for **no path**. Nothing
-   breaks — no sub-statement of either ruling is contradicted, and no Playwright test that proves a
-   ruling stopped proving it — but the two headline sentences no longer cover all three tasks.
-   ⛔ Not edited: a ruling is not "improved away" by the session that outgrew it.
-2. **The `Analyze MEA` screen's one line of prose** — *"Importing MaxWell `.h5` recordings is the
-   next piece of work — this button turns on when it lands."* — sits under a disabled button and is
-   not behind a `?`. It reads as a state rather than a tutorial, which is why it was written that
-   way, but R3 has no standing exception for it (its exception is for live warnings, W1–W11).
-3. **The video task's blurb was left alone** — *"Point Camea at a survey video — it builds the
-   mosaic automatically."* — while its name became **Simultaneous MEA + 2P**. The name is now about
-   the experiment and the blurb is still about the mechanism; they no longer describe the same thing
-   to a reader who does not already know they are the same thing.
+| Asked | His answer | Done |
+|---|---|---|
+| The `Analyze MEA` screen carries one line of prose under a disabled button, against R3. Keep it, drop it, or put it behind the `?`? | **"Behind the ?"** | ✅ The line moved into a `Help` beside the button — the app's one explanation surface, the same pair the video screen's **Build mosaic** makes. The empty state is now a heading, a greyed-out button and a `?`. ⛔ The `?` is a **sibling** of the button, never a child (a `Help` trigger is itself a `<button>`; the trap `PipelineNav` documents), and it matters more here than anywhere: the button beside it is disabled, so it takes no focus, and the `?` is the only thing on the screen a Tab can land on. Asserted structurally and driven by keyboard in `new-project-tasks.spec.ts`. |
+| The video task's blurb still describes the mechanism while its name now describes the experiment. Change it? | **"Leave it"** | ✅ Untouched, verbatim. |
+
+**🔴 HELD — `docs/BEHAVIOUR.md` IS NOT EDITED, AND MUST NOT BE UNTIL THIS IS SETTLED.**
+
+The question was whether to *note an exception*: R41's header defines a project as *"one dataset +
+one task"* (and `CLAUDE.md` repeats it verbatim), and R44.2 says *"New project asks for ONE path.
+The dataset task names a data folder; the video task names a video file."* An `Analyze MEA` project
+has no dataset and asks for no path, so both headline sentences stopped covering all three tasks.
+Nothing was broken by it — no sub-statement of either ruling is contradicted, and no Playwright test
+that proves a ruling stopped proving it.
+
+He answered something larger than the question:
+
+> *"change the behavior so a project starts by itself and files are written into the project after
+> its created"*
+
+That is an instruction to change the **rule**, not to footnote it — and, read plainly, to change the
+**video task's creation flow to match**: create from a name alone, add the video from inside. It is
+being put back to him for confirmation. Until it comes back, nobody knows whether it lands in this
+plan's scope or becomes its own, so:
+
+- ⛔ `docs/BEHAVIOUR.md` is untouched.
+- ⛔ This plan stays `active`. Every `Done when` box above is genuinely ticked and every gate is
+  green — it is held for a decision, not for work.

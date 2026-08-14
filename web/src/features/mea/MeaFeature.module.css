@@ -57,13 +57,11 @@
   color: var(--text);
 }
 
-.note {
-  margin: 0;
-  font-size: var(--fs-micro);
-  color: var(--text-dim);
-  max-width: 52ch;
-}
-
-.note code {
-  font-family: var(--font-mono);
+/* The button and its `?`, side by side — the same pair the video screen's Build makes. They are
+   SIBLINGS: a Help trigger is a <button>, and nesting one inside another is invalid markup that no
+   keyboard can reach. */
+.action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }

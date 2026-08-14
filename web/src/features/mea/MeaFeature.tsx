@@ -24,8 +24,21 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import type { AnalysisSummary } from '../../api';
-import { Button } from '../../design';
+import { Button, Help } from '../../design';
 import styles from './MeaFeature.module.css';
+
+/**
+ * Why the one control on this screen is off. ⭐ **His ruling, 2026-08-14: behind the `?`.** It was
+ * a line of prose under the button; R3 says explanations live in exactly one place and this is it.
+ *
+ * ⛔ It is NOT a `LiveWarning`. R3's standing exception is for a warning about the current state of
+ * his work — a stale build, a recording that moved. "This part is not written yet" is a fact about
+ * Camea, not about his project, and a permanent banner saying so would be the prose R3 removed
+ * wearing a different hat.
+ */
+const WHY_OFF =
+  'Importing MaxWell .h5 recordings is the next piece of work. This button turns on when it ' +
+  'lands, and then it opens several recordings at once.';
 
 export interface MeaFeatureProps {
   /** The manager's summary for this project — the FeatureGate already fetched it. */
@@ -44,15 +57,21 @@ export function MeaFeature({ project }: MeaFeatureProps) {
 
       <div className={styles.empty} data-testid="mea-empty">
         <p className={styles.lead}>No recordings yet.</p>
-        {/* The button is here, disabled, rather than absent: the shape of the screen is the
-            promise, and a screen that grows a control later reads as a different screen. */}
-        <Button variant="primary" disabled data-testid="mea-add-recordings">
-          + Add recordings
-        </Button>
-        <p className={styles.note}>
-          Importing MaxWell <code>.h5</code> recordings is the next piece of work — this button
-          turns on when it lands.
-        </p>
+        {/* One button and one `?` — R3's shape exactly, the same pair the video screen's Build
+            makes. The button is here DISABLED rather than absent: the shape of the screen is the
+            promise, and a screen that grows a control later reads as a different screen.
+
+            ⛔ **THE `?` IS A SIBLING OF THE BUTTON, NEVER A CHILD.** A `Help` trigger is itself a
+            <button>, and a button inside a button is invalid markup that no keyboard can reach —
+            the trap `features/videomosaic/PipelineNav.tsx` documents and refuses. It matters more
+            than usual here: this button is DISABLED, so it takes no focus at all, and the `?` is
+            the only thing on the screen a Tab can land on. */}
+        <div className={styles.action}>
+          <Button variant="primary" disabled data-testid="mea-add-recordings">
+            + Add recordings
+          </Button>
+          <Help body={WHY_OFF} label="Why Add recordings is off" />
+        </div>
       </div>
     </section>
   );
