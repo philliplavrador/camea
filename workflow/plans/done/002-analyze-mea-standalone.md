@@ -1,7 +1,7 @@
 ---
 id: 002
 title: Analyze MEA — pick your recordings when you make the project, and they land on its shelf
-status: active # queued | active | done | abandoned
+status: done # queued | active | done | abandoned
 created: 2026-08-14
 needs: dev server # none | frontend | dev server | engine — which gates this build owes
 blocked-by: none
@@ -45,6 +45,25 @@ The interview, recorded 2026-08-14.
 | How do you add them? | **"Opens file explorer, can import multiple at a time."** Several recordings in one gesture. |
 | What does removing a recording do? | Forgets it and deletes **Camea's copy**. ⛔ The user's original file is never touched, and there is no confirm box for deleting a copy Camea made itself. |
 | Is there calcium anywhere in this? | **No.** "This one will not have any calcium data to go along with it." |
+
+**Asked during the build (2026-08-14), because the plan was silent and he would have lived with it:**
+
+| Question | Answer |
+|---|---|
+| ⭐ Does the wizard's Files step let him **Create with nothing ticked**? (§ Open; asked with side-by-side mockups) | **Yes — "create it empty".** Create stays enabled and the line beside it says what it will do. His reason was the one offered: *an empty project is a state the app can already reach* — it is what he is left with the moment he removes his last recording — so a wizard that could not produce one would be a door that opens only one way. It also means he is never stuck at that screen because the drive is not plugged in yet. |
+| 🔴 Removing a recording deletes Camea's copy with no confirm. But if **his own file has since moved or been deleted, our copy is the last one**. Still no box? | **"Ask only in that case."** ⚠️ **This REFINES his earlier instruction rather than contradicting it.** *"No confirm box for deleting a copy Camea made itself"* assumed there is always his own copy to fall back on; when there is not, the click stops being harmless and becomes the one unrecoverable act in the feature. So: instant in the normal case, and one `alertdialog` when **our copy exists AND his source does not** — *"Your own copy of this recording is no longer where you put it, so this is the only one left."* ⛔ Three things nailed into the code comment so nobody later "makes it consistent": the condition is `stored` **and** source-gone (a `referenced` recording with no source has **no copy**, so removing it destroys nothing and must **not** prompt); the check is a fresh `stat` at the moment he clicks, never a flag cached from import, so a re-plugged drive stops warning; and ⛔ it does **not** generalise to the other cases. |
+
+**Decided in the build, by reading the code rather than guessing:**
+
+| Question | Answer |
+|---|---|
+| ⭐ One copy job per recording, or one per import? (§ Open) | **Per recording.** The shelf shows a percentage against each *row*, which one job for the batch could only report as a single number for all of them — and the rows finish at wildly different times because the files are wildly different sizes. Watched on the real mirror: two recordings copying at 5.6 % and 6.1 %, then 13.3 % and 13.1 %, then 21.4 % and 20.7 % — two bars, moving apart. It also means one vanished source fails **one** row instead of taking the batch down. |
+| ⭐ The fixture `.h5`? (§ Open) | **Built.** `tests/fixtures/mea/`, two recordings, 19 kB each, committed, with `measynth.py` beside it. The chip in it is **13 × 5 on a 12.5 µm pitch** — deliberately no real device, so nothing can assume MaxWell's 220 / 17.5 and pass its own test. Two tricks keep it small: the raw stream is declared **chunked and never written** (`get_storage_size() == 0`, so the shape is real and the bytes are absent — which also makes `trace_health` report `flat`, exactly as the real files do through the published decoder), and `frame_nos` carries **shuffle+gzip** (480 kB → 91 kB with gzip alone → under 2 kB once shuffle groups the identical high bytes of an `arange`). |
+| What is a recording called on the wire — `copy`, as § Approach sketched? | **`copy_state`.** Pydantic warns on **every model build** that a field named `copy` shadows `BaseModel.copy`, and that warning prints in the running app, not just in a test. The document uses the same name so the two never need translating. |
+| One bad path in a batch: refuse the batch, or take the good ones? | **All or nothing, and the refusal names the file.** Taking the good ones has nowhere to live at *creation* — the response there is the project itself, with no room for a refusal — and one rule he can state to himself beats two that differ by which door he came through. |
+| What the four copy states are **called on screen** | **Plain English, not the wire's vocabulary**: *In your folder — copying* · *Copying… 42%* · *In the project* · *Still in your folder — the copy did not finish*. He is a biologist; *"referenced"* is a word about our implementation, not about his recording. |
+| Where the source-vs-copy resolution lives | **One function**, `recordings.open_path`. [003](../queued/003-analyze-mea-chip-map-and-traces.md) § Approach asks for exactly this and its layout/activity/trace routes should call it rather than each deciding. |
+| A third module, `features/mea/recordings.py`, which § Affected did not name | **Added.** `routes.py` stays about HTTP; the fact-reading, the shelf derivation, the copy job and its `rmtree` guard live together, which is what let the create route and the add route share all three. |
 
 ⚠️ **The creation-order row REVERSES a row in [001](../done/001-pick-a-task-at-project-creation.md)
 § Decisions** which said `Analyze MEA` asks for no data at creation. 001 shipped that and was closed
@@ -226,7 +245,10 @@ is a question for him, asked with the tool, once he has used it.
 
 - `src/camea/core/workspace.py` — `RECORDINGS` constant.
 - `src/camea/core/project.py` — `recordings_dir` on `Project`/`ProjectSet`; 🔴 `own_entries()`.
-- `src/camea/features/mea/{routes,document}.py` — the routes above and the `recordings` block.
+- `src/camea/features/mea/{routes,document,recordings}.py` — the routes above, the `recordings`
+  block, and ⭐ **a third module the plan did not name**: `recordings.py` holds the fact-reading, the
+  shelf derivation, the copy job and `open_path`. `routes.py` stays about HTTP, and the create route
+  and the add route share all three.
 - `src/camea/api/{schemas.py,routes_core.py}` — wire models; `allow_multiple` on the open-file dialog.
 - `web/src/features/mea/{MeaFeature,ImportRecordings,RecordingShelf}.tsx` + CSS.
   ⭐ `ImportRecordings` is mounted **twice** — here and in the wizard. One component.
@@ -241,23 +263,58 @@ is a question for him, asked with the tool, once he has used it.
 
 ## Done when
 
-- [ ] ⭐ **New project → name → Analyze MEA → a Files step** that lets him pick **several `.h5` at
+- [x] ⭐ **New project → name → Analyze MEA → a Files step** that lets him pick **several `.h5` at
       once**, and **Create** at the end of it makes the project **with those recordings already on
       the shelf**. One call — there is no moment where a project exists with nothing on it because a
       second call failed.
-- [ ] The **empty-shelf path still works**: a project whose recordings he has all removed shows
+      *(Driven by hand against the real mirror — six recordings listed, one ticked, project created
+      with it on the shelf. `POST /api/mea/projects` grew `paths` and reads every one of them
+      **before** `create_in_store`, so a bad path means no project at all:
+      `test_a_path_that_is_not_a_recording_means_NO_PROJECT_and_names_the_file` asserts
+      `store_entries() == []` after the refusal. e2e: `Create makes the project WITH the recordings
+      already on it — one call`.)*
+- [x] The **empty-shelf path still works**: a project whose recordings he has all removed shows
       001's empty state and its **Add recordings** button, and adding from there works.
-- [ ] The empty state's `?` no longer says the button is unbuilt — it says what the button does, or
-      it is gone.
-- [ ] **Add recordings** inside the project shows **the same picker the wizard showed him**, not a
+      *(`test_removing_the_last_recording_leaves_a_working_empty_project`; e2e `removing a
+      recording…` ends by removing both and asserting `mea-empty` with an ENABLED button. The
+      wizard can now also produce an empty project directly — his ruling, see § Decisions.)*
+- [x] The empty state's `?` no longer says the button is unbuilt — it says what the button does.
+      *(`MeaFeature.tsx :: WHAT_ADD_DOES` replaced `WHY_OFF`. The old text — "this button turns on
+      when it lands" — became a lie the moment the import worked, and an enabled button whose `?`
+      says it is not built yet is worse than no `?` at all.)*
+- [x] **Add recordings** inside the project shows **the same picker the wizard showed him**, not a
       second one. (Check by reading the imports, not by eye.)
-- [ ] While copying, the shelf shows progress; when it finishes the entry reads as stored and the
+      *(`RecordingShelf.tsx` imports `./ImportRecordings`; `NewProjectFlow.tsx` imports
+      `../mea/ImportRecordings`. There is one file. The e2e test additionally compares the rendered
+      `mea-import` island from both mounts and asserts they are identical HTML.)*
+- [x] While copying, the shelf shows progress; when it finishes the entry reads as stored and the
       project's own copy is in `<project>/recordings/`. Nothing was written outside it.
-- [ ] Removing a recording deletes the project's copy and **leaves the original untouched**.
-- [ ] Moving the original of a `referenced` recording makes the shelf say so; it does not crash.
-- [ ] A file that is not a MaxLab recording is refused **by name** at import.
-- [ ] `own_entries()` includes the recordings dir, with a test that fails without it.
-- [ ] `npm run check:api` clean.
+      *(Watched by hand on the mirror: two recordings at 5.6 %/6.1 % → 13.3 %/13.1 % → 21.4 %/20.7 %,
+      two independent bars. `test_the_copy_lands_inside_the_project_and_nowhere_else` asserts the
+      project folder holds EXACTLY `camea-project.json` + `document.camea.json` + `recordings/`, and
+      that the copy is byte-identical to the source. By hand: SHA256 of a 1.11 GB copy equals the
+      source's. ⚠️ The `copying` **rendering** is e2e-tested against a stub, because the 19 kB
+      fixture lands before the first paint — stated in the spec.)*
+- [x] Removing a recording deletes the project's copy and **leaves the original untouched**.
+      *(`test_removing_a_recording_deletes_OUR_copy_and_leaves_HIS_original`, asserted on the bytes
+      both ways. By hand against the mirror: the 1.55 GB copy went, his 1.55 GB original was
+      untouched, mtime unchanged. ⭐ Plus the ONE confirm he asked for — see § Decisions.)*
+- [x] Moving the original of a `referenced` recording makes the shelf say so; it does not crash.
+      *(`test_a_referenced_recording_whose_original_moved_says_so` — `missing: true`, and
+      `n_spikes`/`n_channels`/`duration_s` are all `None`, never zeros. e2e asserts the
+      `LiveWarning` is **on the page**, is a live region, names the path, and that the row carries
+      no facts element at all. And `test_a_stored_recording_survives_the_original_being_deleted`:
+      once the copy has landed, deleting his original changes nothing.)*
+- [x] A file that is not a MaxLab recording is refused **by name** at import.
+      *(Both doors: `test_a_path_that_is_not_a_recording_means_NO_PROJECT_and_names_the_file` and
+      `test_adding_a_bad_path_adds_none_of_them_and_names_it`. ⭐ And it happened for real, unplanned,
+      on the first hand run: `ActivityScan/000687` in the mirror came back greyed and named. That
+      turned out to be a genuine MaxLab file the reader cannot open — **filed as issue 007**.)*
+- [x] `own_entries()` includes the recordings dir, with a test that fails without it.
+      *(Three tests in `tests/unit/test_project.py`, and I verified all three go RED with
+      `RECORDINGS` taken back out of the name set. The enumerating one is written against the
+      CONSTANTS, not a hand-written list, so a seventh storage folder trips it too.)*
+- [x] `npm run check:api` clean. *(And the client was regenerated, never typed by hand.)*
 
 ## Verify
 
@@ -306,12 +363,16 @@ or moved under any circumstance**, so there is no data-loss path to roll back fr
 
 ## Open
 
-Three judgement calls, each with its criterion:
+**Nothing is open.** All three were answered in the build; the full reasoning is in § Decisions.
 
-- **The fixture `.h5`** — build the tiny synthetic one (strongly preferred, see § Verify).
-- **Whether the wizard's Files step lets him create with nothing picked.** ⛔ Not a free choice: the
-  empty-shelf path must keep working (it is a `Done when` box), so the question is only whether the
-  *wizard* offers it or insists on at least one file. Decide by what the step looks like with an
-  empty tick-list, and say which you chose.
-- **Whether the copy job is one job per recording or one per import.** Per recording reports
-  progress better; per import is one row in the jobs list. Either is fine — say which and why.
+| Asked | Answer | Where it lives |
+|---|---|---|
+| **The fixture `.h5`** | ⭐ **Built**, as § Verify preferred. Two recordings, 19 kB each, committed. The chip is 13 × 5 on a 12.5 µm pitch — no real device, so nothing can assume MaxWell's 220 / 17.5. The raw stream is declared chunked and never written, so `trace_health` reports `flat` exactly as the real files do through the published decoder. [003](../queued/003-analyze-mea-chip-map-and-traces.md) can rely on it. | `tests/fixtures/{measynth.py,make_synthetic_mea.py,mea/}`, the `measynth` conftest fixture, `MEA_FIXTURE` in `web/tests/e2e/fixture.ts` |
+| **Create with nothing picked?** | ⭐ **Yes** — put to him with side-by-side mockups; he chose *"create it empty"*. Create stays enabled and the line beside it says what it will do, rather than the button being greyed. An empty project is a state the app can already reach, so the wizard must be able to produce one. | `NewProjectFlow.tsx :: onCreateMea`, `np-mea-count` |
+| **One copy job per recording, or per import?** | ⭐ **Per recording.** The shelf reports a percentage per *row*, and the rows finish at wildly different times because the files do. Measured on the mirror: two bars moving apart (5.6/6.1 → 13.3/13.1 → 21.4/20.7 %). One vanished source then fails one row instead of the batch. | `recordings.py :: start_copy`, and the comment above it |
+
+⚠️ **One question this plan did not raise, and someone should:** whether any of this earns a numbered
+ruling in `docs/BEHAVIOUR.md` — in particular *"remove is instant, except when Camea's copy is the
+last one"*, which is a real decision he made and which a future session could easily "tidy" in
+either direction. ⛔ Not written unilaterally; it is a question for him, with the tool, now that he
+has used it. Nothing in `docs/BEHAVIOUR.md` was edited by this plan.
