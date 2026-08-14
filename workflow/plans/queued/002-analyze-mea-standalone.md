@@ -44,6 +44,25 @@ The interview, recorded (2026-08-14).
 | Is there calcium anywhere in this? | **No.** "This one will not have any calcium data to go along with it." |
 | What does removing a recording do? | Forgets it and deletes **Camea's copy**. ⛔ The user's original file is never touched, and there is no confirm box for deleting a copy Camea made itself. |
 
+**🔴 ADDED AFTER 001 SHIPPED (2026-08-14). THIS PLAN NOW OWNS THE CREATION WIZARD'S THIRD STEP.**
+
+| Question | Answer |
+|---|---|
+| ⭐ When does an `Analyze MEA` project get its first recordings? | **At creation, in the wizard.** *"you create the project then you select what you want to do in this project ... then after that it asks you to upload the files you need for that task."* New project is **Name → Task → Files, for BOTH tasks.** He was shown side-by-side mockups and picked this over "open empty and add from inside" explicitly. |
+| Does adding recordings from inside the project survive? | **Yes** — it is just no longer the only door. The shelf's **Add recordings** button does the same thing at any time; the wizard step is how the first ones arrive. |
+
+⚠️ **This REVERSES the row in [001](001-pick-a-task-at-project-creation.md) § Decisions** that said
+`Analyze MEA` asks for no data at creation. 001 shipped that (create immediately, empty shelf) and
+was closed as **done** deliberately: it is an **intermediate state**, and the step-3 picker could not
+be built there because it needs everything below — the import component, the `.h5` reading, and the
+`paths` argument on create. Nothing 001 built is thrown away; this plan changes **when** the project
+is created and **what is on it** when it is.
+
+⛔ **AND IT MEANS `docs/BEHAVIOUR.md` NEEDS NOTHING.** R41 (*"a project is one dataset + one task"*)
+and R44.2 (*"New project asks for ONE path"*) briefly stopped covering all three tasks while 001 was
+the whole story. This restores both: every project asks for its data at creation, and creation asks
+exactly one data question. ⛔ Do not add an exception for this task; do not re-open it.
+
 **Explicitly rejected:**
 - **Reusing the `col-row` electrode ids from the mosaic pipeline.** Those exist because the
   mosaic has to *guess* how the chip was seated under the microscope, which is
@@ -59,6 +78,10 @@ The interview, recorded (2026-08-14).
 ## Scope
 
 **In:**
+- ⭐ **A Files step in the creation wizard** — `NewProjectFlow` grows a third step for the `mea`
+  task, and **creation moves to the END of it**. Today (001) the card click creates immediately;
+  after this plan the project is created **with its first recordings already on it**, by one call.
+  The `dataStep`/`createNow` seam 001 left in `TASKS` is where this hooks in.
 - **Import** — multi-select, from the native dialog when Camea has a window, from Camea's own
   picker otherwise (see § Approach; both are needed, and the served one is the one *he* will see).
 - **The shelf** — the project lists every recording it holds: label (`Network/000690`), duration,
@@ -117,6 +140,7 @@ ever written next to the user's data.
 | `GET  /{id}/recordings` | the shelf, with live copy state |
 | `GET  /browse?path=` | ⭐ the **served** picker's file half: every `data.raw.h5` under `path`, via `mearecording.find_recordings`, each with label/duration/size so he can tick the ones he means |
 | `POST /{id}/recordings` | `{paths: [...]}` — add several at once. Reads each header to confirm it is a MaxLab recording (refuse, by name, the ones that are not), records them as `referenced`, and **starts the copy job** |
+| ⭐ `POST /api/mea/projects` | **grows an optional `paths: [...]`** (001 built it as name-only). Create-with-recordings is **ONE call, not create-then-add** — a second call that failed would strand a project he can see on the home screen and cannot use, and he would have to delete it himself to try again. The two refusals it already has (`_abandon` on a bad document, and the catch-all) must cover a bad path too: nothing on the list reads as a MaxLab recording ⇒ **no project is created**, and the refusal names the file. `paths` omitted ⇒ exactly today's behaviour, which is the empty-shelf path and stays supported |
 | `DELETE /{id}/recordings/{rid}` | forget it, and delete the project's copy if there is one. Never touches the original |
 | `GET  /{id}/recordings/{rid}/layout` | the routed pads: `channel, electrode, x_um, y_um` + header facts + `stride`/`pitch_um` |
 | `GET  /{id}/recordings/{rid}/activity` | per-pad spike count and spikes/s, from `MeaRecording.spikes()` — one pass over the spike table, **no raw decode** |
@@ -138,7 +162,26 @@ spinner on a GET.
 - `MeaFeature.tsx` grows from 001's empty state into: **shelf** (left rail) · **chip map**
   (centre) · **trace** (bottom, appears on click). No pipeline stepper — this is not a pipeline,
   it is a shelf and a viewer. ⛔ Do not import `PipelineNav`.
-- `ImportRecordings.tsx` — the import gesture. **Two doors, and they are not equivalent:**
+  ⚠️ **And 001's `?` becomes a lie the moment import works.** The empty state's help reads *"this
+  button turns on when it lands"* (`MeaFeature.tsx :: WHY_OFF`). **Replace it with what the button
+  actually does, or remove it** — an enabled button whose `?` says it is not built yet is worse than
+  no `?` at all.
+- `ImportRecordings.tsx` — the import gesture.
+
+  ⭐ **ONE COMPONENT, TWO MOUNT POINTS — and this is the point of the file, not a tidiness note.**
+  The wizard's Files step and the in-project **Add recordings** button are the *same* tick-list,
+  mounted twice. Two implementations of "browse a folder, tick the recordings you mean" would drift
+  within a week: one would grow the duration column, the other the refusal-by-name, and he would
+  meet a different picker depending on which door he came through. ⛔ Do not write a second one.
+
+  ⚠️ **The wizard mount has no project yet**, and that shapes the component's contract: it must hand
+  back **a list of chosen paths** and nothing else — no `analysis_id`, no POST of its own, no
+  document. The *caller* decides what to do with the list: the wizard passes it to
+  `POST /api/mea/projects` as `paths` (one call — see the route table above); the shelf passes it to
+  `POST /{id}/recordings`. A picker that creates or mutates anything itself cannot be mounted in the
+  wizard at all.
+
+  **Two doors to the files themselves, and they are not equivalent:**
   - `POST /api/dialog/open-file` with **`allow_multiple=True`** (it is hard-coded `False` today —
     [routes_core.py:1470](../../../src/camea/api/routes_core.py#L1470) — so this is a small,
     deliberate backend change: add the flag to `DialogOpenFileRequest`, default `False`).
@@ -175,6 +218,16 @@ The third warning from the video feature — *the chip's seating is provisional*
 copied here.** There is no seating question in the chip's own frame, and importing the warning
 would teach a doubt that does not exist.
 
+🔴 **ALL THREE STAY ON THE PAGE AS `LiveWarning`. ⛔ NONE OF THEM GOES BEHIND A `?`.**
+
+001 moved a line of prose behind the `?` on his instruction, and it would be very easy to read that
+as "explanations go behind the `?` on this screen" and hide these with it. **It is the opposite
+instruction.** What went behind the `?` there was *"this part of Camea is not written yet"* — a fact
+about the **app**. These three are facts about **his data, right now**: his waveform did not decode,
+his recording is not where he left it, his file is not a MaxLab recording. That is precisely R3's
+standing exception (W1–W11), and a fact he must not be able to miss cannot live somewhere he has to
+hover to find. The distinction is written into `MeaFeature.tsx :: WHY_OFF`; keep it true.
+
 ## Rulings this touches
 
 - **R44 (Camea owns the projects).** Upheld. The only path the user names is where a recording
@@ -203,6 +256,11 @@ tool, once he has used it.
 - `src/camea/api/{schemas.py,routes_core.py}` — the wire models; `allow_multiple` on the open-file
   dialog.
 - `web/src/features/mea/{MeaFeature,ImportRecordings,RecordingShelf,ChipMap}.tsx` + CSS.
+  ⭐ `ImportRecordings` is mounted **twice** — here and in the wizard. One component.
+- `web/src/features/home/NewProjectFlow.tsx` — the `mea` task's `dataStep` stops being `null` and
+  its `createNow` moves to the end of the Files step. ⚠️ 001 left the invariant *"`dataStep: null`
+  and `createNow` being set are the same fact said twice, and they must agree"* — this plan makes
+  both change together.
 - `web/src/core/trace/TraceChart.tsx` — **moved** from `features/electrodes/`, importer repointed.
 - `web/src/api/schema.d.ts` — regenerated.
 - `tests/api/test_mea_feature.py` — new; against the committed fixture (see § Verify).
@@ -210,8 +268,17 @@ tool, once he has used it.
 
 ## Done when
 
+- [ ] ⭐ **New project → name → Analyze MEA → a Files step** that lets him pick **several `.h5` at
+      once**, and **Create** at the end of it makes the project **with those recordings already on
+      the shelf**. One call — there is no moment where a project exists with nothing on it because
+      the second call failed.
+- [ ] The **empty-shelf path still works**: a project whose recordings he has all removed shows
+      001's empty state and its **Add recordings** button, and adding from there works. (`paths`
+      omitted on create is the same path, and is what keeps this honest.)
+- [ ] The empty state's `?` no longer says the button is unbuilt — it says what the button does, or
+      it is gone.
 - [ ] In an `Analyze MEA` project, **Add recordings** lets you pick **several at once** and they
-      all appear on the shelf.
+      all appear on the shelf — **the same picker the wizard showed him**, not a second one.
 - [ ] A recording is **openable immediately**, before its copy has finished.
 - [ ] While copying, the shelf shows progress; when it finishes the entry reads as stored, and
       the project's own copy is in `<project>/recordings/`. Nothing was written outside it.
@@ -253,8 +320,11 @@ is a few kilobytes.
 
 Nothing — this lands on `master` and that is all.
 
-**Ordering:** strictly after [001](001-pick-a-task-at-project-creation.md), which creates the
-project type and the shell this fills.
+**Ordering:** strictly after [001](001-pick-a-task-at-project-creation.md) — **done**, 2026-08-14 —
+which created the project type, the Task step and the shell this fills. ⭐ This plan also **finishes**
+001: 001 shipped create-immediately-with-an-empty-shelf as an intermediate state, and the Files step
+here is the shape he actually asked for. Until this lands, `Analyze MEA` is the one task that asks
+for no data at creation.
 
 ## Roll back
 
@@ -272,5 +342,13 @@ there is no data-loss path to roll back from.
 ## Open
 
 Empty. The interview settled the view, the file handling, the import gesture and the naming; the
-three judgement calls left (`activity` as a GET or a job, the fixture `.h5`, where the spike tally
-lives) are the build's to make and are written above with the criterion for each.
+creation order was settled on 2026-08-14 after 001 shipped (see § Decisions). The **four** judgement
+calls left are the build's to make and each is written above with its criterion:
+
+- `activity` as a GET or a job — measure it on a 300 s recording.
+- the fixture `.h5` — add a tiny synthetic one (preferred) or skip the API tests without it.
+- where the per-channel spike tally lives — `core/mearecording.py` with a test, or the feature.
+- whether the wizard's Files step lets him create with **nothing** picked. ⛔ Not a free choice: the
+  empty-shelf path must keep working (it is a `Done when` box), so the question is only whether the
+  *wizard* offers it or insists on at least one file. Decide it by what the step looks like with an
+  empty tick-list, and say which you chose.

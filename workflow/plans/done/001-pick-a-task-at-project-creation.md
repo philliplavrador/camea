@@ -1,7 +1,7 @@
 ---
 id: 001
 title: A new project asks what you want to do — and "Analyze MEA" is a real answer
-status: active # queued | active | done | abandoned
+status: done # queued | active | done | abandoned
 created: 2026-08-14
 needs: dev server # none | frontend | dev server | engine — which gates this build owes
 blocked-by: none
@@ -36,8 +36,29 @@ The interview, recorded (2026-08-14).
 | Should project creation ask which task? | Yes. Two tasks now, so the question is real. |
 | What are the two called? | **"Simultaneous MEA + 2P"** (the existing video→mosaic→regions pipeline) and **"Analyze MEA"** (the new one). His words, verbatim. |
 | Does the existing feature key change? | **No.** The manifest key stays `videomosaic`; only the label he reads changes. Projects already in the store keep opening. |
-| Does `Analyze MEA` ask for data at creation time? | **No.** "You create the project, you pick Analyze MEA, and you go into the project, you can add however many H5 files you want." Name → Task → created. No Data step. |
+| Does `Analyze MEA` ask for data at creation time? | ⚠️ **REVERSED LATER THE SAME DAY — see the row below.** As interviewed: *"You create the project, you pick Analyze MEA, and you go into the project, you can add however many H5 files you want."* Name → Task → created; no Data step. **That is what this plan shipped, and it is an intermediate state.** |
 | Does it have calcium/mosaic/regions? | **No.** "This one will not have any calcium data to go along with it." No mosaic, no video, no regions, no chip-seating question. |
+
+**🔴 REVERSED BY HIM, 2026-08-14, after seeing it built** (asked again with side-by-side mockups):
+
+| Question | Answer |
+|---|---|
+| ⭐ Does `Analyze MEA` ask for its recordings at creation after all? | **Yes.** *"you create the project then you select what you want to do in this project ... then after that it asks you to upload the files you need for that task."* New project is **Name → Task → Files, for BOTH tasks.** `Analyze MEA` gains a step 3 that picks the `.h5` files, and the project is created **at the end of the wizard, with those recordings already on its shelf.** He picked this over "open empty and add from inside" explicitly. Adding more from inside the project stays — it is just no longer the only door. |
+
+⚠️ **SO WHAT 001 SHIPPED IS AN INTERMEDIATE STATE, NOT THE FINAL SHAPE**, and it is being closed as
+**done** deliberately rather than held. The step-3 picker cannot be built here: it needs the import
+component, the `.h5` reading and the `paths` argument on create, all of which are
+[002](002-analyze-mea-standalone.md)'s work. 002 now owns the wizard step and says so. Everything
+001 built — the Task step, the second task, the feature package, the gate arm, the shell — is
+required by that shape and none of it is thrown away; the only thing 002 changes is **when** the
+project is created and **what is on it** when it is.
+
+⛔ **AND `docs/BEHAVIOUR.md` NEEDS NOTHING. DO NOT RE-OPEN THIS.** The question this plan raised was
+whether his new task broke R41 (*"a project is one dataset + one task"*) and R44.2 (*"New project
+asks for ONE path"*), and whether to record an exception. His answer **restores both rulings instead
+of breaking them**: every project asks for its data at creation, and creation asks exactly one data
+question. There is no exception to note and no ruling to amend. The temporary window in which
+`Analyze MEA` asked for nothing closes with 002.
 
 **Decided in the build (2026-08-14), by reading the code rather than guessing:**
 
@@ -53,8 +74,10 @@ The interview, recorded (2026-08-14).
 - **Making `Analyze MEA` a mode of the existing pipeline.** It shares `core/mearecording.py` and
   nothing else. Bolting it onto `videomosaic` would drag the mosaic, the electrode map and the
   unresolved chip seating into a screen that needs none of them.
-- **Asking for the first H5 during creation.** He described the opposite order on purpose: the
-  project is a *shelf* you put recordings on, not a wrapper around one file.
+- ~~**Asking for the first H5 during creation.**~~ ⚠️ **Un-rejected the same day** — see the
+  reversal above. What survives of the reasoning: the project is still a *shelf*, not a wrapper
+  around one file (you pick **several** at step 3, and you can add more later). What does not: the
+  order. He wants the files asked for at creation, like every other task.
 - **Renaming the `videomosaic` feature key to match its new label.** Every project manifest in
   `%LOCALAPPDATA%/Camea/projects/` carries the old key. A label is free; a key is a migration.
 
@@ -211,33 +234,21 @@ so in the commit message. No engine, no saved anchors, no export is in scope her
   Decisions table above, and `features/mea/routes.py`'s module docstring for the four things that
   were read to decide it.
 
-Three things were put to him at the end of the build. **Two came back and are done; one is held,
-and it is the reason this plan is still `active`.**
+Three things were put to him at the end of the build. **All three came back. Nothing is open.**
 
 | Asked | His answer | Done |
 |---|---|---|
 | The `Analyze MEA` screen carries one line of prose under a disabled button, against R3. Keep it, drop it, or put it behind the `?`? | **"Behind the ?"** | ✅ The line moved into a `Help` beside the button — the app's one explanation surface, the same pair the video screen's **Build mosaic** makes. The empty state is now a heading, a greyed-out button and a `?`. ⛔ The `?` is a **sibling** of the button, never a child (a `Help` trigger is itself a `<button>`; the trap `PipelineNav` documents), and it matters more here than anywhere: the button beside it is disabled, so it takes no focus, and the `?` is the only thing on the screen a Tab can land on. Asserted structurally and driven by keyboard in `new-project-tasks.spec.ts`. |
 | The video task's blurb still describes the mechanism while its name now describes the experiment. Change it? | **"Leave it"** | ✅ Untouched, verbatim. |
+| `docs/BEHAVIOUR.md`'s R41 (*"one dataset + one task"*) and R44.2 (*"asks for ONE path"*) stopped covering all three tasks. Note the exception? | **Neither** — he changed the app instead: *"you create the project then you select what you want to do in this project ... then after that it asks you to upload the files you need for that task."* | ✅ ⛔ **`docs/BEHAVIOUR.md` is NOT edited, and this must not be re-opened.** His answer **restores** both rulings rather than breaking them — every project asks for its data at creation, and creation asks exactly one data question. There is no exception to record. The window in which `Analyze MEA` asked for nothing is temporary and closes with [002](002-analyze-mea-standalone.md). See the reversal row in § Decisions. |
 
-**🔴 HELD — `docs/BEHAVIOUR.md` IS NOT EDITED, AND MUST NOT BE UNTIL THIS IS SETTLED.**
+**How the third one landed, because the first answer read the other way.** Asked whether to note an
+exception to R41/R44.2, he first said *"change the behavior so a project starts by itself and files
+are written into the project after its created"* — which reads as an instruction to break the rule,
+and possibly to make the **video** task create from a name alone too. Asked again with side-by-side
+mockups it came back the opposite way: **Name → Task → Files, for both tasks**, with `Analyze MEA`
+gaining a step 3 and being created at the end of the wizard with its recordings already on it.
 
-The question was whether to *note an exception*: R41's header defines a project as *"one dataset +
-one task"* (and `CLAUDE.md` repeats it verbatim), and R44.2 says *"New project asks for ONE path.
-The dataset task names a data folder; the video task names a video file."* An `Analyze MEA` project
-has no dataset and asks for no path, so both headline sentences stopped covering all three tasks.
-Nothing was broken by it — no sub-statement of either ruling is contradicted, and no Playwright test
-that proves a ruling stopped proving it.
-
-He answered something larger than the question:
-
-> *"change the behavior so a project starts by itself and files are written into the project after
-> its created"*
-
-That is an instruction to change the **rule**, not to footnote it — and, read plainly, to change the
-**video task's creation flow to match**: create from a name alone, add the video from inside. It is
-being put back to him for confirmation. Until it comes back, nobody knows whether it lands in this
-plan's scope or becomes its own, so:
-
-- ⛔ `docs/BEHAVIOUR.md` is untouched.
-- ⛔ This plan stays `active`. Every `Done when` box above is genuinely ticked and every gate is
-  green — it is held for a decision, not for work.
+⛔ **The lesson, for whoever reads this next: a ruling that looks outgrown may just be ahead of the
+app.** The right move was to leave `docs/BEHAVIOUR.md` alone and ask — not to record the exception
+the code seemed to have earned.
