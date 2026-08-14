@@ -39,6 +39,16 @@ The interview, recorded (2026-08-14).
 | Does `Analyze MEA` ask for data at creation time? | **No.** "You create the project, you pick Analyze MEA, and you go into the project, you can add however many H5 files you want." Name → Task → created. No Data step. |
 | Does it have calcium/mosaic/regions? | **No.** "This one will not have any calcium data to go along with it." No mosaic, no video, no regions, no chip-seating question. |
 
+**Decided in the build (2026-08-14), by reading the code rather than guessing:**
+
+| Question | Answer |
+|---|---|
+| ⭐ § Open — empty `dataset_key`, or one minted from the analysis id? | **Empty**, and `dataset`/`data_dir` with it. Read all four consumers: `analyses()` filters on it *only when a caller passes one*, so a blank is never filtered off the home screen; `by_dataset()`'s `""` bucket is only ever read by key, so nobody asks for it; `guard_slot` and `Scope.agrees_with` both **abstain on a blank**, which is what a project whose contents arrive later needs; `read_analysis` passes it through and the card renders the blank as words. A minted key buys one private bucket in an index nobody reads, at the price of the app claiming there is a dataset at an address that resolves to nothing. The reasoning is in `features/mea/routes.py`'s module docstring, where the next session will look. |
+| Where does the empty payload live — an empty `source` (as § Approach guessed), or something else? | **`recordings: []`.** `source` is `videomosaic`'s key for the one file its project wraps; this project wraps nothing, and 002's shelf is a list. Same emptiness, right name, and 002 grows into it instead of migrating away from it. |
+| What does the stepper say before he has picked a task? | The third step is **shown but unnamed** ("Data"). Found by running it: the stepper read *"3 Video"* while he was looking at a card called `Analyze MEA`, because `task` is still the default until he answers. Showing it keeps the count from ever *under*stating what is left; leaving it neutral stops it naming something he has not chosen. |
+| What sits on the home card where a video's filename sits? | *"No recordings yet"*, faint and italic. A blank line there reads as a card that failed to load rather than one that is new. |
+| 🔴 The task cards were unreachable by keyboard | `Card` renders a plain `<div>`, so the cards had a bare `onClick`: untabbable, deaf to Enter and Space. Harmless while the step was skipped; **the moment it renders, step 2 is the only door to either task and the app is keyboard-dead there.** Fixed with the same `role`/`tabIndex`/`onKeyDown` the home screen's project cards carry, and an e2e test that drives it by keyboard alone. |
+
 **Explicitly rejected:**
 - **Making `Analyze MEA` a mode of the existing pipeline.** It shares `core/mearecording.py` and
   nothing else. Bolting it onto `videomosaic` would drag the mosaic, the electrode map and the
@@ -148,17 +158,25 @@ question for him, asked with the tool.
 
 ## Done when
 
-- [ ] `New project` → type a name → **Next** lands on a screen offering exactly two tasks,
+- [x] `New project` → type a name → **Next** lands on a screen offering exactly two tasks,
       labelled **Simultaneous MEA + 2P** and **Analyze MEA**.
-- [ ] Clicking **Simultaneous MEA + 2P** reaches the video path box, and creating a video
+      *(Driven in a browser and asserted in `new-project-tasks.spec.ts`, which also pins the count
+      at two and the retired snapshot card at zero.)*
+- [x] Clicking **Simultaneous MEA + 2P** reaches the video path box, and creating a video
       project still works end to end, unchanged.
-- [ ] Clicking **Analyze MEA** creates the project and lands on `/project/:id` with no path
-      question of any kind asked.
-- [ ] That project appears on the home screen, can be renamed, can be deleted, and reopens.
-- [ ] Its folder in the store holds a manifest with `"feature": "mea"` and a document, and
+      *(The `@slow video build` spec now runs THROUGH the reintroduced Task step and is green:
+      create → build → preview → outputs → copy out.)*
+- [x] Clicking **Analyze MEA** creates the project and lands on `/project/:id` with no path
+      question of any kind asked. *(And no path BOX exists on the step to begin with — asserted.)*
+- [x] That project appears on the home screen, can be renamed, can be deleted, and reopens.
+- [x] Its folder in the store holds a manifest with `"feature": "mea"` and a document, and
       nothing was written outside `%LOCALAPPDATA%/Camea/projects/<id>/`.
-- [ ] A project created before this change (`feature: videomosaic` or `mosaic`) still opens.
-- [ ] `npm run check:api` is clean — the client was regenerated, not typed by hand.
+      *(`test_create_takes_a_name_and_nothing_else` asserts the folder's contents EXACTLY:
+      `camea-project.json` + `document.camea.json`, and nothing else.)*
+- [x] A project created before this change (`feature: videomosaic` or `mosaic`) still opens.
+      *(Both driven by hand in the browser against a store holding one of each: the video pipeline
+      opens on its Mosaic step, the retired snapshot builder opens on its wizard.)*
+- [x] `npm run check:api` is clean — the client was regenerated, not typed by hand.
 
 ## Verify
 
@@ -189,6 +207,24 @@ so in the commit message. No engine, no saved anchors, no export is in scope her
 
 ## Open
 
-- Empty `dataset_key` versus a minted one — decided **in the build**, by reading what
-  `ProjectSet.analyses()`, `by_dataset()` and the home-screen card actually do with `""`. Both
-  answers are acceptable; guessing is not.
+- ~~Empty `dataset_key` versus a minted one~~ — **decided in the build: empty.** See the second
+  Decisions table above, and `features/mea/routes.py`'s module docstring for the four things that
+  were read to decide it.
+
+**Left open for him**, raised at the end of the build and not settled by it:
+
+1. **`docs/BEHAVIOUR.md` now says two things that are literally false.** R41's header defines a
+   project as *"one dataset + one task"* (and `CLAUDE.md` repeats it verbatim); R44.2 says
+   *"New project asks for ONE path. The dataset task names a data folder; the video task names a
+   video file."* An `Analyze MEA` project has **no dataset** and asks for **no path**. Nothing
+   breaks — no sub-statement of either ruling is contradicted, and no Playwright test that proves a
+   ruling stopped proving it — but the two headline sentences no longer cover all three tasks.
+   ⛔ Not edited: a ruling is not "improved away" by the session that outgrew it.
+2. **The `Analyze MEA` screen's one line of prose** — *"Importing MaxWell `.h5` recordings is the
+   next piece of work — this button turns on when it lands."* — sits under a disabled button and is
+   not behind a `?`. It reads as a state rather than a tutorial, which is why it was written that
+   way, but R3 has no standing exception for it (its exception is for live warnings, W1–W11).
+3. **The video task's blurb was left alone** — *"Point Camea at a survey video — it builds the
+   mosaic automatically."* — while its name became **Simultaneous MEA + 2P**. The name is now about
+   the experiment and the blurb is still about the mechanism; they no longer describe the same thing
+   to a reader who does not already know they are the same thing.
