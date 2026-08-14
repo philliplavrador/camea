@@ -2509,6 +2509,36 @@ class LocateRegionResult(Res):
 
 
 # =================================================================================================
+# Analyze MEA (`features/mea`) — a MaxWell recording on its own, with no calcium in sight.
+# =================================================================================================
+#
+# ⚠️ **Not to be confused with the `Mea*` models above.** Those belong to `videomosaic`: they attach
+# an electrical recording to an *optical* project and carry the chip-seating question that comes
+# with a microscope. This task has no microscope, so it has none of that — and it must not grow it
+# "for consistency" (his interview, 2026-08-14).
+
+
+class CreateMeaProjectRequest(Req):
+    """⭐ THE SERVER CREATES THE DOCUMENT — `POST /api/mea/projects` -> 201 `AnalysisSummary`.
+
+    ⭐ **A NAME, AND NOTHING ELSE.** The sibling requests each carry the one input their task is
+    a wrapper around — `CreateAnalysisRequest` a session, `CreateVideoProjectRequest` a video
+    path. This one carries none, because the project *is the shelf*: he names it, and puts
+    recordings on it from inside. Asking for the first `.h5` here was considered and rejected.
+
+    ⭐ **And no `folder`, like every create since R44** — the project is made in Camea's own
+    store. Between that and having no input file, this route asks **zero path questions**, which
+    is one fewer than any other way to make a project.
+    """
+
+    name: str = Field(
+        default="",
+        description="What he wants to call it. Blank is allowed and becomes a placeholder — "
+        "there is no filename to fall back to.",
+    )
+
+
+# =================================================================================================
 # The job-result union — declared last, because it names every feature's result.
 # =================================================================================================
 #
@@ -2590,6 +2620,8 @@ __all__ = [
     "MeaSpike",
     "MeaSyncEpisode",
     "TraceHealthPayload",
+    # Analyze MEA (its own feature — see the section note; not the videomosaic `Mea*` models)
+    "CreateMeaProjectRequest",
     # health / gpu / settings
     "HealthResponse",
     "GpuInfo",

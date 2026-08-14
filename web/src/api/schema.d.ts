@@ -1720,6 +1720,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mea/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Mea Project
+         * @description ⭐ **THE SERVER CREATES THE DOCUMENT** — `POST /api/projects` for a project that starts
+         *     empty. A name in, a project out, and there is nothing else to ask: no session, no probe, no
+         *     folder. The document is an empty shelf (`features/mea/document.py`).
+         *
+         *     The project carries `dataset_key=""` / `dataset=""` / `data_dir=""` — see the module
+         *     docstring for why an empty key beats a minted one, and what was read to decide it.
+         */
+        post: operations["post_mea_project_api_mea_projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2181,6 +2206,27 @@ export interface components {
              * @description The feature's selection. null = the session's whole trial list.
              */
             trials?: number[] | null;
+        };
+        /**
+         * CreateMeaProjectRequest
+         * @description ⭐ THE SERVER CREATES THE DOCUMENT — `POST /api/mea/projects` -> 201 `AnalysisSummary`.
+         *
+         *     ⭐ **A NAME, AND NOTHING ELSE.** The sibling requests each carry the one input their task is
+         *     a wrapper around — `CreateAnalysisRequest` a session, `CreateVideoProjectRequest` a video
+         *     path. This one carries none, because the project *is the shelf*: he names it, and puts
+         *     recordings on it from inside. Asking for the first `.h5` here was considered and rejected.
+         *
+         *     ⭐ **And no `folder`, like every create since R44** — the project is made in Camea's own
+         *     store. Between that and having no input file, this route asks **zero path questions**, which
+         *     is one fewer than any other way to make a project.
+         */
+        CreateMeaProjectRequest: {
+            /**
+             * Name
+             * @description What he wants to call it. Blank is allowed and becomes a placeholder — there is no filename to fall back to.
+             * @default
+             */
+            name: string;
         };
         /**
          * CreateVideoProjectRequest
@@ -7668,6 +7714,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_mea_project_api_mea_projects_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMeaProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisSummary"];
                 };
             };
             /** @description Validation Error */

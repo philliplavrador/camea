@@ -3167,6 +3167,45 @@
           }
         }
       }
+    },
+    "/api/mea/projects": {
+      "post": {
+        "summary": "Post Mea Project",
+        "description": "\u2b50 **THE SERVER CREATES THE DOCUMENT** \u2014 `POST /api/projects` for a project that starts\nempty. A name in, a project out, and there is nothing else to ask: no session, no probe, no\nfolder. The document is an empty shelf (`features/mea/document.py`).\n\nThe project carries `dataset_key=\"\"` / `dataset=\"\"` / `data_dir=\"\"` \u2014 see the module\ndocstring for why an empty key beats a minted one, and what was read to decide it.",
+        "operationId": "post_mea_project_api_mea_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMeaProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4188,6 +4227,20 @@
         ],
         "title": "CreateAnalysisRequest",
         "description": "\u2b50 **THE SERVER CREATES THE DOCUMENT**, via the feature's `new_document` hook.\n\n\ud83d\udd34 In v1 `project.new_doc()` and `project.seed_from_build()` were **dead code** \u2014 the front end\nreimplemented both in JS. That is how `human_edits`' divert counters were silently dropped on\nevery save, and how \"Skip \u2014 place by hand\" could erase `seeded_from` while every tile still sat\nexactly where t33 put it. The document is authored on the server. It is not negotiable."
+      },
+      "CreateMeaProjectRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "What he wants to call it. Blank is allowed and becomes a placeholder \u2014 there is no filename to fall back to.",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "CreateMeaProjectRequest",
+        "description": "\u2b50 THE SERVER CREATES THE DOCUMENT \u2014 `POST /api/mea/projects` -> 201 `AnalysisSummary`.\n\n\u2b50 **A NAME, AND NOTHING ELSE.** The sibling requests each carry the one input their task is\na wrapper around \u2014 `CreateAnalysisRequest` a session, `CreateVideoProjectRequest` a video\npath. This one carries none, because the project *is the shelf*: he names it, and puts\nrecordings on it from inside. Asking for the first `.h5` here was considered and rejected.\n\n\u2b50 **And no `folder`, like every create since R44** \u2014 the project is made in Camea's own\nstore. Between that and having no input file, this route asks **zero path questions**, which\nis one fewer than any other way to make a project."
       },
       "CreateVideoProjectRequest": {
         "properties": {

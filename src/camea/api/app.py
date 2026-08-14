@@ -179,6 +179,17 @@ def create_app(*, cors: bool = True) -> FastAPI:
     videomosaic_routes.set_store(projects=routes_core._projects)
     app.include_router(videomosaic_routes.router)
 
+    # ⭐ The third feature, and the first that is not a mosaic: **Analyze MEA** — a MaxWell
+    # recording opened on its own, with no calcium, no video and no chip-seating question. Same
+    # import-registers-hooks pattern; same fresh-per-call store seam. ⛔ It shares
+    # `core/mearecording.py` with the video feature and NOTHING else — see
+    # `features/mea/__init__.py` for why that separation is deliberate rather than lazy.
+    from camea.features.mea import document as mea_document  # noqa: F401
+    from camea.features.mea import routes as mea_routes
+
+    mea_routes.set_store(projects=routes_core._projects)
+    app.include_router(mea_routes.router)
+
     # ⭐ **BRING PRE-R44 PROJECTS HOME** (`core.migrate`). Runs on every launch and does nothing on
     # all but the first: a folder already in the store is skipped. It never raises, and what it did
     # (or could not do) is held for the home screen to state once — a project that silently moved
