@@ -118,6 +118,7 @@ export const TID = {
   meaImportTick: 'mea-import-tick',
   meaImportRefused: 'mea-import-refused', // ⛔ a file refused BY NAME, on the list, never dropped
   meaImportNone: 'mea-import-none', //      "no recordings in this folder"
+  meaImportError: 'mea-import-error', //    the browse itself failed (a live warning, not a toast)
   meaImportStart: 'mea-import-start', //    before he has chosen a folder
   meaTickAll: 'mea-tick-all',
   npMeaCount: 'np-mea-count', //            the wizard Files step's running count

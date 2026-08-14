@@ -66,7 +66,14 @@ export interface ImportRecordingsProps {
 export function ImportRecordings({ onChange, busy = false }: ImportRecordingsProps) {
   const [folder, setFolder] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
-  const [rows, setRows] = useState<MeaRecordingCandidate[]>([]);
+  // ⚠️ **TWO LISTS, NOT ONE FILTERED BY PATH PREFIX.** `here` is what the folder he is looking at
+  // holds — it is REPLACED on every browse. `chosenElsewhere` is what he picked through the native
+  // dialog, which has no folder behind it at all. Deriving "is this row in the current folder?"
+  // from `path.startsWith(folder)` looked tidier and was wrong twice over: it assumes the server
+  // echoes the path byte-for-byte as we sent it (it normalises), and it silently drops every row if
+  // it does not.
+  const [here, setHere] = useState<MeaRecordingCandidate[]>([]);
+  const [chosenElsewhere, setChosenElsewhere] = useState<MeaRecordingCandidate[]>([]);
   const [ticked, setTicked] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -86,13 +93,11 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
     setFailure(null);
     browseRecordings(path)
       .then((r) => {
-        const found = r.recordings ?? [];
-        setRows((prev) => {
-          // Keep any dialog-picked rows and any rows from an earlier folder that are still ticked.
-          const seen = new Set(found.map((x) => x.path));
-          return [...prev.filter((x) => !seen.has(x.path)), ...found];
-        });
+        setHere(r.recordings ?? []);
         setTruncated(r.truncated ?? false);
+        // The server's own answer for where it looked — resolved and normalised, which is what
+        // should be on screen rather than whatever we happened to send it.
+        if (r.path) setFolder(r.path);
       })
       .catch((e: unknown) => setFailure(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
@@ -101,14 +106,16 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
   const toggle = (path: string) =>
     setTicked((prev) => (prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path]));
 
-  const here = rows.filter((r) => folder != null && r.path.startsWith(`${folder}/`));
-  const usableHere = here.filter((r) => r.readable);
-  const allHereTicked = usableHere.length > 0 && usableHere.every((r) => ticked.includes(r.path));
+  // Everything on screen: this folder's recordings, plus anything he picked through the native
+  // dialog (which belongs to no folder we browsed).
+  const shown = [...here, ...chosenElsewhere];
+  const usable = shown.filter((r) => r.readable);
+  const allTicked = usable.length > 0 && usable.every((r) => ticked.includes(r.path));
 
   const toggleAll = () =>
     setTicked((prev) => {
-      const paths = usableHere.map((r) => r.path);
-      return allHereTicked
+      const paths = usable.map((r) => r.path);
+      return allTicked
         ? prev.filter((p) => !paths.includes(p))
         : [...prev, ...paths.filter((p) => !prev.includes(p))];
     });
@@ -127,16 +134,17 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
       return;
     }
     if (picked.length === 0) return; // he cancelled
-    setRows((prev) => {
+    setChosenElsewhere((prev) => {
       const known = new Set(prev.map((x) => x.path));
       return [...prev, ...picked.filter((p) => !known.has(p)).map(fromDialog)];
     });
     setTicked((prev) => [...prev, ...picked.filter((p) => !prev.includes(p))]);
   }
 
-  // Anything ticked that is not in the folder he is looking at right now. He must be able to see
-  // that it is still on the list, or "Create" will surprise him.
-  const elsewhere = ticked.filter((p) => !here.some((r) => r.path === p));
+  // Anything ticked that is not on screen right now — a recording from a folder he has since
+  // browsed away from. He must be able to see it is still on the list, or Create will surprise him.
+  const onScreen = new Set([...here, ...chosenElsewhere].map((r) => r.path));
+  const elsewhere = ticked.filter((p) => !onScreen.has(p));
 
   return (
     <div className={styles.import} data-testid="mea-import">
@@ -174,33 +182,33 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
           </LiveWarning>
         )}
 
-        {!loading && !failure && folder == null && (
+        {!loading && !failure && folder == null && shown.length === 0 && (
           <p className={styles.state} data-testid="mea-import-start">
             Choose the folder your MaxWell recordings are in. Camea lists every recording under it.
           </p>
         )}
 
-        {!loading && !failure && folder != null && here.length === 0 && (
+        {!loading && !failure && folder != null && shown.length === 0 && (
           <p className={styles.state} data-testid="mea-import-none">
             No recordings in this folder. Try the folder above it.
           </p>
         )}
 
-        {!loading && !failure && here.length > 0 && (
+        {!loading && !failure && shown.length > 0 && (
           <>
             <label className={styles.all}>
               <input
                 type="checkbox"
-                checked={allHereTicked}
-                disabled={busy || usableHere.length === 0}
+                checked={allTicked}
+                disabled={busy || usable.length === 0}
                 onChange={toggleAll}
                 data-testid="mea-tick-all"
               />
               <span>
-                {here.length} recording{here.length === 1 ? '' : 's'} here
+                {shown.length} recording{shown.length === 1 ? '' : 's'}
               </span>
             </label>
-            {here.map((r) => (
+            {shown.map((r) => (
               <label
                 key={r.path}
                 className={styles.row}
