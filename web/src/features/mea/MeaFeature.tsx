@@ -77,14 +77,23 @@ export function MeaFeature({ project }: MeaFeatureProps) {
         <Help body={WHAT_ADD_DOES} label="What Add recordings does" />
       </header>
 
+      {/* ⭐ **THE MEASURE FOLLOWS THE SUBJECT.** A shelf is a list of facts and keeps a readable
+          column; an open recording IS a picture and takes the frame. Getting this wrong is not
+          cosmetic — with the column applied to both, the chip map was squeezed into a third of a
+          wide monitor and the trace panel packed in beside it. Same split, same reason, as
+          `features/videomosaic/VideoMosaicFeature.module.css :: stepScroll | stepFill`. */}
       {openId ? (
-        <OpenRecording
-          analysisId={project.analysis_id}
-          recordingId={openId}
-          onClose={() => setOpenId(null)}
-        />
+        <div className={styles.fill}>
+          <OpenRecording
+            analysisId={project.analysis_id}
+            recordingId={openId}
+            onClose={() => setOpenId(null)}
+          />
+        </div>
       ) : (
-        <RecordingShelf analysisId={project.analysis_id} onOpen={setOpenId} />
+        <div className={styles.column}>
+          <RecordingShelf analysisId={project.analysis_id} onOpen={setOpenId} />
+        </div>
       )}
     </section>
   );

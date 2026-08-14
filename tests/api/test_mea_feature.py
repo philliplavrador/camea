@@ -812,3 +812,58 @@ def test_the_chip_height_is_taken_from_the_device_only_when_the_file_agrees():
     # It says it is something else, so we claim only the rows it evidences.
     mapping = np.array([(0, 0), (6, 0)], dtype=[("ey", "<i8"), ("x", "<i8")])
     assert mea_routes._chip_rows(13, mapping) == (7, "recorded")
+
+
+def test_a_file_whose_CHIP_LAYOUT_cannot_be_derived_is_refused_not_a_500(client, session,
+                                                                        tmp_path):
+    """⚠️ **FOUND IN REVIEW.** `info()` reads the header; the chip's geometry is derived in
+    `mapping()`, and `derive_geometry` refuses **by design** for cases it cannot explain — every
+    routed pad on one array row, a non-integer stride. All three routes reach for the mapping, so
+    unless `_open` touches it that refusal escapes as an unhandled error and the user gets a **500**
+    for a file Camea understands perfectly well and has a sentence about.
+
+    ⛔ A 500 is *"Camea broke"*. This is *"this file does not describe a chip I can lay out"*, which
+    is a fact about his data and must be said as one."""
+    import h5py
+    import numpy as np
+
+    # A MaxLab-shaped file whose routed pads all sit on ONE array row, so the stride is
+    # unconstrained and `derive_geometry` refuses rather than guessing a transposed chip.
+    d = tmp_path / "P9999" / "Network" / "000009"
+    d.mkdir(parents=True)
+    p = d / "data.raw.h5"
+    n = 4
+    with h5py.File(p, "w") as f:
+        g = f.create_group("data_store/data0000")
+        s = g.create_group("settings")
+        for k, v in (("sampling", 20000.0), ("lsb", 6.294e-6), ("gain", 512.0), ("hpf", 300.0)):
+            s[k] = np.array([v])
+        m = np.empty(n, dtype=[("channel", "<i4"), ("electrode", "<i4"),
+                               ("x", "<f8"), ("y", "<f8")])
+        for i in range(n):
+            m[i] = (i, i, i * 10.0, 0.0)                     # every pad on row 0
+        s["mapping"] = m
+        rg = g.create_group("groups/routed")
+        rg["channels"] = np.arange(n, dtype=np.uint16)
+        rg["frame_nos"] = np.arange(1000, 1000 + 100, dtype=np.uint64)
+        rg.create_dataset("raw", shape=(n, 100), dtype="<u2", chunks=(n, 100))
+        g["spikes"] = np.empty(0, dtype=[("frameno", "<i8"), ("channel", "<i4"),
+                                         ("amplitude", "<f4")])
+        f["assay/run_id"] = np.array([b"000009"])
+
+    # ⚠️ It gets onto the shelf, because `facts_of` reads the header only — see issue 008.
+    a = _create(client, "bad layout", paths=[p.as_posix()])
+    aid = a["analysis_id"]
+    rid = _shelf(client, aid)[0]["id"]
+
+    for route in ("layout", "activity", "trace?channel=0"):
+        r = client.get(f"/api/mea/{aid}/recordings/{rid}/{route}")
+        assert r.status_code == 422, (route, r.status_code, r.text)
+        assert err(r)["code"] == "refused", route
+        # ⛔ And it does NOT say "this is not a MaxLab recording" — it IS one, its header read
+        # fine, and only the layout could not be derived. Calling a genuine MaxLab file "not a
+        # recording" is the lie `utils/knowledge/mea-recordings.md` records against
+        # ActivityScan/000687. It says what actually failed, in the reader's own words.
+        assert "one array row" in err(r)["message"], route
+        assert "not a MaxLab recording" not in err(r)["message"], route
+        assert "chip layout" in err(r)["message"], route

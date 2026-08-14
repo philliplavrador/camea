@@ -28,7 +28,7 @@
 // waveform is dimmed and captioned rather than quietly drawn.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { meaChannelTrace } from '../../api';
 import type { MeaChannelTrace } from '../../api';
 import { TraceChart } from '../../core/trace/TraceChart';
@@ -55,11 +55,16 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
   // usually shows a dead window, and stepping a second at a time would take 200 clicks to reach
   // the spikes — so the FIRST view of a pad lands where it actually fired. Recorded per selection,
   // so the jump happens once and never fights his own scrubbing.
-  const [jumped, setJumped] = useState<string | null>(null);
+  //
+  // ⚠️ **A `useRef`, NOT `useState`, AND THAT IS A BUG FIX.** As state it was both written by the
+  // fetch effect and listed in that effect's dependencies, so every pad click fetched the window
+  // **twice**: run once → `setJumped` → dependency changed → run again. It is never read during
+  // render, so it was never state's job. (Found in review.)
+  const jumped = useRef<string | null>(null);
 
   useEffect(() => {
     setT0(0);
-    setJumped(null);
+    jumped.current = null;
   }, [channel, recordingId]);
 
   useEffect(() => {
@@ -75,8 +80,8 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
         if (cancelled) return;
         setData(d);
         const key = `${recordingId}:${channel}`;
-        if (jumped !== key) {
-          setJumped(key);
+        if (jumped.current !== key) {
+          jumped.current = key;
           const first = d.first_spike_s;
           if (first != null && (d.spikes?.length ?? 0) === 0) {
             setT0(Math.max(0, Math.floor(first * 10) / 10));
@@ -92,7 +97,7 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
     return () => {
       cancelled = true;
     };
-  }, [analysisId, recordingId, channel, t0, jumped]);
+  }, [analysisId, recordingId, channel, t0]);
 
   const duration = data?.duration_s ?? 0;
   const step = useCallback(

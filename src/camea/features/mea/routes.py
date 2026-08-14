@@ -491,23 +491,50 @@ def _recording_path(analysis_id: str, recording_id: str) -> tuple[Path, dict]:
 
 
 def _open(analysis_id: str, recording_id: str):
-    """`_recording_path`, opened. Raises the refusal by name if the file stopped being readable."""
+    """`_recording_path`, opened. Raises the refusal by name if the file stopped being readable.
+
+    ⚠️ **IT TOUCHES THE MAPPING, NOT JUST THE HEADER, AND THAT IS THE POINT OF THE FUNCTION.**
+    `info()` reads the header only; the chip's geometry is derived in `mapping()`, and
+    `derive_geometry` **refuses by design** for real cases it cannot explain — every routed pad on
+    one array row, a non-integer stride, positions that are not whole multiples of one pitch. Every
+    route below then reaches for the mapping (directly, or through `stride()`/`activity()`), so
+    unless it is touched *here* that refusal escapes as an unhandled error and the screen shows a
+    **500** for a file Camea understands perfectly well and has a sentence about. Found in review;
+    reproduced with a one-row mapping, which returned 500 from all three routes.
+    """
     from camea.core import mearecording as mr  # noqa: PLC0415
 
     from . import recordings as mrec
 
     path, entry = _recording_path(analysis_id, recording_id)
+    label = str(entry.get("label") or recording_id)
     rec = None
     try:
         rec = mr.MeaRecording(path)
-        rec.info()                                           # touch it, so a bad file fails HERE
-    except Exception as e:                                   # noqa: BLE001
-        # ⚠️ The file is at the address and no longer reads — it changed under him. Same sentence
-        # the import would have given it, so he meets one refusal about this file, not two.
+        rec.info()                                           # the header…
+        rec.mapping()                                        # …and the chip, so a bad file fails HERE
+    except mr.MeaError as e:
+        # ⛔ **NOT "this is not a MaxLab recording".** It got onto the shelf, so its header read
+        # fine; what failed is deriving the chip's layout, and `derive_geometry` already says
+        # exactly why ("the routed electrodes all sit on one array row", a non-integer stride…).
+        # Calling a genuine MaxLab file "not a MaxLab recording" is a **lie about his data** — the
+        # same mistake `utils/knowledge/mea-recordings.md` records against ActivityScan/000687 —
+        # so the reader's own sentence is passed through whole.
         if rec is not None:
             rec.close()                                      # ⛔ never leak the handle on the way out
-        raise ApiError(422, "refused", str(mrec.NotARecording(path, f"{type(e).__name__}: {e}")),
-                       {"recording_id": recording_id}) from e
+        raise ApiError(422, "refused",
+                       f"Camea cannot work out the chip layout for {label}: {e}",
+                       {"recording_id": recording_id, "reason": str(e)}) from e
+    except Exception as e:                                   # noqa: BLE001
+        # ⚠️ The file is at the address and no longer reads at all — it changed under him. Same
+        # sentence the import would have given it, so he meets one refusal about this file, not two.
+        # ⚠️ And the technical tail rides in `detail.reason`, never spliced into the sentence: that
+        # separation is `NotARecording`'s whole design (plan 002).
+        if rec is not None:
+            rec.close()
+        bad = mrec.NotARecording(path, f"{type(e).__name__}: {e}")
+        raise ApiError(422, "refused", str(bad),
+                       {"recording_id": recording_id, "reason": bad.reason}) from e
     return rec, entry
 
 

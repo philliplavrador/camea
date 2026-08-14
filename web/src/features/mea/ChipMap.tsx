@@ -49,6 +49,7 @@ import {
   formatRate,
   rampColour,
 } from './activityScale';
+import { hitRadiusUm } from './hitRadius';
 import styles from './ChipMap.module.css';
 
 /** How far past fit you may zoom in. A pad is ~17 µm; this is plenty to separate neighbours. */
@@ -65,6 +66,7 @@ interface View {
   tx: number;
   ty: number;
 }
+
 
 export interface ChipMapProps {
   layout: MeaChipLayout;
@@ -230,22 +232,19 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
     return () => el.removeEventListener('wheel', onWheel);
   }, [fitScale]);
 
-  // ── the hit rule ────────────────────────────────────────────────────────────────────────────
-  // ⚠️ **THE LESSON R45.7 COST AN AFTERNOON, APPLIED HERE UP FRONT.** A hit radius expressed in
-  // world units becomes a sub-pixel target when the picture is zoomed out, and the failures come
-  // in bands — which reads to a user as "there are missing patches", not as "my click missed".
-  // So: grow the radius to keep a usable on-screen target, and cap it at the cell circumradius so
-  // nearest-centre can never take a neighbour's ground.
-  const hitRadiusUm = useCallback(
-    (s: number): number => Math.min(chip.pitch * Math.SQRT1_2, Math.max(chip.pitch * 0.5, 6 / s)),
-    [chip.pitch],
+  /** The pad being read, looked up once — the canvas outlines it and the live region says it. */
+  const selectedPad = useMemo(
+    () => pads.find((p) => p.channel === selected) ?? null,
+    [pads, selected],
   );
+
+  const hitRadius = useCallback((s: number): number => hitRadiusUm(chip.pitch, s), [chip.pitch]);
 
   const padAt = useCallback(
     (sx: number, sy: number, v: View): Pad | null => {
       const wx = (sx - v.tx) / v.scale;
       const wy = (sy - v.ty) / v.scale;
-      const r = hitRadiusUm(v.scale);
+      const r = hitRadius(v.scale);
       let best: Pad | null = null;
       let bestD = r * r;
       for (const p of pads) {
@@ -259,7 +258,7 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
       }
       return best;
     },
-    [pads, hitRadiusUm],
+    [pads, hitRadius],
   );
 
   // ── drag = pan; a press that did not travel is a click, and a click selects ──────────────────
@@ -386,7 +385,7 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
     }
 
     // The selection last, on top of everything.
-    const sel = pads.find((p) => p.channel === selected);
+    const sel = selectedPad;
     if (sel) {
       const px = sx(sel.x);
       const py = sy(sel.y);
@@ -396,7 +395,7 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
       g.lineWidth = 2;
       g.stroke();
     }
-  }, [pads, view, box, chip, selected]);
+  }, [pads, view, box, chip, selectedPad]);
 
   const hoverLabel = hover
     ? `Electrode ${hover.pad.electrode} · channel ${hover.pad.channel} · ` +
@@ -435,6 +434,19 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
         }
       >
         <canvas ref={canvasRef} className={styles.canvas} data-testid="mea-chip-canvas" />
+        {/* ⚠️ **`role="application"` TAKES THE KEYBOARD, SO IT MUST HAND BACK THE ANSWER.** The
+            arrow keys move between pads, which means a screen-reader user is inside this widget
+            with the browse cursor off — and the pad's facts land in the trace panel *outside* it,
+            where they would have to know to go looking. So the selection is announced here, where
+            the keystroke happened. Visually hidden: the sighted user already sees the ring move. */}
+        <div className={styles.announce} role="status" aria-live="polite" data-testid="mea-chip-said">
+          {selectedPad
+            ? `Electrode ${selectedPad.electrode}, channel ${selectedPad.channel}, ` +
+              (selectedPad.nSpikes === 0
+                ? SILENT_MEANING
+                : `${selectedPad.nSpikes} spikes, ${formatRate(selectedPad.rateHz)}`)
+            : ''}
+        </div>
         {hover && (
           <div
             className={styles.tip}

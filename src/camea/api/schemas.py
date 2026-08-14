@@ -2961,6 +2961,12 @@ __all__ = [
     "MeaRecordingCandidate",
     "MeaShelf",
     "MeaShelfEntry",
+    # …and opening one of them (plan 003): the chip, its activity, one pad's trace
+    "MeaChannelTrace",
+    "MeaChipActivity",
+    "MeaChipLayout",
+    "MeaChipPad",
+    "MeaPadActivity",
     # health / gpu / settings
     "HealthResponse",
     "GpuInfo",

@@ -1,7 +1,15 @@
-/* ANALYZE MEA — the shell and its empty state.
-   A readable measure in the middle of the frame, not a full-bleed picture pane: there is no
-   picture yet. When 002 lands, `.pane` becomes the frame (shelf · chip map · trace) the way
-   VideoMosaicFeature's does, and this centred column becomes the empty case inside it. */
+/* ANALYZE MEA — the shell, the shelf, and one open recording.
+
+   ⭐ **THE PANE IS A FRAME NOW, AND THE BODY PICKS ITS OWN MEASURE** (plan 003). This file used to
+   say *"when 002 lands, `.pane` becomes the frame the way VideoMosaicFeature's does"* — 002 landed
+   a shelf, which is a list and was happy in a centred column, so it was left alone. 003 puts a
+   **picture** in here, and the 880px cap then squeezed the chip map into a third of a wide monitor
+   with the trace panel packed beside it. Found in review, and visible in the screenshots taken
+   before it.
+
+   So the same split VideoMosaicFeature already uses: a **column** for the shelf (a list of facts
+   must not stretch across a 32-inch monitor) and a **frame** for an open recording (its subject IS
+   the picture). `MeaFeature.tsx` picks between them. */
 
 .pane {
   height: 100%;
@@ -10,9 +18,28 @@
   flex-direction: column;
   gap: 20px;
   padding: 24px 20px;
+  overflow: hidden;
+}
+
+/* The shelf, the empty state: a readable measure in the middle of the frame. */
+.column {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   width: 100%;
   max-width: 880px;
   margin: 0 auto;
+  padding-bottom: 24px;
+}
+
+/* An open recording: the chip takes whatever is left, and the page itself never scrolls. */
+.fill {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .head {
