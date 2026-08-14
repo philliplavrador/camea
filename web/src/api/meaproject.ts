@@ -19,6 +19,12 @@ export type MeaBrowseResult = components['schemas']['MeaBrowseResult'];
 /** `referenced` · `copying` · `stored` · `failed` — where the app is reading this recording FROM. */
 export type MeaCopyState = MeaShelfEntry['copy_state'];
 
+export type MeaChipLayout = components['schemas']['MeaChipLayout'];
+export type MeaChipPad = components['schemas']['MeaChipPad'];
+export type MeaChipActivity = components['schemas']['MeaChipActivity'];
+export type MeaPadActivity = components['schemas']['MeaPadActivity'];
+export type MeaChannelTrace = components['schemas']['MeaChannelTrace'];
+
 /**
  * Create an Analyze MEA project (`POST /api/mea/projects` → 201).
  *
@@ -80,6 +86,68 @@ export async function removeRecording(analysisId: string, recordingId: string): 
   return unwrap(
     await api.DELETE('/api/mea/{analysis_id}/recordings/{recording_id}', {
       params: { path: { analysis_id: analysisId, recording_id: recordingId } },
+    }),
+  );
+}
+
+// ── opening one recording ────────────────────────────────────────────────────────────────────────
+//
+// ⛔ **NONE OF THESE CARRY A CHIP SEATING**, and none of them ever should. `mea.ts` (the video
+// pipeline's half) resolves a `col-row` id through an orientation nobody has established, and
+// reports every identity as provisional. Here the file states its own `electrode`, `x_um` and
+// `y_um`, so a pad's identity is a fact — importing that doubt would make the screen lie.
+
+/**
+ * The chip this recording describes (`GET /api/mea/{id}/recordings/{rid}/layout`).
+ *
+ * ⭐ Every **routed** pad at the file's own µm position, plus the size of the whole chip so the map
+ * can show *which part of it* was recorded. ⛔ Only routed pads: a pad that was never wired up is
+ * the absence of a measurement, and drawing it would invent data.
+ */
+export async function meaChipLayout(analysisId: string, recordingId: string)
+  : Promise<MeaChipLayout> {
+  return unwrap(
+    await api.GET('/api/mea/{analysis_id}/recordings/{recording_id}/layout', {
+      params: { path: { analysis_id: analysisId, recording_id: recordingId } },
+    }),
+  );
+}
+
+/**
+ * How much happened on each pad (`GET /api/mea/{id}/recordings/{rid}/activity`).
+ *
+ * One row per routed pad, **in the same order as `meaChipLayout`'s `pads`**, so the two zip
+ * together without a join. ⭐ It comes from MaxWell's spike table, which needs no proprietary
+ * decoder — so this is trustworthy even on a machine where the waveform reads as a flat line.
+ */
+export async function meaChipActivity(analysisId: string, recordingId: string)
+  : Promise<MeaChipActivity> {
+  return unwrap(
+    await api.GET('/api/mea/{analysis_id}/recordings/{recording_id}/activity', {
+      params: { path: { analysis_id: analysisId, recording_id: recordingId } },
+    }),
+  );
+}
+
+/**
+ * One pad's waveform and spikes for a window (`GET /api/mea/{id}/recordings/{rid}/trace`).
+ *
+ * ⭐ **Asked for by `channel`**, because the chip map was drawn from the file's own coordinates so
+ * the clicked dot already knows its channel. ⚠️ Read `health.flat` before believing `trace_uv` —
+ * a railed window looks exactly like a genuinely silent electrode.
+ */
+export async function meaChannelTrace(
+  analysisId: string,
+  recordingId: string,
+  channel: number,
+  window: { t0?: number; t1?: number } = {},
+): Promise<MeaChannelTrace> {
+  return unwrap(
+    await api.GET('/api/mea/{analysis_id}/recordings/{recording_id}/trace', {
+      params: {
+        path: { analysis_id: analysisId, recording_id: recordingId },
+        query: { channel, t0: window.t0 ?? 0, t1: window.t1 ?? null },
+      },
     }),
   );
 }

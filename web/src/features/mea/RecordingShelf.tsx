@@ -53,9 +53,16 @@ function copyWords(r: MeaShelfEntry): { text: string; tone: 'ok' | 'busy' | 'war
 
 export interface RecordingShelfProps {
   analysisId: string;
+  /**
+   * ⭐ *"You pick one to load, and it opens it up"* — plan 003. The shelf reports the choice and
+   * does not own the viewer, so the two can be read separately and the shelf stays a list of
+   * facts. ⛔ A recording with no file at either address cannot be opened, and its row says why
+   * rather than opening onto an empty chip.
+   */
+  onOpen?: (recordingId: string) => void;
 }
 
-export function RecordingShelf({ analysisId }: RecordingShelfProps) {
+export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
   const toast = useToast();
   const [rows, setRows] = useState<MeaShelfEntry[] | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -264,6 +271,20 @@ export function RecordingShelf({ analysisId }: RecordingShelfProps) {
                 >
                   {words.text}
                 </span>
+                {onOpen && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    // ⛔ A row with no file at either address opens onto nothing. The row already
+                    // says so as a live warning; the button being off is the same fact, said in
+                    // the one place he is about to click.
+                    disabled={busy || r.missing}
+                    onClick={() => onOpen(r.id)}
+                    data-testid="mea-open-recording-button"
+                  >
+                    Open
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"

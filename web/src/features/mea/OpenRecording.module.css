@@ -1,0 +1,52 @@
+/* ONE RECORDING, OPEN. The chip takes the room; the trace sits beside it on a wide window and
+   underneath it on a narrow one — the picture is the thing you steer by, so it never becomes the
+   secondary column. */
+
+.open {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.facts {
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  align-items: start;
+}
+
+@media (min-width: 1100px) {
+  .split {
+    grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.65fr);
+  }
+}
+
+.side {
+  min-width: 0;
+}

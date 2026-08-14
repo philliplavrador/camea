@@ -1,0 +1,84 @@
+/*
+ * ONE PAD'S TRACE. Numbers, not prose (R3/R7) — the same readout grammar as
+ * `features/electrodes/MeaTracePanel.module.css`, deliberately, because the two screens answer the
+ * same question about the same kind of thing and should read the same way. Tokens only, no hex.
+ */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* A pad that heard nothing. ⭐ Quiet on purpose: per his correction of 2026-08-14 this is the
+   ORDINARY case — most routed pads simply have no neuron near them — so it must not be styled
+   like a warning. It is a fact about the biology, not a problem with the recording. */
+.quiet {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scrub {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pos {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 8px 16px;
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.factLabel {
+  color: var(--text-faint);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.factValue {
+  margin: 0;
+  color: var(--data);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.factHint {
+  color: var(--text-faint);
+  font-size: 10px;
+}

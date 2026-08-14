@@ -23,8 +23,10 @@
 // say where they go and the drawer arrives with them — not before, as an empty button.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+import { useState } from 'react';
 import type { AnalysisSummary } from '../../api';
 import { Help } from '../../design';
+import { OpenRecording } from './OpenRecording';
 import { RecordingShelf } from './RecordingShelf';
 import styles from './MeaFeature.module.css';
 
@@ -54,6 +56,12 @@ export interface MeaFeatureProps {
 }
 
 export function MeaFeature({ project }: MeaFeatureProps) {
+  // ⭐ **THE SHELF OR ONE RECORDING, NEVER BOTH** — *"you pick one to load, and it opens it up"*
+  // (his interview, 2026-08-14). Held here rather than in the URL because a recording id is a
+  // Camea-minted handle on a row of the document, not an address the user should be able to type
+  // or bookmark past a `Remove`.
+  const [openId, setOpenId] = useState<string | null>(null);
+
   return (
     <section className={styles.pane} data-testid="mea-feature">
       <header className={styles.head}>
@@ -69,7 +77,15 @@ export function MeaFeature({ project }: MeaFeatureProps) {
         <Help body={WHAT_ADD_DOES} label="What Add recordings does" />
       </header>
 
-      <RecordingShelf analysisId={project.analysis_id} />
+      {openId ? (
+        <OpenRecording
+          analysisId={project.analysis_id}
+          recordingId={openId}
+          onClose={() => setOpenId(null)}
+        />
+      ) : (
+        <RecordingShelf analysisId={project.analysis_id} onOpen={setOpenId} />
+      )}
     </section>
   );
 }

@@ -1,0 +1,150 @@
+/* THE CHIP MAP. The canvas fills the stage; everything else is chrome around it.
+   ⛔ The ramp colours are NOT here — they are data, not theme, and live in `activityScale.ts` so
+   they mean the same thing whatever the surface. Only the chrome below uses the token set. */
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.where {
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.where b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 280px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  overflow: hidden;
+  cursor: crosshair;
+  touch-action: none;
+
+  /* Read by the canvas through getComputedStyle, so the chrome around the dots follows the theme
+     while the dots themselves — which carry meaning — do not. */
+  --chip-outline: var(--grid);
+  --chip-ring: var(--text-dim);
+  --chip-select: var(--text);
+}
+
+.stage:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tip {
+  position: absolute;
+  transform: translate(12px, -50%);
+  pointer-events: none;
+  z-index: var(--z-tooltip);
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* ── the legend ─────────────────────────────────────────────────────────────────────────────── */
+
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ramp {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.rampEnd {
+  align-self: center;
+  padding: 0 6px;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
+.swatch {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  border-radius: 2px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+/* The labels sit ON the swatches, so they must survive both ends of the ramp — hence a fixed
+   light ink with a hard shadow rather than a token colour that would vanish at one end. */
+.swatchLabel {
+  max-width: 100%;
+  padding-bottom: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow: 0 0 3px rgb(0 0 0 / 95%), 0 0 6px rgb(0 0 0 / 70%);
+}
+
+.legendRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+}
+
+.legendRow b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The ring, at legend size — literally the shape the canvas draws, so the key is not a paraphrase. */
+.ringSwatch {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--text-dim);
+}
+
+.caveat {
+  margin: 0;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  color: var(--text-faint);
+}
