@@ -31,6 +31,8 @@ import os
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
+
 from fastapi import APIRouter
 from fastapi.exceptions import HTTPException
 from fastapi.responses import FileResponse, Response
@@ -45,6 +47,7 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     LocateRegionRequest,
     MeaAttachment,
     MeaAttachRequest,
+    MeaOrientationRequest,
     RegionRecord,
     RegionsPayload,
     RegionUpdateRequest,
@@ -972,4 +975,162 @@ def get_mea_trace(analysis_id: str, electrode: str, run_id: str | None = None,
         return out
 
 
-__all__ = ["router", "ApiError", "set_store", "JOB_KIND", "REGION_JOB_KIND", "FEATURE"]
+ORIENTATION_JOB_KIND = "mea_orientation"
+
+#: How far the best correlation must beat the runner-up before the test claims it separated them.
+#: Measured on this project's data, the four seatings of P003693 land within 0.04 of each other
+#: (-0.137 to -0.175) — noise. Same instinct as the mosaic's `margin_thin`: a win by nothing is not
+#: a win, and it must be reported as "cannot tell" rather than as the top of a list.
+MIN_CORRELATION_MARGIN = 0.10
+
+#: 🔴 Shown verbatim wherever the result is. Not behind a `?` — the whole point is that a reader
+#: who glances at the winning seating still learns it is not evidence (issue 003).
+ORIENTATION_CAVEAT = (
+    "This ranking is NOT confirmation. It aligns the two clocks using the 2P lamp marks, and those "
+    "marks did not survive checking against the calcium video — 70 electrical episodes against 5 "
+    "dark stretches in the video, with no time-shift lining them up. The episodes may also be an "
+    "artefact of the raw stream failing to decode rather than the lamp firing. Treat the winner as "
+    "a suggestion to check, not an answer, and re-run this once the MaxLab decoder is in place."
+)
+
+
+@router.post("/api/videomosaic/mea/orientation", status_code=202, response_model=JobRef)
+def post_mea_orientation(body: MeaOrientationRequest) -> dict:
+    """Score the four chip seatings against a located region (202 + `JobRef`).
+
+    A job because it reads every frame of the region recording and makes a full pass over the MEA
+    spike table — minutes, not milliseconds.
+
+    ⭐ **IT PROPOSES; IT NEVER APPLIES.** The winning seating comes back in the result and a human
+    confirms it through `POST /mea/attach`. That is his rule for the whole app and it matters most
+    here: a wrong seating pairs every neuron with the wrong electrode, and would do so invisibly.
+    """
+    from camea.core import mearecording  # noqa: PLC0415
+
+    from . import orientation as vorient  # noqa: PLC0415
+
+    analysis_id = body.analysis_id
+    doc, ws = _video_project(analysis_id)
+    block = _mea_block(doc)
+    if not block.get("mea_dir"):
+        raise ApiError(409, "refused", "no MEA recording is attached to this project")
+
+    grid = dict(doc.get("electrodes") or {})
+    cols, rows = int(grid.get("cols") or 0), int(grid.get("rows") or 0)
+    if not (cols and rows):
+        raise ApiError(409, "refused", "map the electrodes before testing the orientation")
+
+    regions = list(doc.get("regions") or [])
+    if body.region_id:
+        regions = [r for r in regions if str(r.get("id")) == body.region_id]
+    if not regions:
+        raise ApiError(409, "refused",
+                       "this test needs a located region recording — the electrodes under a field "
+                       "are what its spikes are compared against. Locate one first.")
+    region = regions[0]
+    ids = list((region.get("electrodes") or {}).get("ids") or [])
+    if not ids:
+        raise ApiError(409, "refused",
+                       "that region has no electrodes named under it, so there is nothing to score")
+    video = str((region.get("source") or {}).get("path") or "")
+    if not video or not Path(video).is_file():
+        raise ApiError(404, "not_found",
+                       "the region's own recording is not where the project left it")
+
+    paths = mearecording.find_recordings(block["mea_dir"])
+    if body.run_id:
+        paths = [p for p in paths if p.parent.name == body.run_id]
+    if not paths:
+        raise ApiError(404, "not_found", "no MEA recording to test against")
+    rec_path = paths[0]
+
+    def fn(report, cancel):
+        from camea.core import jobs as core_jobs  # noqa: PLC0415
+
+        core_jobs.say(report, "video", 1, 3, 0.0, "reading the region recording")
+        calcium, _fps = vorient.video_activity(video)
+        core_jobs.check_cancelled(cancel, "orientation test")
+        duration = calcium.size * vorient.BIN_S
+
+        core_jobs.say(report, "mea", 2, 3, 0.0, "reading the electrical recording")
+        with mearecording.MeaRecording(rec_path) as r:
+            info = r.info()
+            stride = r.stride()
+            m = r.mapping()
+            channel_of = {int(e): int(c) for e, c in zip(m["electrode"], m["channel"])}
+            sp = r.spikes()
+            spikes_of: dict[int, np.ndarray] = {}
+            for ch in np.unique(sp["channel"]):
+                spikes_of[int(ch)] = sp["t_s"][sp["channel"] == ch]
+            # The lamp marks on each side, and the shift that best lines them up.
+            try:
+                eps = r.sync_episodes()
+                mea_mask = vorient.intervals_to_mask(
+                    [(e.start_s, e.end_s) for e in eps], info.duration_s)
+            except mearecording.RawUndecodable:
+                mea_mask = np.zeros(0, dtype=bool)
+        core_jobs.check_cancelled(cancel, "orientation test")
+
+        core_jobs.say(report, "score", 3, 3, 0.0, "scoring the four seatings")
+        lo, hi = float(calcium.min()), float(calcium.max())
+        dark = calcium < (lo + 0.5 * (hi - lo)) if hi > lo else np.zeros(calcium.size, dtype=bool)
+        offset, quality = vorient.align_offset(mea_mask, dark) if mea_mask.size else (0.0, 0.0)
+
+        scores = vorient.score_seatings(
+            ids, cols=cols, rows=rows, stride=stride, channel_of=channel_of,
+            spikes_of=spikes_of, calcium=calcium, duration_s=duration, offset_s=offset)
+
+        # Rank only what is scorable. A seating with no recorded electrode under the field is not a
+        # loser — it is untested, and sorting it against tested ones would be a lie about the data.
+        ranked = sorted((s for s in scores if s.scorable),
+                        key=lambda s: (s.correlation or -1.0), reverse=True)
+
+        # ⭐ WHAT ACTUALLY SEPARATED THEM — and whether anything did.
+        #
+        # Coverage first, and it is the strongest evidence this test can produce: if only ONE
+        # seating puts any recorded electrode under the field, that is pure geometry. It does not
+        # depend on the clock alignment, and it does not depend on the raw stream decoding — the
+        # two things issue 003 says cannot be trusted here. (Measured on P003658: one seating puts
+        # 210 pads under the region, the other three put none.)
+        #
+        # Otherwise fall back to correlation, but only if the top actually beats the runner-up. Four
+        # near-identical numbers separated by 0.004 are noise, and crowning one would manufacture the
+        # answer this whole feature exists to avoid.
+        best = ranked[0] if ranked else None
+        margin = (float(ranked[0].correlation - ranked[1].correlation)  # type: ignore[operator]
+                  if len(ranked) >= 2 else None)
+        if len(ranked) == 1:
+            decisive, decided_by = True, "coverage"
+        elif margin is not None and margin >= MIN_CORRELATION_MARGIN:
+            decisive, decided_by = True, "correlation"
+        else:
+            decisive, decided_by = False, ""
+        return {
+            "kind": ORIENTATION_JOB_KIND,
+            "analysis_id": analysis_id,
+            "run_id": rec_path.parent.name,
+            "region_id": str(region.get("id") or ""),
+            "region_name": str(region.get("name") or ""),
+            "scores": [s.as_dict() for s in scores],
+            # ⛔ No winner at all when nothing separated them. A `best` the UI could apply would be
+            # read as an answer however it was captioned.
+            "best": ({"flip_x": best.flip_x, "flip_y": best.flip_y, "confirmed": False,
+                      "source": f"orientation test vs region {region.get('name') or ''}".strip()}
+                     if (best and decisive) else None),
+            "decisive": decisive,
+            "decided_by": decided_by,
+            "margin": margin,
+            "offset_s": float(offset),
+            "alignment_quality": float(quality),
+            "caveat": ORIENTATION_CAVEAT,
+        }
+
+    try:
+        job = JOBS.submit_thread(ORIENTATION_JOB_KIND, fn, exclusive=LEASE)
+    except Busy as e:
+        raise ApiError(409, "busy", str(e)) from e
+    return {"job_id": job.job_id, "kind": ORIENTATION_JOB_KIND}
+
+
+__all__ = ["router", "ApiError", "set_store", "JOB_KIND", "REGION_JOB_KIND",
+           "ORIENTATION_JOB_KIND", "FEATURE"]

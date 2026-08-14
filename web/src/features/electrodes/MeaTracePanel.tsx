@@ -166,20 +166,20 @@ export function MeaTracePanel({
             {/* ⚠️ #3 — identity before signal: if the seating is unconfirmed, which electrode this
                 IS has not been established, and that outranks anything about the waveform. */}
             {provisional && (
-              <LiveWarning variant="warn" data-testid="mea-provisional">
+              <div data-testid="mea-provisional"><LiveWarning variant="warn">
                 Provisional pairing. Which way the chip sits in this mosaic has not been confirmed,
                 so this trace may belong to a different electrode.
-              </LiveWarning>
+              </LiveWarning></div>
             )}
 
             {/* ⚠️ #2 — say it before they read the picture as a silent electrode. */}
             {flat && (
-              <LiveWarning variant="warn" data-testid="mea-flat">
+              <div data-testid="mea-flat"><LiveWarning variant="warn">
                 The waveform did not decode. {Math.round((data.health?.fill_fraction ?? 0) * 100)}%
                 of this window is a single repeated value, which no live electrode produces —
                 MaxWell&rsquo;s own decoder (part of MaxLab Live) is needed to read it properly. The
                 spike marks below are unaffected and remain correct.
-              </LiveWarning>
+              </LiveWarning></div>
             )}
 
             <TraceChart

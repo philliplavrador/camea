@@ -3128,6 +3128,45 @@
           }
         }
       }
+    },
+    "/api/videomosaic/mea/orientation": {
+      "post": {
+        "summary": "Post Mea Orientation",
+        "description": "Score the four chip seatings against a located region (202 + `JobRef`).\n\nA job because it reads every frame of the region recording and makes a full pass over the MEA\nspike table \u2014 minutes, not milliseconds.\n\n\u2b50 **IT PROPOSES; IT NEVER APPLIES.** The winning seating comes back in the result and a human\nconfirms it through `POST /mea/attach`. That is his rule for the whole app and it matters most\nhere: a wrong seating pairs every neuron with the wrong electrode, and would do so invisibly.",
+        "operationId": "post_mea_orientation_api_videomosaic_mea_orientation_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeaOrientationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRef"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5861,6 +5900,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/LocateRegionResult"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OrientationTestResult"
                   }
                 ],
                 "discriminator": {
@@ -5870,6 +5912,7 @@
                     "electrode_map": "#/components/schemas/ElectrodeMapResult",
                     "export": "#/components/schemas/ExportResult",
                     "locate_region": "#/components/schemas/LocateRegionResult",
+                    "mea_orientation": "#/components/schemas/OrientationTestResult",
                     "open": "#/components/schemas/OpenJobResult",
                     "recheck": "#/components/schemas/RecheckResult",
                     "recompute": "#/components/schemas/RecomputeResult",
@@ -6669,6 +6712,43 @@
         "title": "MeaOrientation",
         "description": "How the chip's own axes sit in the mosaic \u2014 the half no file records (see header)."
       },
+      "MeaOrientationRequest": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "region_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Id",
+            "description": "Which located region to test against. Defaults to the first one the project has."
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_id"
+        ],
+        "title": "MeaOrientationRequest"
+      },
       "MeaRecordingSummary": {
         "properties": {
           "run_id": {
@@ -7095,6 +7175,101 @@
         "type": "object",
         "title": "OpenSessionRequest",
         "description": "\u26a0\ufe0f `trials` is the caller's selection. A FrameStore holds one shape.\n\n* `trials: null` \u21d2 every snapshot trial. If they are **not** all one shape the open fails with\n  `409 mixed_shape`, listing the groups \u2014 core **refuses to guess** which shape you meant.\n* `trials: [...]` \u21d2 exactly those. The mosaic feature passes its 512\u00d7512 selection here.\n\n\u26d4 Nothing is ever dropped by TRIAL NUMBER. Only by shape, and only with a reason, reported in\n`SessionResponse.skipped`."
+      },
+      "OrientationTestResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "mea_orientation",
+            "title": "Kind",
+            "default": "mea_orientation"
+          },
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "region_id": {
+            "type": "string",
+            "title": "Region Id"
+          },
+          "region_name": {
+            "type": "string",
+            "title": "Region Name",
+            "default": ""
+          },
+          "scores": {
+            "items": {
+              "$ref": "#/components/schemas/SeatingScorePayload"
+            },
+            "type": "array",
+            "title": "Scores"
+          },
+          "best": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MeaOrientation"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The top-ranked seating \u2014 a PROPOSAL, and only when `decisive`. Never applied by the job, and null when the seatings could not be told apart."
+          },
+          "decisive": {
+            "type": "boolean",
+            "title": "Decisive",
+            "description": "\u2b50 Whether the data actually separated the seatings. False means the UI must say **cannot tell** and offer no winner \u2014 crowning the top of four near-identical numbers would manufacture an answer out of noise.",
+            "default": false
+          },
+          "decided_by": {
+            "type": "string",
+            "title": "Decided By",
+            "description": "What separated them: 'coverage' (only one seating puts any recorded electrode under the field \u2014 a geometric fact, independent of the decoder and the clock, so the strongest evidence available here), 'correlation', or '' when nothing did.",
+            "default": ""
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin",
+            "description": "Top correlation minus runner-up, among testable seatings. Null when fewer than two were testable."
+          },
+          "offset_s": {
+            "type": "number",
+            "title": "Offset S",
+            "description": "Clock shift applied, MEA onto video.",
+            "default": 0.0
+          },
+          "alignment_quality": {
+            "type": "number",
+            "title": "Alignment Quality",
+            "description": "Jaccard overlap of the two lamp-mark trains at that offset. \u26a0\ufe0f Read it sceptically: two mostly-on signals overlap substantially at ANY shift. On this project's data the best was 0.65 between signals of 60% and 80% duty \u2014 i.e. chance.",
+            "default": 0.0
+          },
+          "caveat": {
+            "type": "string",
+            "title": "Caveat",
+            "description": "Why this result cannot be taken at face value. The UI shows it verbatim, never behind a `?`.",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "run_id",
+          "region_id"
+        ],
+        "title": "OrientationTestResult",
+        "description": "`job.result` of an `mea_orientation` job \u2014 the four seatings, ranked.\n\n\ud83d\udd34 **UNVALIDATED, AND THE UI MUST SAY SO** (issue 003). The clock alignment rests on the 2P-lamp\nmarks, and those did not survive checking against the calcium video: 70 MEA episodes against 5\nvideo dark stretches, no consistent offset, and a confound where the \"episodes\" may be where the\nbroken decoder emitted anything rather than where the lamp fired. He asked for it built anyway\n(2026-08-13). It ranks; it never confirms. `Orientation.confirmed` is set by a human only."
       },
       "OutputEntry": {
         "properties": {
@@ -8920,6 +9095,64 @@
         ],
         "title": "ScoreResult",
         "description": "\u26a0\ufe0f `ncc` is **`null`** when the overlap is below `exact_ncc`'s floor (< 3000 valid px, or\n< 64 px on a side). The honest answer is *\"not measurable\"* \u2014 **never `0.0`**."
+      },
+      "SeatingScorePayload": {
+        "properties": {
+          "flip_x": {
+            "type": "boolean",
+            "title": "Flip X"
+          },
+          "flip_y": {
+            "type": "boolean",
+            "title": "Flip Y"
+          },
+          "n_recorded": {
+            "type": "integer",
+            "title": "N Recorded",
+            "description": "Of the region's pads, how many this seating maps onto electrodes that were actually recorded."
+          },
+          "n_region": {
+            "type": "integer",
+            "title": "N Region",
+            "description": "How many pads the region covers \u2014 the denominator."
+          },
+          "coverage": {
+            "type": "number",
+            "title": "Coverage"
+          },
+          "n_spikes": {
+            "type": "integer",
+            "title": "N Spikes"
+          },
+          "correlation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation",
+            "description": "Spike rate vs calcium activity. \u2b50 **null means UNTESTABLE** \u2014 this seating puts no recorded electrode under the field \u2014 which is a different answer from a low correlation and must never be rendered as one."
+          },
+          "scorable": {
+            "type": "boolean",
+            "title": "Scorable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "flip_x",
+          "flip_y",
+          "n_recorded",
+          "n_region",
+          "coverage",
+          "n_spikes",
+          "scorable"
+        ],
+        "title": "SeatingScorePayload",
+        "description": "One candidate seating and how well it explains the data."
       },
       "SeedRequest": {
         "properties": {

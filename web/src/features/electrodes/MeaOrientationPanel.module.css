@@ -1,0 +1,64 @@
+/*
+ * THE ORIENTATION PANEL. Numbers, not prose (R3/R7) — mono measurement ink in the table,
+ * dim micro-caps for headers. Tokens only, no hex.
+ */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.settled {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.sub {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+p.sub {
+  margin: 0;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table th {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.table td {
+  color: var(--text-dim);
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.num {
+  color: var(--data);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The proposal. Deliberately the "outstanding work" amber, not the green of something certified:
+   it is a suggestion awaiting a human, and it should read that way. */
+.best td {
+  background: color-mix(in srgb, var(--unverified) 12%, transparent);
+  color: var(--text);
+}

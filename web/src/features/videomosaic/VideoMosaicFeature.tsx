@@ -45,6 +45,7 @@ import { OutputsDrawer } from '../outputs/OutputsDrawer';
 import { CoverageChoice } from '../electrodes/CoverageChoice';
 import { useCoverageHelp } from '../electrodes/device';
 import { ElectrodePanel, type ElectrodeSelection } from '../electrodes/ElectrodePanel';
+import { MeaOrientationPanel } from '../electrodes/MeaOrientationPanel';
 import { MeaTracePanel } from '../electrodes/MeaTracePanel';
 import { buildElectrodeIndex, electrodeAt, lookupElectrode } from '../electrodes/lookup';
 import { fmtDuration, fmtFps } from './format';
@@ -762,6 +763,17 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
                     analysisId={analysisId}
                     electrode={sel?.hit.electrode ?? null}
                     recordings={mea.recordings ?? []}
+                  />
+                )}
+
+                {emap && mea?.attached && (
+                  <MeaOrientationPanel
+                    analysisId={analysisId}
+                    orientation={mea.orientation ?? { flip_x: false, flip_y: false, confirmed: false, source: '' }}
+                    hasRegion={(doc?.regions ?? []).length > 0}
+                    onConfirmed={() => {
+                      void getMea(analysisId).then(setMea);
+                    }}
                   />
                 )}
 

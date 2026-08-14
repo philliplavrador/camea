@@ -80,6 +80,23 @@ are 30.9% non-fill against 1.5% for silent channels in the same window.
 **So the "synchronous episodes" may be an artefact of the broken decode rather than the lamp**, and
 there is currently no way to tell the two apart.
 
+## Built anyway, on his instruction (2026-08-13)
+
+He was shown all of the above and chose to have the test built regardless. It is
+`features/videomosaic/orientation.py` + `POST /api/videomosaic/mea/orientation`, and it carries the
+caveat above verbatim on screen, never behind a `?`.
+
+⭐ **One good thing came out of it that does not depend on any of the doubts here.** The test scores
+*coverage* as well as correlation, and on P003658 exactly one of the four seatings puts any recorded
+electrode under the located region (210 of 1304 pads; the other three put zero). That is geometry —
+independent of the clock alignment AND of the decode — so it is the strongest evidence available,
+and it decided that project. P003693 routed nearly the whole chip, so coverage separates nothing
+there and its four correlations land within 0.004: the job reports **cannot tell** and offers no
+winner rather than crowning noise.
+
+So the correlation half of the test remains untrustworthy until the decoder is fixed; the coverage
+half is sound today. Nothing is confirmed on either project — the flow was verified and then reset.
+
 ## What unblocks it
 
 Get the real decoder — `compression.dll` from the acquisition PC's MaxLab Live install (files stamp

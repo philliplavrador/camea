@@ -174,6 +174,15 @@ export type MeaSpike = Schemas['MeaSpike'];
 export type MeaSyncEpisode = Schemas['MeaSyncEpisode'];
 export type TraceHealthPayload = Schemas['TraceHealthPayload'];
 export type ElectrodeTracePayload = Schemas['ElectrodeTracePayload'];
+/**
+ * 🔴 The four-seating test result. `decisive` false means the data did NOT separate them and the
+ * UI must say *cannot tell* — `best` is null in that case, deliberately, so there is nothing to
+ * apply. `decided_by: 'coverage'` is the strongest evidence available: only one seating puts any
+ * recorded electrode under the field, which is geometry and depends on neither the clock
+ * alignment nor the raw stream decoding. Always render `caveat` (issue 003).
+ */
+export type OrientationTestResult = Schemas['OrientationTestResult'];
+export type SeatingScorePayload = Schemas['SeatingScorePayload'];
 
 // ── Videomosaic: probe / create / build / save ────────────────────────────────────
 export type VideoSource = Schemas['VideoSource'];

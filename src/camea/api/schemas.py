@@ -2229,6 +2229,69 @@ class MeaAttachment(Res):
                                   "a trace's `health` can say that.")
 
 
+class SeatingScorePayload(Res):
+    """One candidate seating and how well it explains the data."""
+
+    flip_x: bool
+    flip_y: bool
+    n_recorded: int = Field(description="Of the region's pads, how many this seating maps onto "
+                            "electrodes that were actually recorded.")
+    n_region: int = Field(description="How many pads the region covers — the denominator.")
+    coverage: float
+    n_spikes: int
+    correlation: float | None = Field(
+        default=None, description="Spike rate vs calcium activity. ⭐ **null means UNTESTABLE** — "
+        "this seating puts no recorded electrode under the field — which is a different answer "
+        "from a low correlation and must never be rendered as one.")
+    scorable: bool
+
+
+class OrientationTestResult(Res):
+    """`job.result` of an `mea_orientation` job — the four seatings, ranked.
+
+    🔴 **UNVALIDATED, AND THE UI MUST SAY SO** (issue 003). The clock alignment rests on the 2P-lamp
+    marks, and those did not survive checking against the calcium video: 70 MEA episodes against 5
+    video dark stretches, no consistent offset, and a confound where the "episodes" may be where the
+    broken decoder emitted anything rather than where the lamp fired. He asked for it built anyway
+    (2026-08-13). It ranks; it never confirms. `Orientation.confirmed` is set by a human only.
+    """
+
+    kind: Literal["mea_orientation"] = "mea_orientation"
+    analysis_id: str
+    run_id: str
+    region_id: str
+    region_name: str = ""
+    scores: list[SeatingScorePayload] = Field(default_factory=list)
+    best: MeaOrientation | None = Field(
+        default=None, description="The top-ranked seating — a PROPOSAL, and only when `decisive`. "
+        "Never applied by the job, and null when the seatings could not be told apart.")
+    decisive: bool = Field(
+        default=False, description="⭐ Whether the data actually separated the seatings. False "
+        "means the UI must say **cannot tell** and offer no winner — crowning the top of four "
+        "near-identical numbers would manufacture an answer out of noise.")
+    decided_by: str = Field(
+        default="", description="What separated them: 'coverage' (only one seating puts any "
+        "recorded electrode under the field — a geometric fact, independent of the decoder and the "
+        "clock, so the strongest evidence available here), 'correlation', or '' when nothing did.")
+    margin: float | None = Field(
+        default=None, description="Top correlation minus runner-up, among testable seatings. "
+        "Null when fewer than two were testable.")
+    offset_s: float = Field(default=0.0, description="Clock shift applied, MEA onto video.")
+    alignment_quality: float = Field(
+        default=0.0, description="Jaccard overlap of the two lamp-mark trains at that offset. "
+        "⚠️ Read it sceptically: two mostly-on signals overlap substantially at ANY shift. On this "
+        "project's data the best was 0.65 between signals of 60% and 80% duty — i.e. chance.")
+    caveat: str = Field(default="", description="Why this result cannot be taken at face value. "
+                        "The UI shows it verbatim, never behind a `?`.")
+
+
+class MeaOrientationRequest(Req):
+    analysis_id: str
+    region_id: str | None = Field(default=None, description="Which located region to test against. "
+                                  "Defaults to the first one the project has.")
+    run_id: str | None = None
+
+
 class MeaAttachRequest(Req):
     analysis_id: str
     mea_dir: str | None = Field(default=None, description="Where to look. When omitted the server "
@@ -2456,7 +2519,8 @@ class LocateRegionResult(Res):
 
 JobResult = Annotated[
     Union[OpenJobResult, BuildResult, ExportResult, RecheckResult, RecomputeResult,
-          VideoMosaicBuildResult, ElectrodeMapResult, LocateRegionResult],
+          VideoMosaicBuildResult, ElectrodeMapResult, LocateRegionResult,
+          OrientationTestResult],
     Field(discriminator="kind"),
 ]
 
@@ -2518,6 +2582,9 @@ __all__ = [
     "ElectrodeTracePayload",
     "MeaAttachRequest",
     "MeaAttachment",
+    "MeaOrientationRequest",
+    "OrientationTestResult",
+    "SeatingScorePayload",
     "MeaOrientation",
     "MeaRecordingSummary",
     "MeaSpike",

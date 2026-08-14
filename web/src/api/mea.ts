@@ -13,7 +13,12 @@
 //     consulting it — see the note on `ElectrodeTracePayload` in types.ts.
 
 import { api, unwrap } from './client';
-import type { ElectrodeTracePayload, MeaAttachment, MeaOrientation } from './types';
+import type {
+  ElectrodeTracePayload,
+  JobRef,
+  MeaAttachment,
+  MeaOrientation,
+} from './types';
 
 /** What electrical data a project has. `attached: false` is a normal first-visit state, not a 404. */
 export async function getMea(analysisId: string): Promise<MeaAttachment> {
@@ -68,6 +73,29 @@ export async function getElectrodeTrace(
           t0: opts.t0 ?? 0,
           t1: opts.t1 ?? null,
         },
+      },
+    }),
+  );
+}
+
+/**
+ * Score the four possible chip seatings against a located region (202 → `JobRef`, job kind
+ * `mea_orientation`). Reads every frame of the region recording, so it is a job, not a call.
+ *
+ * ⭐ **IT PROPOSES; IT NEVER APPLIES.** The result carries `best` only when `decisive` is true, and
+ * applying it is a separate `attachMea({orientation})` that a human triggers. 🔴 And the whole
+ * result is unvalidated — render `caveat` verbatim beside it (issue 003).
+ */
+export async function testMeaOrientation(
+  analysisId: string,
+  opts: { regionId?: string; runId?: string } = {},
+): Promise<JobRef> {
+  return unwrap(
+    await api.POST('/api/videomosaic/mea/orientation', {
+      body: {
+        analysis_id: analysisId,
+        region_id: opts.regionId ?? null,
+        run_id: opts.runId ?? null,
       },
     }),
   );

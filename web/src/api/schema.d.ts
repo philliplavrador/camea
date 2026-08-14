@@ -1693,6 +1693,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/videomosaic/mea/orientation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Mea Orientation
+         * @description Score the four chip seatings against a located region (202 + `JobRef`).
+         *
+         *     A job because it reads every frame of the region recording and makes a full pass over the MEA
+         *     spike table — minutes, not milliseconds.
+         *
+         *     ⭐ **IT PROPOSES; IT NEVER APPLIES.** The winning seating comes back in the result and a human
+         *     confirms it through `POST /mea/attach`. That is his rule for the whole app and it matters most
+         *     here: a wrong seating pairs every neuron with the wrong electrode, and would do so invisibly.
+         */
+        post: operations["post_mea_orientation_api_videomosaic_mea_orientation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3071,7 +3098,7 @@ export interface components {
              * Result
              * @description null until state == 'done'. Discriminated on `kind`.
              */
-            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"]) | null;
+            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"] | components["schemas"]["OrientationTestResult"]) | null;
             /** @description Set iff state == 'failed'. */
             error?: components["schemas"]["JobError"] | null;
         };
@@ -3453,6 +3480,18 @@ export interface components {
              */
             source: string;
         };
+        /** MeaOrientationRequest */
+        MeaOrientationRequest: {
+            /** Analysis Id */
+            analysis_id: string;
+            /**
+             * Region Id
+             * @description Which located region to test against. Defaults to the first one the project has.
+             */
+            region_id?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+        };
         /**
          * MeaRecordingSummary
          * @description One `data.raw.h5` found for a project. Header facts only — no raw decode needed.
@@ -3675,6 +3714,73 @@ export interface components {
             dataset_key?: string | null;
             /** Trials */
             trials?: number[] | null;
+        };
+        /**
+         * OrientationTestResult
+         * @description `job.result` of an `mea_orientation` job — the four seatings, ranked.
+         *
+         *     🔴 **UNVALIDATED, AND THE UI MUST SAY SO** (issue 003). The clock alignment rests on the 2P-lamp
+         *     marks, and those did not survive checking against the calcium video: 70 MEA episodes against 5
+         *     video dark stretches, no consistent offset, and a confound where the "episodes" may be where the
+         *     broken decoder emitted anything rather than where the lamp fired. He asked for it built anyway
+         *     (2026-08-13). It ranks; it never confirms. `Orientation.confirmed` is set by a human only.
+         */
+        OrientationTestResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "mea_orientation";
+            /** Analysis Id */
+            analysis_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Region Id */
+            region_id: string;
+            /**
+             * Region Name
+             * @default
+             */
+            region_name: string;
+            /** Scores */
+            scores?: components["schemas"]["SeatingScorePayload"][];
+            /** @description The top-ranked seating — a PROPOSAL, and only when `decisive`. Never applied by the job, and null when the seatings could not be told apart. */
+            best?: components["schemas"]["MeaOrientation"] | null;
+            /**
+             * Decisive
+             * @description ⭐ Whether the data actually separated the seatings. False means the UI must say **cannot tell** and offer no winner — crowning the top of four near-identical numbers would manufacture an answer out of noise.
+             * @default false
+             */
+            decisive: boolean;
+            /**
+             * Decided By
+             * @description What separated them: 'coverage' (only one seating puts any recorded electrode under the field — a geometric fact, independent of the decoder and the clock, so the strongest evidence available here), 'correlation', or '' when nothing did.
+             * @default
+             */
+            decided_by: string;
+            /**
+             * Margin
+             * @description Top correlation minus runner-up, among testable seatings. Null when fewer than two were testable.
+             */
+            margin?: number | null;
+            /**
+             * Offset S
+             * @description Clock shift applied, MEA onto video.
+             * @default 0
+             */
+            offset_s: number;
+            /**
+             * Alignment Quality
+             * @description Jaccard overlap of the two lamp-mark trains at that offset. ⚠️ Read it sceptically: two mostly-on signals overlap substantially at ANY shift. On this project's data the best was 0.65 between signals of 60% and 80% duty — i.e. chance.
+             * @default 0
+             */
+            alignment_quality: number;
+            /**
+             * Caveat
+             * @description Why this result cannot be taken at face value. The UI shows it verbatim, never behind a `?`.
+             * @default
+             */
+            caveat: string;
         };
         /**
          * OutputEntry
@@ -4517,6 +4623,37 @@ export interface components {
             dropped_anchors?: number[];
             /** Elapsed Ms */
             elapsed_ms: number;
+        };
+        /**
+         * SeatingScorePayload
+         * @description One candidate seating and how well it explains the data.
+         */
+        SeatingScorePayload: {
+            /** Flip X */
+            flip_x: boolean;
+            /** Flip Y */
+            flip_y: boolean;
+            /**
+             * N Recorded
+             * @description Of the region's pads, how many this seating maps onto electrodes that were actually recorded.
+             */
+            n_recorded: number;
+            /**
+             * N Region
+             * @description How many pads the region covers — the denominator.
+             */
+            n_region: number;
+            /** Coverage */
+            coverage: number;
+            /** N Spikes */
+            n_spikes: number;
+            /**
+             * Correlation
+             * @description Spike rate vs calcium activity. ⭐ **null means UNTESTABLE** — this seating puts no recorded electrode under the field — which is a different answer from a low correlation and must never be rendered as one.
+             */
+            correlation?: number | null;
+            /** Scorable */
+            scorable: boolean;
         };
         /**
          * SeedRequest
@@ -7498,6 +7635,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ElectrodeTracePayload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_mea_orientation_api_videomosaic_mea_orientation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MeaOrientationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRef"];
                 };
             };
             /** @description Validation Error */
