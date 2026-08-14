@@ -1,7 +1,7 @@
 ---
 id: 002
 title: Analyze MEA — pick your recordings when you make the project, and they land on its shelf
-status: queued # queued | active | done | abandoned
+status: active # queued | active | done | abandoned
 created: 2026-08-14
 needs: dev server # none | frontend | dev server | engine — which gates this build owes
 blocked-by: none
