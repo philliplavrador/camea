@@ -163,6 +163,36 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
     });
   }, [fitScale, box, chip]);
 
+  /**
+   * Keep the chip overlapping the stage. ⚠️ **A resize must not strand the picture off-stage** —
+   * the same rule `PreviewViewer` states, and the same reason: the box can change under a view that
+   * was perfectly good for the old one, and a user who resizes their window should not have to
+   * work out that the picture is still there, just not here.
+   */
+  const clamp = useCallback(
+    (v: View): View => {
+      const w = chip.w * v.scale;
+      const h = chip.h * v.scale;
+      const x = chip.x0 * v.scale;
+      const y = chip.y0 * v.scale;
+      const keep = 40; // px of chip that must stay on screen
+      return {
+        scale: v.scale,
+        tx: Math.min(box.w - keep - x, Math.max(keep - x - w, v.tx)),
+        ty: Math.min(box.h - keep - y, Math.max(keep - y - h, v.ty)),
+      };
+    },
+    [box, chip],
+  );
+
+  // ⚠️ The wheel handler below is a NATIVE listener (it has to be, to `preventDefault`), so it is
+  // registered once per `fitScale` and cannot close over `clamp` without being torn down and
+  // rebuilt on every resize. A ref keeps it reading the current one.
+  const clampRef = useRef(clamp);
+  useEffect(() => {
+    clampRef.current = clamp;
+  }, [clamp]);
+
   // Fit when the picture arrives, when the box first has a size, and on a new recording.
   useEffect(() => {
     setView(null);
@@ -170,6 +200,11 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
   useEffect(() => {
     if (view == null && fitScale > 0) fit();
   }, [view, fitScale, fit]);
+  // …and a resize keeps what he had, moved back into view rather than reset. ⛔ Not a refit: that
+  // would throw away a zoom he set on purpose every time the window changed.
+  useEffect(() => {
+    if (box.w > 0 && box.h > 0) setView((v) => (v ? clamp(v) : v));
+  }, [box, clamp]);
 
   // ── wheel = zoom at the pointer ─────────────────────────────────────────────────────────────
   // A native non-passive listener: React's is passive, so it could not `preventDefault` and the
@@ -188,7 +223,7 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
         const k = s / v.scale;
         const sx = e.clientX - r.left;
         const sy = e.clientY - r.top;
-        return { scale: s, tx: sx - (sx - v.tx) * k, ty: sy - (sy - v.ty) * k };
+        return clampRef.current({ scale: s, tx: sx - (sx - v.tx) * k, ty: sy - (sy - v.ty) * k });
       });
     };
     el.addEventListener('wheel', onWheel, { passive: false });
@@ -247,7 +282,7 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
       if (!d.moved && Math.hypot(dx, dy) <= CLICK_SLOP_PX) return;
       d.moved = true;
       setHover(null);
-      setView({ scale: view.scale, tx: d.tx + dx, ty: d.ty + dy });
+      setView(clamp({ scale: view.scale, tx: d.tx + dx, ty: d.ty + dy }));
       return;
     }
     // ⭐ Hover names the electrode without a click — a `Done when` box.
