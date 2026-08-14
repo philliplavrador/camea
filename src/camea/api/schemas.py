@@ -947,6 +947,13 @@ class DialogOpenDirectoryRequest(Req):
 class DialogOpenFileRequest(Req):
     title: str = "Open a file"
     filters: list[str] = Field(default_factory=list)
+    allow_multiple: bool = Field(
+        default=False,
+        description="⭐ Several files in one gesture — what *'opens file explorer, can import "
+        "multiple at a time'* means when there IS a desktop. Defaults False, which is what every "
+        "existing caller wants and what this route did before. ⚠️ Only reachable with `--window`; "
+        "over VSCode remote this route is a 501 and Camea's own served picker is the real door.",
+    )
 
 
 class DialogSaveFileRequest(Req):
@@ -956,7 +963,11 @@ class DialogSaveFileRequest(Req):
 
 
 class DialogPathResponse(Res):
-    path: str | None = Field(default=None, description="null = the user cancelled.")
+    path: str | None = Field(default=None, description="null = the user cancelled. With "
+                             "`allow_multiple` this is the FIRST of `paths`, so every existing "
+                             "caller keeps working unchanged.")
+    paths: list[str] = Field(default_factory=list, description="Everything he chose, in order. "
+                             "Empty = cancelled. A single-file dialog returns a list of one.")
 
 
 # ⛔ **`RevealRequest` / `POST /api/fs/reveal` were DELETED on 2026-08-10 (R44).** Showing a project
@@ -2543,6 +2554,123 @@ class CreateMeaProjectRequest(Req):
         description="What he wants to call it. Blank is allowed and becomes a placeholder — "
         "there is no filename to fall back to.",
     )
+    paths: list[str] = Field(
+        default_factory=list,
+        description="⭐ The recordings the wizard's Files step picked, if any. **Create-with-"
+        "recordings is ONE call, not create-then-add**: a second call that failed would strand a "
+        "project he can see on the home screen and cannot use. Omit it (or send `[]`) and this is "
+        "exactly the empty-shelf create, which stays supported — that is the project whose "
+        "recordings he has since removed.",
+    )
+
+
+# ── the shelf ─────────────────────────────────────────────────────────────────────────────────────
+#
+# ⛔ **NOTHING ABOUT WHAT IS *IN* A RECORDING IS EVER WRITTEN DOWN** (I1). The document keeps a path,
+# an id and where the bytes currently are; every number below — duration, channels, spikes — is read
+# off the file at the moment it is asked for. A cached channel count is dataset knowledge with a
+# timestamp on it, and it would go stale the first time a file was replaced under us.
+
+
+class MeaRecordingCandidate(Res):
+    """One row of the import tick-list — a `data.raw.h5` found under the folder he pointed at."""
+
+    path: str
+    label: str = Field(default="", description="What a human calls it — `Network/000690`.")
+    run_id: str = ""
+    assay: str = ""
+    bytes: int = 0
+    duration_s: float | None = None
+    n_channels: int | None = None
+    n_spikes: int | None = None
+    readable: bool = Field(
+        default=True,
+        description="⭐ False = this file is named `data.raw.h5` but does not read as a MaxLab "
+        "recording. It is still LISTED, greyed and un-tickable, with `problem` saying why — a file "
+        "that silently vanished from the list would look like a folder Camea could not see into.",
+    )
+    problem: str = ""
+
+
+class MeaBrowseResult(Res):
+    """`GET /api/mea/browse?path=` — every recording under a folder. ⛔ Reads; never writes."""
+
+    path: str
+    recordings: list[MeaRecordingCandidate] = Field(default_factory=list)
+    truncated: bool = Field(
+        default=False,
+        description="The walk hit its ceiling. The UI says so rather than quietly showing a "
+        "prefix of what is really down there.",
+    )
+
+
+class MeaShelfEntry(Res):
+    """One recording a project holds — the row on the shelf."""
+
+    id: str = Field(description="Minted, stable, and never the path: he may add the same file "
+                    "twice, and a path is not an identity.")
+    label: str = ""
+    run_id: str = ""
+    assay: str = ""
+    source_path: str = Field(description="Where it came from. ⛔ A path, not dataset knowledge — "
+                             "same standing as the manifest's `data_dir`. Read-only, always.")
+    stored_path: str = Field(default="", description="The project's own copy, project-relative "
+                             "(`recordings/<id>/data.raw.h5`). Blank until the copy lands.")
+    # ⚠️ **`copy_state`, not `copy`** — and the plan's sketch of this block says `copy`. Pydantic
+    # warns on every model build that a field called `copy` shadows `BaseModel.copy`, and the
+    # warning prints in the running app, not just in a test. The word he reads is on the shelf; this
+    # is the key underneath it. The DOCUMENT uses the same name, so the two never need translating.
+    copy_state: Literal["referenced", "copying", "stored", "failed"] = Field(
+        description="⭐ Where the app is reading this recording from RIGHT NOW. His answer,"
+        "2026-08-14: *'reference it until the copy is finished'* — usable the instant it is added, "
+        "read from where it sits, with a copy pulled in behind it. ⚠️ **Derived from the disk and "
+        "the job registry, not just from the document**, so a copy interrupted by a restart reports "
+        "as `referenced` (which it is) instead of as a `copying` that will never finish.")
+    copy_pct: float = Field(default=0.0, description="0–100 while `copying`.")
+    copy_error: str = Field(default="", description="Why the copy failed. The recording still "
+                            "works — it is read from the original — and this says what did not.")
+    added: str = ""
+    bytes: int = 0
+    missing: bool = Field(
+        default=False,
+        description="⛔ **The original is no longer where he left it, and there is no copy yet.** "
+        "Said on the shelf as a live warning; the row refuses to open rather than showing empty "
+        "numbers. Every field below is null in this state.",
+    )
+    duration_s: float | None = None
+    n_channels: int | None = None
+    n_samples: int | None = None
+    n_spikes: int | None = None
+
+
+class MeaShelf(Res):
+    """`GET|POST|DELETE /api/mea/{analysis_id}/recordings` — everything on one project's shelf."""
+
+    analysis_id: str
+    recordings: list[MeaShelfEntry] = Field(default_factory=list)
+
+
+class AddMeaRecordingsRequest(Req):
+    """`POST /api/mea/{analysis_id}/recordings` — several at once, the way he asked for them.
+
+    ⭐ **ALL OR NOTHING, AND THE REFUSAL NAMES THE FILE.** If one path on the list does not read as
+    a MaxLab recording, none of them are added. The alternative — take the good ones and report the
+    rest — cannot be offered at *creation* (the response there is the project, with nowhere to put a
+    refusal), and one rule he can state to himself beats two that differ by which door he came
+    through.
+    """
+
+    paths: list[str] = Field(default_factory=list)
+
+
+class MeaCopyResult(Res):
+    """`job.result` of a `mea_copy` job — one recording's copy has landed in the project."""
+
+    kind: Literal["mea_copy"] = "mea_copy"
+    analysis_id: str
+    recording_id: str
+    stored_path: str
+    bytes: int = 0
 
 
 # =================================================================================================
@@ -2557,7 +2685,7 @@ class CreateMeaProjectRequest(Req):
 JobResult = Annotated[
     Union[OpenJobResult, BuildResult, ExportResult, RecheckResult, RecomputeResult,
           VideoMosaicBuildResult, ElectrodeMapResult, LocateRegionResult,
-          OrientationTestResult],
+          OrientationTestResult, MeaCopyResult],
     Field(discriminator="kind"),
 ]
 
@@ -2629,6 +2757,12 @@ __all__ = [
     "TraceHealthPayload",
     # Analyze MEA (its own feature — see the section note; not the videomosaic `Mea*` models)
     "CreateMeaProjectRequest",
+    "AddMeaRecordingsRequest",
+    "MeaBrowseResult",
+    "MeaCopyResult",
+    "MeaRecordingCandidate",
+    "MeaShelf",
+    "MeaShelfEntry",
     # health / gpu / settings
     "HealthResponse",
     "GpuInfo",

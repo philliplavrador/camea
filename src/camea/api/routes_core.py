@@ -1463,18 +1463,27 @@ def post_dialog_open_directory(body: DialogOpenDirectoryRequest) -> dict:
 
     got = WINDOW.create_file_dialog(webview.FOLDER_DIALOG,
                                     directory=str(body.start or ""), allow_multiple=False)
-    return {"path": (str(got[0]).replace("\\", "/") if got else None)}
+    one = (str(got[0]).replace("\\", "/") if got else None)
+    return {"path": one, "paths": ([one] if one else [])}
 
 
 @router.post("/api/dialog/open-file", response_model=DialogPathResponse)
 def post_dialog_open_file(body: DialogOpenFileRequest) -> dict:
+    """⭐ `allow_multiple` arrived 2026-08-14 (plan 002): *"opens file explorer, can import multiple
+    at a time"*. It was hard-coded `False` here, which is still the default, so nothing that already
+    called this route changes — and `path` still carries the first choice beside the new `paths`.
+
+    ⚠️ Reachable only with `--window`. He drives Camea over VSCode remote, where this is a 501 and
+    the served tick-list (`GET /api/mea/browse`) is the picker he actually meets.
+    """
     if WINDOW is None:
         raise _no_window()
     import webview  # noqa: PLC0415
 
-    got = WINDOW.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False,
+    got = WINDOW.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=body.allow_multiple,
                                     file_types=tuple(body.filters) or ())
-    return {"path": (str(got[0]).replace("\\", "/") if got else None)}
+    picked = [str(p).replace("\\", "/") for p in (got or ())]
+    return {"path": (picked[0] if picked else None), "paths": picked}
 
 
 @router.post("/api/dialog/save-file", response_model=DialogPathResponse)
@@ -1487,9 +1496,10 @@ def post_dialog_save_file(body: DialogSaveFileRequest) -> dict:
                                     save_filename=str(body.default_name or ""),
                                     file_types=tuple(body.filters) or ())
     if not got:
-        return {"path": None}
+        return {"path": None, "paths": []}
     path = got[0] if isinstance(got, (list, tuple)) else got
-    return {"path": str(path).replace("\\", "/")}
+    one = str(path).replace("\\", "/")
+    return {"path": one, "paths": [one]}
 
 
 # =================================================================================================
