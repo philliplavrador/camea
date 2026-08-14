@@ -1,13 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // NEW PROJECT — name → task → where the DATA comes from. Route `/new`.
 //
-// ⭐ **ONE PATH QUESTION, AND IT IS NEVER "WHERE SHOULD THIS GO?"** (his ruling 2026-08-10 — R44):
-// *"camea saves project-specific files to its own repo automatically."* Both tasks now name only
-// their input — a dataset folder, or a video file — and the project is created in Camea's store.
+// ⭐ **AT MOST ONE PATH QUESTION, AND IT IS NEVER "WHERE SHOULD THIS GO?"** (his ruling 2026-08-10
+// — R44): *"camea saves project-specific files to its own repo automatically."* A task names only
+// its input — a dataset folder, or a video file, or **nothing at all** — and the project is created
+// in Camea's store either way.
 //
-// Name it → pick a task → say where the data is. On create, the dataset flow opens a session and
-// asks the SERVER to author the document (`createAnalysis` — never authored in the browser), then
-// navigates to `/project/:id`. The video flow probes, creates and starts the build.
+// Name it → pick a task → say where the data is, if that task needs to know. On create, the dataset
+// flow opens a session and asks the SERVER to author the document (`createAnalysis` — never
+// authored in the browser), then navigates to `/project/:id`. The video flow probes, creates and
+// starts the build. `Analyze MEA` creates on the click of its card and navigates.
 //
 // ⚠️ This is the third shape of this step and the last two are worth knowing, because their reasons
 // still hold even though their UI is gone. It was a dataset BROWSER over a registry of "data roots"
@@ -18,11 +20,23 @@
 // ⛔ NO DATASET KNOWLEDGE: which trials are the mosaic is decided by `mosaicTrials` — ONE shared
 // implementation (legacy/mosaic/trials.ts), read off what the backend measured. No number here.
 //
-// ⭐ **THE SNAPSHOT TASK IS NO LONGER OFFERED HERE** (2026-08-11). It moved to `src/legacy/mosaic`
-// and was taken out of `TASKS`, so a new project is always the video pipeline. Everything below it
-// — the `dataset` phase, `onCreate`, `ProjectPaths` — is deliberately LEFT IN PLACE: it is what
-// still creates a snapshot project if the task ever comes back, and existing snapshot projects
-// still open through the FeatureGate. See `src/legacy/mosaic` and `src/camea/legacy/__init__.py`.
+// ⭐ **THE SNAPSHOT TASK IS STILL NOT OFFERED HERE** (2026-08-11). It moved to `src/legacy/mosaic`
+// and was taken out of `TASKS`; the second task that arrived in 2026-08-14 is not it. Everything
+// that served it — the `dataset` phase, `onCreate`, `ProjectPaths` — is deliberately LEFT IN PLACE:
+// it is what would create a snapshot project if the task ever came back, and existing snapshot
+// projects still open through the FeatureGate. See `src/legacy/mosaic` and
+// `src/camea/legacy/__init__.py`.
+//
+// ⭐ **AND THE QUESTION IS BACK** (2026-08-14). There are two tasks again — the video pipeline,
+// renamed to the experiment it actually serves (**Simultaneous MEA + 2P**), and **Analyze MEA**,
+// which opens a MaxWell recording on its own. So `ONLY_TASK` is null, and the whole `task` phase
+// below — its cards, its step in the stepper, its Back button — woke up on its own, exactly as the
+// 2026-08-11 note promised it would. ⛔ Nothing in that machinery was rewritten to do it.
+//
+// ⭐ **A THIRD OUTCOME: A TASK THAT ASKS FOR NOTHING.** `Analyze MEA` has no input at creation —
+// the project is a shelf you put recordings on afterwards — so picking its card **creates and
+// navigates**, and the Data step never happens. That is why `STEPS` is per-task now: a numbered
+// step he will never reach would only make the count lie.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useState } from 'react';
@@ -31,9 +45,11 @@ import {
   getDataset,
   openSessionAndWait,
   createAnalysis,
+  createMeaProject,
   createVideoProject,
   startVideoBuild,
 } from '../../api';
+import type { AnalysisSummary } from '../../api';
 import { useToast } from '../../app';
 import { Button, Card } from '../../design';
 import { mosaicTrials } from '../../legacy/mosaic/trials';
@@ -54,29 +70,66 @@ interface VideoChoice {
   videoName: string;
 }
 
-// ⭐ ONE TASK, SO NO TASK QUESTION. The snapshot builder (`{ key: 'mosaic', label: 'Build mosaic',
-// blurb: 'Place tiles, sweep to verify, export.' }`) was retired from this list on 2026-08-11.
-// Add a second entry here and the `task` phase — its cards, its step in the stepper, its Back
-// button — comes back on its own. That is why the phase machinery below is kept, not deleted.
-const TASKS = [
+interface Task {
+  key: string;
+  /** ⭐ What HE calls it. `key` is the manifest's and never changes; this is free to. */
+  label: string;
+  blurb: string;
+  /** What the third step asks for — or **null for a task that has nothing left to ask**. */
+  dataStep: 'video' | 'dataset' | null;
+  /**
+   * ⭐ Set on a task with no Data step: picking its card **creates the project outright** and the
+   * flow ends there. `dataStep: null` and this being set are the same fact said twice — the first
+   * for the stepper, the second for the outcome — and they must agree.
+   */
+  createNow?: (name: string) => Promise<AnalysisSummary>;
+}
+
+// ⭐ TWO TASKS AGAIN (2026-08-14), so the question is real again. The snapshot builder
+// (`{ key: 'mosaic', label: 'Build mosaic', blurb: 'Place tiles, sweep to verify, export.' }`) was
+// retired from this list on 2026-08-11 and is NOT one of them — it still opens through the
+// FeatureGate, it is just not offered to new projects.
+//
+// ⛔ **THE KEYS ARE THE MANIFEST'S AND DO NOT MOVE.** `videomosaic` is written into every project
+// folder in `%LOCALAPPDATA%/Camea/projects/`; renaming it would be a migration, and what he asked
+// for was a name. So the label changed and the key did not.
+const TASKS: Task[] = [
   {
     key: 'videomosaic',
-    label: 'Build mosaic from video',
+    label: 'Simultaneous MEA + 2P',
     blurb: 'Point Camea at a survey video — it builds the mosaic automatically.',
+    dataStep: 'video',
+  },
+  {
+    key: 'mea',
+    label: 'Analyze MEA',
+    blurb: 'Open a MaxWell recording on its own — click an electrode, read what it recorded.',
+    dataStep: null,
+    createNow: createMeaProject,
   },
 ];
 
 /** The only task, when there is only one — then asking "what do you want to do?" is a list of one,
- *  so we skip straight past it. `null` as soon as a second task returns. */
+ *  so we skip straight past it. `null` as soon as a second task returns (it has). */
 const ONLY_TASK: string | null = TASKS.length === 1 ? TASKS[0].key : null;
 
-const STEPS: { key: Phase; label: string }[] = [
-  { key: 'name', label: 'Name' },
-  // The Task step is dropped from the stepper while there is nothing to choose — a numbered step
-  // he never sees would only make the count lie.
-  ...(ONLY_TASK ? [] : [{ key: 'task' as Phase, label: 'Task' }]),
-  { key: 'dataset', label: 'Data' },
-];
+const taskOf = (key: string): Task => TASKS.find((t) => t.key === key) ?? TASKS[0];
+
+/**
+ * The stepper, for the task in hand. ⭐ **Per-task, because the tasks are not the same length.**
+ * A numbered step he never reaches would make the count lie — which is the same reason the Task
+ * step itself was dropped while there was only one task to choose from.
+ */
+function stepsFor(task: string): { key: Phase; label: string }[] {
+  const t = taskOf(task);
+  return [
+    { key: 'name', label: 'Name' },
+    ...(ONLY_TASK ? [] : [{ key: 'task' as Phase, label: 'Task' }]),
+    ...(t.dataStep
+      ? [{ key: 'dataset' as Phase, label: t.dataStep === 'video' ? 'Video' : 'Data' }]
+      : []),
+  ];
+}
 
 export function NewProjectFlow() {
   const navigate = useNavigate();
@@ -157,10 +210,31 @@ export function NewProjectFlow() {
     }
   }
 
-  const stepIndex = STEPS.findIndex((s) => s.key === phase);
-  const steps = STEPS.map((s) =>
-    s.key === 'dataset' && task === 'videomosaic' ? { ...s, label: 'Video' } : s,
-  );
+  /**
+   * ⭐ **PICKING A TASK THAT ASKS FOR NOTHING IS CREATING IT.** `Analyze MEA` has no path, no
+   * probe, no folder and no build to start — the server makes an empty project out of the name and
+   * he is inside it. There is nothing left to ask, so there is no third step and no Create button.
+   *
+   * A failure lands on a toast and leaves him on the task cards with his name intact: unlike the
+   * video task there is no inline box to show the refusal next to, because there is no box.
+   */
+  async function createNow(make: (name: string) => Promise<{ analysis_id: string }>): Promise<void> {
+    if (creating) return;
+    setCreating('creating project…');
+    try {
+      const project = await make(name.trim());
+      navigate(`/project/${project.analysis_id}`);
+    } catch (e) {
+      setCreating(null);
+      toast.push(
+        `Could not create the project: ${e instanceof Error ? e.message : String(e)}`,
+        { tone: 'danger' },
+      );
+    }
+  }
+
+  const steps = stepsFor(task);
+  const stepIndex = steps.findIndex((s) => s.key === phase);
 
   return (
     <section className={styles.flow} data-testid="new-project-flow">
@@ -219,12 +293,10 @@ export function NewProjectFlow() {
         </div>
       )}
 
-      {/* ⭐ THE TASK PHASE — UNREACHABLE TODAY, AND KEPT ANYWAY. With one task in `TASKS` this never
-          renders (`afterName` jumps straight to Data), because "what do you want to do?" over a list
-          of one is a question with no answer to give. It is left whole — cards, stepper entry, Back —
-          so that adding a second task to `TASKS` is the only edit needed to bring it back. ⛔ Do not
-          delete it as dead code; it is the seam the snapshot builder was unhooked from on
-          2026-08-11, and the seam the next feature will hook into. */}
+      {/* ⭐ THE TASK PHASE — reachable again since 2026-08-14, and reached WITHOUT being rewritten.
+          It was left whole through the year it had nothing to ask (cards, stepper entry, Back), so
+          that adding a second entry to `TASKS` was the only edit needed to bring it back. That bet
+          paid; keep it whole again if a task is ever retired down to one. */}
       {!creating && phase === 'task' && (
         <div className={styles.panel}>
           <p className={styles.prompt}>What do you want to do?</p>
@@ -238,7 +310,10 @@ export function NewProjectFlow() {
                 data-task={t.key}
                 onClick={() => {
                   setTask(t.key);
-                  setPhase('dataset');
+                  // ⭐ A task with nothing left to ask brings its own create, and the card IS the
+                  // Create button.
+                  if (t.createNow) void createNow(t.createNow);
+                  else setPhase('dataset');
                 }}
               >
                 <span className={styles.taskLabel}>{t.label}</span>

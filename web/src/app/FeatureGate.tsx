@@ -20,6 +20,7 @@ import { Button, Card } from '../design';
 // open, so this gate keeps dispatching `feature === 'mosaic'` to it. ⛔ Do not remove this arm.
 import { MosaicFeature } from '../legacy/mosaic/MosaicFeature';
 import { VideoMosaicFeature } from '../features/videomosaic/VideoMosaicFeature';
+import { MeaFeature } from '../features/mea/MeaFeature';
 import styles from './FeatureGate.module.css';
 
 type GateState =
@@ -74,6 +75,9 @@ export function FeatureGate() {
   }
   if (project.feature === 'mosaic') return <MosaicFeature />;
   if (project.feature === 'videomosaic') return <VideoMosaicFeature project={project} />;
+  // ⭐ The third task (2026-08-14): a MaxWell recording opened on its own. It takes the summary
+  // this gate already holds, like the video feature — there is no document for it to fetch yet.
+  if (project.feature === 'mea') return <MeaFeature project={project} />;
   return (
     <GateCard
       title="Unknown task"

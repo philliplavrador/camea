@@ -28,8 +28,26 @@ import { useProjects } from './useProjects';
 import { shortPath } from './pathText';
 import styles from './ProjectManager.module.css';
 
-const TASK_LABEL: Record<string, string> = { mosaic: 'Build mosaic', videomosaic: 'Video mosaic' };
+/**
+ * ⭐ **ONE NAME PER TASK, AND THE CHOOSER OWNS IT.** These have to read the same as the cards on
+ * `/new` (`NewProjectFlow.TASKS`) — a project he made by clicking "Analyze MEA" must not come back
+ * to him as something else. The keys are the manifest's and never move; only these labels do.
+ * `mosaic` is the retired snapshot builder: off the chooser, still openable, still named.
+ */
+const TASK_LABEL: Record<string, string> = {
+  mosaic: 'Build mosaic',
+  videomosaic: 'Simultaneous MEA + 2P',
+  mea: 'Analyze MEA',
+};
 const taskLabel = (feature: string): string => TASK_LABEL[feature] ?? feature;
+
+/**
+ * What a card says where its input's name would go, when it has not been given one. ⭐ Every task
+ * before this one was a wrapper around a folder or a file, so the line was never empty; `Analyze
+ * MEA` is a **shelf**, filled from inside the project, and it is born with nothing on it. A blank
+ * line there would read as a card that failed to load rather than one that is simply new.
+ */
+const NO_INPUT_YET: Record<string, string> = { mea: 'No recordings yet' };
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -243,9 +261,15 @@ function ProjectCard({ project: p, onOpen, onRename, onDelete, onExport }: Proje
           <Badge state="unverified">{taskLabel(p.feature)}</Badge>
         </div>
         <div className={styles.cardFacts}>
-          <span className={styles.dataset} title={p.dataset}>
-            {p.dataset}
-          </span>
+          {p.dataset ? (
+            <span className={styles.dataset} title={p.dataset}>
+              {p.dataset}
+            </span>
+          ) : (
+            <span className={styles.datasetEmpty} data-testid="project-no-input">
+              {NO_INPUT_YET[p.feature] ?? 'Nothing added yet'}
+            </span>
+          )}
           {placed && <span className={styles.placed}>{placed}</span>}
           <span className={styles.modified}>Updated {fmtDate(p.modified)}</span>
         </div>

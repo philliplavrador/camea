@@ -84,7 +84,16 @@ export const TID = {
   npBack: 'np-back',
   npCancel: 'np-cancel',
   npCreate: 'np-create',
-  taskCard: 'task-card', //                 data-task=mosaic
+  taskCard: 'task-card', //                 data-task = videomosaic | mea (⭐ two tasks again since
+  //                                        2026-08-14, so the Task step is a real stop). ⚠️ Address
+  //                                        a card by `data-task`, NEVER by position.
+  projectNoInput: 'project-no-input', //    a card whose task has been given nothing yet ("No
+  //                                        recordings yet") — where a video's filename would sit
+  // ── Analyze MEA (the standalone task) ───────────────────────────────────────
+  meaFeature: 'mea-feature', //             the project screen root
+  meaProjectName: 'mea-project-name',
+  meaEmpty: 'mea-empty', //                 the empty state: no recordings on the shelf yet
+  meaAddRecordings: 'mea-add-recordings', // disabled until plan 002 lands the import
   // ── the ONE path box (R41.3 → R42 → ⭐ R44: "into" is gone, the app owns the folder) ────────
   paths: 'project-paths',
   fromField: 'from-field', //               "Pull data from" — a PathField
@@ -452,7 +461,14 @@ export class Home {
     await expect(this.page).toHaveURL(/\/new(\/|$)/);
     await byId(this.page, TID.npName).fill(name);
     await byId(this.page, TID.npNext).click();
-    await this.page.getByTestId(TID.taskCard).first().click();
+    // ⚠️ **THIS IS THE RETIRED SNAPSHOT LANE'S DOOR, AND IT IS STILL SHUT.** The card it needs is
+    // `data-task="mosaic"`, which left `NewProjectFlow.TASKS` on 2026-08-11 and did NOT come back
+    // when the Task step did on 2026-08-14 (the second task is `mea`, a different thing entirely).
+    // So every spec in `RETIRED_SNAPSHOT_SPECS` still fails here, by timeout, for the one reason
+    // that is true — restoring the snapshot task is what makes them green, not editing this line.
+    // ⛔ Do NOT "fix" it to `.first()`: that would click `Simultaneous MEA + 2P` and drive the
+    // wrong pipeline, turning an honest red into a confusing one.
+    await this.page.locator(`[data-testid="${TID.taskCard}"][data-task="mosaic"]`).click();
 
     await fillPath(this.page, TID.fromField, PATHS.data);
     await expect(this.card()).toBeVisible();

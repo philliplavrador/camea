@@ -88,6 +88,16 @@
   white-space: nowrap;
 }
 
+/* The same line, for a project whose input has not arrived yet. Faint and italic so it reads as a
+   state rather than as the name of something. */
+.datasetEmpty {
+  color: var(--text-faint);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .placed {
   font-variant-numeric: tabular-nums;
 }

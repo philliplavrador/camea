@@ -21,11 +21,12 @@ async function toVideoStep(page: Page, name: string): Promise<void> {
   await page.getByTestId('new-project').click();
   await page.getByTestId('np-name').fill(name);
   await page.getByTestId('np-name').press('Enter');
-  // ⭐ The TASK step is skipped while video is the only task (the snapshot builder was retired
-  // 2026-08-11 — see `NewProjectFlow.TASKS`). Click the card only when it is actually offered, so
-  // this helper keeps working in both worlds and needs no edit when a second task returns.
-  const card = page.locator('[data-testid="task-card"][data-task="videomosaic"]');
-  if ((await card.count()) > 0) await card.click();
+  // ⭐ **THE TASK STEP IS REAL AGAIN** (2026-08-14): `Analyze MEA` joined `NewProjectFlow.TASKS`,
+  // so "what do you want to do?" has two answers and this flow goes through it. Addressed by
+  // `data-task`, never by position — the card order is a design choice and must stay free to move.
+  // (This used to click the card only `if ((await card.count()) > 0)`, which was right while the
+  // step was skipped and is a race now that it always renders: `count()` does not auto-wait.)
+  await page.locator('[data-testid="task-card"][data-task="videomosaic"]').click();
   await expect(page.getByTestId('np-video-path')).toBeVisible({ timeout: SHORT });
 }
 

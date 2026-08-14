@@ -214,6 +214,12 @@ export type LocateRegionResult = Schemas['LocateRegionResult'];
  */
 export type RegionStatus = RegionRecord['status'];
 
+// ── Analyze MEA: the standalone task ──────────────────────────────────────────────
+// ⚠️ NOT the `Mea*` types above. Those belong to `videomosaic` — they attach an electrical
+// recording to an OPTICAL project and carry the chip-seating doubt that comes with a microscope.
+// This task has no microscope and none of that doubt; its ids come out of the file itself.
+export type CreateMeaProjectRequest = Schemas['CreateMeaProjectRequest'];
+
 // ── System: settings / fs / dialogs / health ──────────────────────────────────────
 export type Settings = Schemas['Settings'];
 export type SettingsUpdate = Schemas['SettingsUpdate'];
