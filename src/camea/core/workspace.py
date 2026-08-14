@@ -96,6 +96,8 @@ __all__ = [
     "DOCUMENT",
     "AUTOSAVE",
     "OUTPUTS",
+    "VIDEOS",
+    "RECORDINGS",
     # 🔴 atomic IO. Everything the app writes goes through these.
     "atomic_write_text",
     "atomic_write_bytes",
@@ -139,6 +141,24 @@ A project HOLDS its files: the survey the mosaic came from and every region reco
 against it are copied in here, so a project is self-contained and survives the originals being
 moved, renamed or deleted. It is an INPUT folder and the Outputs panel does not list it —
 `outputs/` is what the user made, `videos/` is what he gave the app.
+"""
+
+RECORDINGS = "recordings"
+"""⭐ The project's own copies of the MaxWell `.h5` recordings on its shelf (2026-08-14, plan 002).
+
+The same idea as `VIDEOS`, one folder along: an `Analyze MEA` project holds the recordings it was
+given, so it survives the originals being moved or renamed. ⚠️ **The copy is asynchronous** — a
+recording is usable the instant it is added (read from where it sits) and a job pulls a copy in
+behind it; the document records which of the two a given recording is currently being read from.
+That is the answer he gave when asked whether adding a file copies it or points at it: *"reference
+it until the copy is finished."*
+
+⛔ **An INPUT folder, like `videos/`.** The Outputs panel does not list it — `outputs/` is what the
+user made, this is what he gave the app — and ⛔ the user's own `.h5` is never modified or moved.
+
+🔴 **AND IT IS IN `Project.own_entries()`.** These files are GIGABYTES. Leaving the name out of that
+set would make `move_to` and a non-store `delete()` walk away from them silently — see the warning
+there, and `tests/unit/test_project.py :: test_own_entries_includes_the_recordings_folder`.
 """
 
 #: The workspace format. Bump only if the LAYOUT changes — the document has its own schema_version.

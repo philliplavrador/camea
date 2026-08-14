@@ -23,7 +23,15 @@ from camea.core.project import (
     store_folders,
     store_root,
 )
-from camea.core.workspace import PathRefused, SlotMismatch, repo_root
+from camea.core.workspace import (
+    DOCUMENT,
+    OUTPUTS,
+    RECORDINGS,
+    VIDEOS,
+    PathRefused,
+    SlotMismatch,
+    repo_root,
+)
 
 
 def make(tmp_path, folder="p", label="a project", **kw):
@@ -392,3 +400,62 @@ def test_move_to_refuses_a_destination_inside_a_dataset(tmp_path):
     with pytest.raises(DatasetIsReadOnly):
         pr.move_to(ds / "mosaic")
     assert pr.path.is_dir()
+
+
+# =================================================================================================
+# 🔴 own_entries — every folder Camea writes into, and the gigabytes that go missing if one is left out
+# =================================================================================================
+
+
+def test_own_entries_includes_every_folder_camea_writes_into(tmp_path):
+    """🔴 **THE GUARD ON THE `own_entries()` NAME SET.** It is written as a literal, so a new storage
+    folder is added to it by hand — and forgetting is invisible in ordinary use, because every
+    project the app makes today is `in_store` and that branch `rmtree`s the whole folder without ever
+    calling this.
+
+    So this test enumerates the CONSTANTS instead of listing names, and goes red the moment storage
+    grows a folder that `own_entries` has not been told about. `recordings/` (plan 002) is the one
+    that motivated it: MaxWell `.h5` files are gigabytes each, and a migration that left them behind
+    would be silent.
+    """
+    pr = make(tmp_path, folder="old")
+    pr.save_document({"id": pr.analysis_id, "dataset_key": "k1"})
+    for name in (OUTPUTS, VIDEOS, RECORDINGS):
+        (pr.path / name).mkdir(exist_ok=True)
+        (pr.path / name / "a file").write_bytes(b"x")
+
+    ours = {p.name for p in pr.own_entries()}
+    assert {MARKER, DOCUMENT, OUTPUTS, VIDEOS, RECORDINGS} <= ours
+
+
+def test_moving_a_project_takes_its_recordings_with_it(tmp_path):
+    """🔴 **THE FAILURE THIS EXISTS TO CATCH, END TO END.** `move_to` moves `own_entries()` and
+    nothing else — deliberately, because the source is a folder the *user* named and may hold his own
+    files. A `recordings/` missing from that set therefore does not raise: the migration simply
+    succeeds and leaves several GB of `.h5` copies stranded in a folder the app will never look at
+    again. Assert the bytes arrive, and that nothing is left behind."""
+    pr = make(tmp_path, folder="old")
+    pr.save_document({"id": pr.analysis_id, "dataset_key": "k1"})
+    (pr.recordings_dir / "abc").mkdir()
+    (pr.recordings_dir / "abc" / "data.raw.h5").write_bytes(b"MAXLAB")
+    was = pr.path
+
+    moved = pr.move_to(tmp_path / "store" / pr.analysis_id)
+
+    assert (moved.path / RECORDINGS / "abc" / "data.raw.h5").read_bytes() == b"MAXLAB"
+    assert not was.exists(), "the recordings did not stay behind in a husk of the old folder"
+
+
+def test_deleting_a_project_OUTSIDE_the_store_takes_its_recordings_but_not_his_files(tmp_path):
+    """The other half of the same trap. Outside the store `delete()` removes only `own_entries()`, so
+    a forgotten `recordings/` would survive its own project — unreachable, and gigabytes."""
+    pr = make(tmp_path, folder="his folder")
+    pr.save_document({"id": pr.analysis_id, "dataset_key": "k1"})
+    (pr.recordings_dir / "abc").mkdir()
+    (pr.recordings_dir / "abc" / "data.raw.h5").write_bytes(b"MAXLAB")
+    (pr.path / "notes.pdf").write_bytes(b"%PDF")
+
+    pr.delete()
+
+    assert not (pr.path / RECORDINGS).exists()
+    assert (pr.path / "notes.pdf").read_bytes() == b"%PDF", "his own file is never ours to delete"

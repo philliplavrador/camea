@@ -64,6 +64,7 @@ from camea.core.workspace import (
     AUTOSAVE,
     DOCUMENT,
     OUTPUTS,
+    RECORDINGS,
     VIDEOS,
     Analysis,
     NoSuchAnalysis,
@@ -406,6 +407,17 @@ class Project:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
+    @property
+    def recordings_dir(self) -> Path:
+        """The project's own copies of its MEA recordings. See `workspace.RECORDINGS`.
+
+        ⚠️ Mirrors `videos_dir` deliberately, down to creating on demand: the two answer the same
+        question ("where does the project keep the file the user gave it?") and the day they stop
+        agreeing is the day one of them gets forgotten by `own_entries`."""
+        d = self.path / RECORDINGS
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
     def is_project(self) -> bool:
         return self.manifest_path.is_file()
 
@@ -413,15 +425,26 @@ class Project:
         """🔴 **EVERY FILE IN THIS FOLDER THAT IS CAMEA'S, AND NOTHING ELSE.** Sorted, existing only.
 
         This is the answer to the one question `move_to` and `delete` must never get wrong when the
-        folder belongs to the **user**: the manifest, the document, the autosave, `outputs/` — and
-        the files the **document itself names** in `build.outputs`, because the video feature wrote
-        its artifacts flat into the project folder before R44 and those are ours too.
+        folder belongs to the **user**: the manifest, the document, the autosave, `outputs/`,
+        `videos/`, `recordings/` — and the files the **document itself names** in `build.outputs`,
+        because the video feature wrote its artifacts flat into the project folder before R44 and
+        those are ours too.
 
         ⚠️ **The document is the authority on the build's files, never a glob.** `*.png` in that
         folder would sweep up a screenshot the user dropped there; `build.outputs` is what the app
         actually wrote, recorded by the code that wrote it.
+
+        🔴 **EVERY NEW INPUT FOLDER MUST BE ADDED HERE, AND THE COST OF FORGETTING IS GIGABYTES.**
+        `recordings/` (2026-08-14, plan 002) holds copies of MaxWell `.h5` files — a few GB each.
+        Left out of this set, `move_to` would migrate a pre-R44 project and leave them behind in the
+        user's folder, and `delete()` on that same folder would too. ⚠️ **Neither shows up in
+        ordinary testing**: every project the app makes today is `in_store`, and that branch
+        `rmtree`s the whole folder without consulting this method at all. So the guard is a test —
+        `tests/unit/test_project.py :: test_own_entries_includes_every_folder_camea_writes_into`,
+        which enumerates the constants rather than listing names by hand, and goes red the moment a
+        seventh name is added to storage without being added here.
         """
-        names = {MARKER, DOCUMENT, AUTOSAVE, OUTPUTS, VIDEOS}
+        names = {MARKER, DOCUMENT, AUTOSAVE, OUTPUTS, VIDEOS, RECORDINGS}
         try:
             doc = json.loads(self.document_path.read_text(encoding="utf-8"))
             outputs = ((doc.get("build") or {}).get("outputs") or {}) if isinstance(doc, dict) else {}
@@ -670,6 +693,9 @@ class ProjectSet:
 
     def videos_dir(self, analysis_id: str) -> Path:
         return self._lookup(analysis_id).videos_dir
+
+    def recordings_dir(self, analysis_id: str) -> Path:
+        return self._lookup(analysis_id).recordings_dir
 
     def save_document(self, analysis_id: str, doc: Mapping | str) -> dict:
         return self._lookup(analysis_id).save_document(doc)
