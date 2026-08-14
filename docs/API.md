@@ -141,10 +141,16 @@ the project has been in Camea's store since Create, and its mosaic is in that pr
 
 ### ANALYZE MEA — the third feature. Everything under `/api/mea`.
 
-⭐ **ZERO path questions** — one fewer than any other way to make a project. The video task names its
-video; the snapshot task names its dataset folder; this one names **nothing**, because at creation it
-has no input. The project is a *shelf*: he names it, and puts MaxWell `.h5` recordings on it from
-inside afterwards.
+⭐ **ONE data question, and it names the recordings he is bringing IN** — the video task names its
+video, the snapshot task names its dataset folder, and this one names **several `.h5` files at
+once**. ⚠️ **Updated 2026-08-14 (plan 002).** For one day this section read *"ZERO path questions"*,
+because plan 001 shipped an intermediate state in which the project was created empty and filled
+from inside. He reversed that the same day — *"you create the project then you select what you want
+to do in this project ... then after that it asks you to upload the files you need for that task"* —
+so the project is now created **with its recordings already on its shelf**. That restores R41 and
+R44.2 rather than excepting them.
+
+The project is still a *shelf*: several recordings, added at creation or later, each removable.
 
 ⚠️ **Not to be confused with `/api/videomosaic/.../mea/*`.** Those routes attach an electrical
 recording to an *optical* project and resolve a `col-row` grid id through a chip seating nobody has
@@ -153,7 +159,17 @@ and `y_um`, so there is no seating question and it must not grow one.
 
 | | route | body → response |
 |---|---|---|
-| **create** | `POST /api/mea/projects` | `CreateMeaProjectRequest` (**a name, and nothing else**) → `AnalysisSummary`. The server authors the doc in the store (R44); the payload is an empty shelf (`recordings: []`). `dataset_key`/`dataset`/`data_dir` are **empty on purpose** — there is no dataset to address, and `src/camea/features/mea/routes.py` records what was read to decide that |
+| **create** | `POST /api/mea/projects` | `CreateMeaProjectRequest` (`name` + an optional `paths`) → `AnalysisSummary`. ⭐ **Create-with-recordings is ONE call**: every path is read **before** the project is created, so a file that is not a MaxLab recording means the refusal **names it** and *no project exists* to clean up. `paths` omitted ⇒ the empty shelf, which is still a real state (it is what he is left with after removing his last recording). `dataset_key`/`dataset`/`data_dir` stay **empty on purpose** — a recording is a file on the shelf, not the project's dataset; `src/camea/features/mea/routes.py` records what was read to decide that |
+| **browse** | `GET /api/mea/browse?path=` | → `MeaBrowseResult`. ⭐ **The one route in the app with NO project id**, and it must not be given one "for consistency": the wizard calls it *before a project exists*, which is exactly what lets one import component be mounted both there and inside a project. Every `data.raw.h5` under `path`, each with its own header facts. ⛔ Reads; never writes. A file that does not open is **listed** with `readable: false` and why — never dropped |
+| **shelf** | `GET /api/mea/{id}/recordings` | → `MeaShelf`. ⚠️ `copy_state` is **derived from the disk and the job registry**, not echoed from the document, so a copy interrupted by a restart reports as `referenced` (which it is) rather than a `copying` that will never finish. Every number is read off the file on the way past — ⛔ nothing about what is *in* a recording is stored (I1) |
+| **add** | `POST /api/mea/{id}/recordings` | `AddMeaRecordingsRequest` → `MeaShelf`, 201. Several at once; **all or nothing**, and the refusal names the file. Each lands as `referenced` and gets its own copy job (`mea_copy`, one **per recording** so the shelf can show a percentage per row) |
+| **remove** | `DELETE /api/mea/{id}/recordings/{rid}` | → `MeaShelf`. Forgets it and deletes **Camea's copy**. ⛔ **The user's original is never touched, under any circumstance** |
+
+⭐ **Where the bytes are.** A recording is usable the instant it is added, read from wherever it
+sits; a background job copies it into `<project>/recordings/<rid>/` (R44 — inside the project and
+nowhere else, source opened read-only) and every later read uses that copy.
+`features/mea/recordings.py :: open_path` is the **one** place that decides which of the two to
+read, and everything added later must call it rather than deciding again.
 
 ---
 

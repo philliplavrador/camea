@@ -65,7 +65,15 @@ export function RecordingShelf({ analysisId }: RecordingShelfProps) {
   const [confirming, setConfirming] = useState<MeaShelfEntry | null>(null);
   const alive = useRef(true);
 
-  const refresh = useCallback(async () => {
+  /**
+   * Re-read the shelf. -> the rows, or **`null` when the read itself failed**.
+   *
+   * ⚠️ **`null` and `[]` are different answers and the difference is load-bearing**: `[]` is an
+   * empty shelf, `null` is "Camea could not find out". `askThenRemove` below is the reason — it has
+   * to decide whether a remove is the irreversible kind, and a failed read that came back as `[]`
+   * would fall through to stale data on exactly the click that cannot be undone.
+   */
+  const refresh = useCallback(async (): Promise<MeaShelfEntry[] | null> => {
     try {
       const shelf = await listRecordings(analysisId);
       if (alive.current) {
@@ -75,7 +83,7 @@ export function RecordingShelf({ analysisId }: RecordingShelfProps) {
       return shelf.recordings ?? [];
     } catch (e) {
       if (alive.current) setFailure(e instanceof Error ? e.message : String(e));
-      return [];
+      return null;
     }
   }, [analysisId]);
 
@@ -134,10 +142,22 @@ export function RecordingShelf({ analysisId }: RecordingShelfProps) {
    *
    * ⚠️ And it re-reads the shelf first, so the question is asked about the disk as it is **at the
    * moment he clicks** — a drive that has been plugged back in must not still be warned about.
+   *
+   * 🔴 **IF THE RE-READ FAILS, NOTHING IS REMOVED.** Not "fall back to what the screen last knew":
+   * the whole point of the re-read is to find out whether this click is the irreversible kind, and
+   * proceeding on stale data is precisely the case where it would be irreversible and unannounced.
+   * Camea could not check, so Camea does not do it, and says so.
    */
   async function askThenRemove(row: MeaShelfEntry): Promise<void> {
     if (busy) return;
-    const fresh = (await refresh()).find((r) => r.id === row.id) ?? row;
+    const rows_ = await refresh();
+    if (rows_ === null) {
+      toast.push('Camea could not check that recording just now, so nothing was removed. Try again.',
+        { tone: 'danger' });
+      return;
+    }
+    const fresh = rows_.find((r) => r.id === row.id);
+    if (fresh === undefined) return; // already gone — another tab, or a double click
     if (fresh.copy_state === 'stored' && !fresh.source_present) {
       setConfirming(fresh);
       return;
