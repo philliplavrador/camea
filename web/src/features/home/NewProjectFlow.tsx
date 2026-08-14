@@ -119,15 +119,24 @@ const taskOf = (key: string): Task => TASKS.find((t) => t.key === key) ?? TASKS[
  * The stepper, for the task in hand. ⭐ **Per-task, because the tasks are not the same length.**
  * A numbered step he never reaches would make the count lie — which is the same reason the Task
  * step itself was dropped while there was only one task to choose from.
+ *
+ * ⚠️ **`picked` is not a nicety.** Before he has answered "what do you want to do?", `task` is only
+ * the default, so its data step is a GUESS — and captioning it `Video` while he is looking at a
+ * card called `Analyze MEA` promises the wrong thing. Until he picks, the third step is shown but
+ * left neutral: it still says how much is left (it never undercounts, whichever card he takes),
+ * without naming something he has not chosen.
  */
-function stepsFor(task: string): { key: Phase; label: string }[] {
+function stepsFor(task: string, picked: boolean): { key: Phase; label: string }[] {
   const t = taskOf(task);
+  const data: { key: Phase; label: string }[] = !picked
+    ? [{ key: 'dataset', label: 'Data' }]
+    : t.dataStep
+      ? [{ key: 'dataset', label: t.dataStep === 'video' ? 'Video' : 'Data' }]
+      : [];
   return [
     { key: 'name', label: 'Name' },
     ...(ONLY_TASK ? [] : [{ key: 'task' as Phase, label: 'Task' }]),
-    ...(t.dataStep
-      ? [{ key: 'dataset' as Phase, label: t.dataStep === 'video' ? 'Video' : 'Data' }]
-      : []),
+    ...data,
   ];
 }
 
@@ -137,7 +146,10 @@ export function NewProjectFlow() {
 
   const [phase, setPhase] = useState<Phase>('name');
   const [name, setName] = useState('');
+  // ⭐ `task` starts as the default and `picked` says whether that is his answer or ours — see
+  // `stepsFor`. With one task there is nothing to pick, so it is settled from the start.
   const [task, setTask] = useState(TASKS[0].key);
+  const [picked, setPicked] = useState(ONLY_TASK != null);
   const [choice, setChoice] = useState<Choice | null>(null);
   const [videoChoice, setVideoChoice] = useState<VideoChoice | null>(null);
   const [creating, setCreating] = useState<string | null>(null); // progress message while creating
@@ -155,7 +167,12 @@ export function NewProjectFlow() {
       setPhase('dataset');
     } else setPhase('task');
   }, []);
-  const beforeData = useCallback(() => setPhase(ONLY_TASK ? 'name' : 'task'), []);
+  const beforeData = useCallback(() => {
+    // Back from the Data step puts the question back in front of him, so his answer to it is
+    // unmade too and the third step goes neutral again (`stepsFor`).
+    setPicked(ONLY_TASK != null);
+    setPhase(ONLY_TASK ? 'name' : 'task');
+  }, []);
 
   async function onCreate(): Promise<void> {
     if (creating || !choice) return;
@@ -233,7 +250,7 @@ export function NewProjectFlow() {
     }
   }
 
-  const steps = stepsFor(task);
+  const steps = stepsFor(task, picked);
   const stepIndex = steps.findIndex((s) => s.key === phase);
 
   return (
@@ -310,6 +327,7 @@ export function NewProjectFlow() {
                 data-task={t.key}
                 onClick={() => {
                   setTask(t.key);
+                  setPicked(true);
                   // ⭐ A task with nothing left to ask brings its own create, and the card IS the
                   // Create button.
                   if (t.createNow) void createNow(t.createNow);
