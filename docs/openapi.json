@@ -7329,8 +7329,14 @@
           "missing": {
             "type": "boolean",
             "title": "Missing",
-            "description": "\u26d4 **The original is no longer where he left it, and there is no copy yet.** Said on the shelf as a live warning; the row refuses to open rather than showing empty numbers. Every field below is null in this state.",
+            "description": "\u26d4 **There is no file to read at either address** \u2014 his original is not where he left it and no copy has landed. Said on the shelf as a live warning; the row refuses to open rather than showing empty numbers. Every field below is null in this state.",
             "default": false
+          },
+          "source_present": {
+            "type": "boolean",
+            "title": "Source Present",
+            "description": "\u2b50 **Is HIS OWN file at `source_path` right now?** Stat'ed on every read, never cached from import time, because a drive that was unplugged can come back. \u26a0\ufe0f It exists for exactly one decision: `stored` **and not** `source_present` is the one case where removing a recording destroys the last copy of it, and the only case that asks him first (his ruling, 2026-08-14). \u26d4 Do not read it as `missing` \u2014 a `referenced` recording with no source has no copy either, so removing THAT destroys nothing.",
+            "default": true
           },
           "duration_s": {
             "anyOf": [

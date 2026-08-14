@@ -272,6 +272,11 @@ def shelf_entry(project_dir: str | Path, rec: Mapping) -> dict:
             state = "failed"
 
     path = open_path(project_dir, rec)
+    # ⭐ **STAT'ED NOW, NEVER CACHED FROM IMPORT TIME.** An unplugged drive comes back, and a
+    # recording that quietly kept claiming his file was gone would put a confirm box in front of a
+    # remove that destroys nothing. See `shelf_entry`'s caller and `RecordingShelf.tsx`.
+    src = str(rec.get("source_path") or "")
+    source_present = bool(src) and Path(src).is_file()
     out: dict[str, Any] = {
         "id": rid,
         "label": str(rec.get("label") or ""),
@@ -285,6 +290,7 @@ def shelf_entry(project_dir: str | Path, rec: Mapping) -> dict:
         "added": str(rec.get("added") or ""),
         "bytes": int(rec.get("bytes") or 0),
         "missing": path is None,
+        "source_present": source_present,
         "duration_s": None,
         "n_channels": None,
         "n_samples": None,

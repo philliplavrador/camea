@@ -1,0 +1,170 @@
+/* THE SHELF — one row per recording. A list of facts, not a pipeline: no steps, no locks, no
+   progress bar across the top. The only motion on this screen is a copy filling in behind him. */
+
+.shelf {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.heading {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* 001's empty state, unchanged in shape: a dashed well with one line and one button. The shape of
+   the screen is the promise — a screen that grows a control later reads as a different screen. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 32px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+
+.lead {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  color: var(--text);
+}
+
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  min-width: 0;
+}
+
+/* A recording that has lost its file is marked on the row itself as well as in its warning: the
+   warning says what happened, the border says which row it happened to. */
+.row[data-missing='true'] {
+  border-color: var(--warn);
+}
+
+.rowMain {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.facts {
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.gone {
+  margin: 0;
+}
+
+.rowSide {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Where Camea is reading this recording from. Deliberately quiet: it is a status, not a warning —
+   "in your folder while the copy runs" is the DESIGN working, not a problem. `warn` is the one
+   tone that raises its voice, and it means the copy did not finish. */
+.copy {
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.copy[data-tone='ok'] {
+  color: var(--good);
+}
+
+.copy[data-tone='warn'] {
+  color: var(--warn);
+}
+
+/* ── the two dialogs: add, and the one confirm this screen has ───────────────────────────────── */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 55%);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(640px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+}
+
+.dialogTitle {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  font-weight: 650;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.dialogBody {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--text-dim);
+}
+
+.dialogFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -3883,10 +3883,16 @@ export interface components {
             bytes: number;
             /**
              * Missing
-             * @description ⛔ **The original is no longer where he left it, and there is no copy yet.** Said on the shelf as a live warning; the row refuses to open rather than showing empty numbers. Every field below is null in this state.
+             * @description ⛔ **There is no file to read at either address** — his original is not where he left it and no copy has landed. Said on the shelf as a live warning; the row refuses to open rather than showing empty numbers. Every field below is null in this state.
              * @default false
              */
             missing: boolean;
+            /**
+             * Source Present
+             * @description ⭐ **Is HIS OWN file at `source_path` right now?** Stat'ed on every read, never cached from import time, because a drive that was unplugged can come back. ⚠️ It exists for exactly one decision: `stored` **and not** `source_present` is the one case where removing a recording destroys the last copy of it, and the only case that asks him first (his ruling, 2026-08-14). ⛔ Do not read it as `missing` — a `referenced` recording with no source has no copy either, so removing THAT destroys nothing.
+             * @default true
+             */
+            source_present: boolean;
             /** Duration S */
             duration_s?: number | null;
             /** N Channels */
