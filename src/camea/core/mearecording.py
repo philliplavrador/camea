@@ -619,6 +619,55 @@ class MeaRecording:
         sp = self.spikes()
         return sp[sp["channel"] == int(channel)]
 
+    def activity(self) -> np.ndarray:
+        """How much happened on each routed pad — ``(channel, n_spikes, rate_hz)``, in
+        :meth:`mapping` order so the two zip together without a join.
+
+        ⭐ **THIS LIVES IN CORE, NOT IN THE FEATURE, BECAUSE IT IS A FACT ABOUT THE FILE.** It is a
+        pure function of the spike table and the routed set — the same tally whoever asks — and the
+        screen that draws it is only the first caller. (Plan 003 § Open put the question; this is the
+        answer, and :func:`tests.unit.test_mearecording` holds it to it.)
+
+        ⭐ **AND IT NEEDS NO PROPRIETARY DECODER.** The spike table is written uncompressed by
+        MaxWell's on-chip detector, so this is trustworthy on every machine — including all of the
+        ones where :meth:`trace` comes back as a rail (see the header). That is what makes a chip map
+        coloured by *this* worth drawing before the decoder problem is solved.
+
+        ⛔ **A ROUTED PAD THAT HEARD NOTHING COMES BACK AS 0, NOT AS ABSENT.** Silence is a
+        measurement: the amplifier was on that pad for the whole recording and detected nothing. A
+        caller must be able to tell it apart from a pad that was never routed at all — the second is
+        simply not in :meth:`mapping` — so every routed channel gets a row, always.
+
+        ⛔ No threshold, no expected rate, no "is this chip healthy" verdict (I1). It counts what the
+        detector wrote and divides by the duration the header states.
+        """
+        m = self.mapping()
+        ch = np.asarray(m["channel"], dtype=np.int64)
+        counts = np.zeros(ch.size, dtype=np.int64)
+
+        sp = self.spikes()
+        if sp.size and ch.size:
+            # A lookup by sorted position rather than a Python dict: ~1k pads against a few hundred
+            # thousand spikes, and the dict version measured ~40x slower on the real recordings.
+            order = np.argsort(ch, kind="stable")
+            sorted_ch = ch[order]
+            want = np.asarray(sp["channel"], dtype=np.int64)
+            at = np.searchsorted(sorted_ch, want)
+            at = np.clip(at, 0, sorted_ch.size - 1)
+            # ⚠️ `searchsorted` returns an insertion point, not a match. A spike on a channel that is
+            # NOT in the routed mapping would otherwise be credited to whichever pad happens to sit
+            # at that insertion point — i.e. silently added to an innocent electrode. Confirm the hit.
+            hit = sorted_ch[at] == want
+            np.add.at(counts, order[at[hit]], 1)
+
+        dur = self.info().duration_s
+        out = np.empty(ch.size, dtype=[("channel", "<i4"), ("n_spikes", "<i8"),
+                                       ("rate_hz", "<f8")])
+        out["channel"] = ch
+        out["n_spikes"] = counts
+        out["rate_hz"] = counts / dur if dur > 0 else np.zeros(ch.size, dtype=np.float64)
+        return out
+
     # -- the half that needs the decoder ---------------------------------------------------------
 
     def trace(self, channel: int, t0: float = 0.0, t1: float | None = None) -> np.ndarray:

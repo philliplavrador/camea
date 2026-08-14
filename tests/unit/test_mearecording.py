@@ -175,6 +175,74 @@ def test_spikes_of_channel_filters(rec):
         assert r.spikes_of_channel(0)["t_s"].tolist() == pytest.approx([0.1, 0.9])
 
 
+# ── the per-pad tally the chip map is coloured by ───────────────────────────────────────────────
+
+
+def test_activity_counts_every_routed_pad_in_mapping_order(rec):
+    with mr.MeaRecording(rec) as r:
+        act = r.activity()
+        # One row per routed pad, aligned with `mapping()` so the two zip without a join.
+        assert act["channel"].tolist() == r.mapping()["channel"].tolist()
+        # channel 0 fired twice, channel 1 once, and the rest of the routed set heard nothing.
+        assert act["n_spikes"].tolist() == [2, 1, 0, 0]
+
+
+def test_activity_rate_is_per_second_of_the_recording(rec):
+    with mr.MeaRecording(rec) as r:
+        # 4000 samples at 1 kHz = 4 s, so two spikes is 0.5/s.
+        assert r.info().duration_s == pytest.approx(4.0)
+        assert r.activity()["rate_hz"].tolist() == pytest.approx([0.5, 0.25, 0.0, 0.0])
+
+
+def test_a_routed_pad_that_heard_nothing_is_zero_not_absent(rec):
+    """⛔ Silence is a MEASUREMENT — the amplifier was on that pad for the whole recording and
+    detected nothing. A pad that was never routed is simply not in the mapping. The chip map has to
+    draw the first and cannot draw the second, so they must never collapse into one another."""
+    with mr.MeaRecording(rec) as r:
+        act = r.activity()
+        assert act.size == r.mapping().size == 4
+        silent = act[act["n_spikes"] == 0]
+        assert silent["channel"].tolist() == [2, 3]
+        assert silent["rate_hz"].tolist() == [0.0, 0.0]
+
+
+def test_activity_does_not_credit_a_spike_on_an_unrouted_channel(tmp_path):
+    """⚠️ The regression this method's `searchsorted` guard exists for. Without confirming the hit,
+    a spike on a channel absent from the mapping lands on whichever pad sits at the insertion
+    point — i.e. it is silently added to an innocent electrode's count, which would light up a pad
+    on the chip map that recorded nothing."""
+    d = tmp_path / "Network" / "000123"
+    d.mkdir(parents=True)
+    p = _write(d / mr.MEA_FILENAME,
+               routed=((0, 3), (2, 16)),
+               spikes=((100, 0, -25.0), (250, 1, -40.0), (300, 9, -12.0)))
+    with mr.MeaRecording(p) as r:
+        act = r.activity()
+        # Channels 1 and 9 are not routed here, so their spikes belong to nobody.
+        assert act["channel"].tolist() == [0, 2]
+        assert act["n_spikes"].tolist() == [1, 0]
+        assert int(act["n_spikes"].sum()) == 1
+
+
+def test_activity_is_all_zeros_when_nothing_was_detected(tmp_path):
+    d = tmp_path / "Network" / "000123"
+    d.mkdir(parents=True)
+    p = _write(d / mr.MEA_FILENAME, spikes=())
+    with mr.MeaRecording(p) as r:
+        act = r.activity()
+        assert act.size == 4
+        assert act["n_spikes"].tolist() == [0, 0, 0, 0]
+        assert act["rate_hz"].tolist() == [0.0, 0.0, 0.0, 0.0]
+
+
+def test_activity_needs_no_decoder(rec):
+    """⭐ The whole reason the chip map is worth drawing before the MaxWell decoder is found: the
+    spike table is uncompressed, so this is exactly right on a machine where `trace()` is a rail."""
+    with mr.MeaRecording(rec) as r:
+        assert r.trace_health(0).flat is True          # the fixture's raw stream IS a rail
+        assert int(r.activity()["n_spikes"].sum()) == 3
+
+
 # ── the trace, and being honest about it ────────────────────────────────────────────────────────
 
 
