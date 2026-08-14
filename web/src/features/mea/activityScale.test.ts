@@ -126,6 +126,14 @@ describe('formatRate', () => {
     expect(formatRate(0.42)).toBe('0.42 spikes/s');
     expect(formatRate(3.5)).toBe('3.5 spikes/s');
     expect(formatRate(860)).toBe('860 spikes/s');
-    expect(formatRate(0.001)).toContain('e-3');
+  });
+
+  it('never puts scientific notation in front of him', () => {
+    // ⚠️ Seen on his own data: the quiet end of a real recording lands near 0.0033 spikes/s, and
+    // `3.3e-3` on a legend is a maths notation a biologist has to decode.
+    for (const r of [0.0033, 0.00001, 0.5, 12345]) {
+      expect(formatRate(r)).not.toMatch(/e[+-]/);
+    }
+    expect(formatRate(0.0033)).toBe('0.003 spikes/s');
   });
 });

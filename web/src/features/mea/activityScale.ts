@@ -197,10 +197,17 @@ function upperBound(sorted: readonly number[], v: number): number {
   return lo;
 }
 
-/** `0.42 spikes/s`, `1.2 spikes/s`, `860 spikes/s` — readable at every magnitude he actually sees. */
+/**
+ * `0.003 spikes/s`, `0.42 spikes/s`, `860 spikes/s` — readable at every magnitude he actually sees.
+ *
+ * ⚠️ **Plain decimals all the way down, never scientific notation.** Seen on his own data: the
+ * quiet end of a real recording lands around 0.0033 spikes/s, and `3.3e-3 spikes/s` on a legend is
+ * a maths notation in front of a biologist. `0.003` says the same thing and needs no decoding.
+ */
 export function formatRate(rateHz: number): string {
   if (rateHz === 0) return '0 spikes/s';
-  if (rateHz < 0.01) return `${rateHz.toExponential(1)} spikes/s`;
+  if (rateHz < 0.001) return '<0.001 spikes/s';
+  if (rateHz < 0.1) return `${rateHz.toFixed(3)} spikes/s`;
   if (rateHz < 1) return `${rateHz.toFixed(2)} spikes/s`;
   if (rateHz < 10) return `${rateHz.toFixed(1)} spikes/s`;
   return `${Math.round(rateHz)} spikes/s`;

@@ -524,3 +524,204 @@ test('removing the LAST copy of a recording asks first — and only then', async
     await deleteProject(page, id);
   }
 });
+
+// =================================================================================================
+// 5 · opening one recording — the chip, and one pad's trace (plan 003)
+// =================================================================================================
+//
+// ⭐ **THE FIXTURE IS BUILT FOR THIS.** 21 routed pads of a 13 × 5 chip, channel 0 the busiest and
+// the last routed channel deliberately SILENT — so the live end of the ramp and the hollow ring are
+// both real on a 19 kB file, and a broken colour scale cannot pass.
+//
+// ⛔ **AND ITS RAW STREAM IS DECLARED AND NEVER WRITTEN**, which is exactly what the real
+// recordings look like through the published MaxWell decoder. So the "the waveform did not decode"
+// assertion below is testing the real failure, not a mock of it.
+
+/** Create a project holding the fixture recordings and open the first one. -> the project id. */
+async function openFirstRecording(page: Page, name: string): Promise<string> {
+  await toFilesStep(page, name);
+  await lookIn(page, MEA_FIXTURE.dir);
+  await page.getByTestId(TID.meaTickAll).check();
+  await page.getByTestId(TID.npCreate).click();
+  await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
+  const id = page.url().split('/').pop()!;
+  await expect(page.getByTestId(TID.meaRecording)).toHaveCount(MEA_FIXTURE.count, {
+    timeout: FIRST_PAINT,
+  });
+  await rowFor(page, MEA_FIXTURE.labels[0]).getByTestId(TID.meaOpenButton).click();
+  await expect(page.getByTestId(TID.meaChipMap)).toBeVisible({ timeout: FIRST_PAINT });
+  return id;
+}
+
+test('picking a recording draws the chip, and the whole chip is in the picture', async ({
+  page,
+}) => {
+  const id = await openFirstRecording(page, 'chip map');
+  try {
+    await expect(page.getByTestId(TID.meaOpenLabel)).toHaveText(MEA_FIXTURE.labels[0]);
+    await expect(page.getByTestId(TID.meaChipCanvas)).toBeVisible();
+
+    // ⭐ **THE WHOLE CHIP, NOT JUST THE RECORDED BLOCK** (his answer, 2026-08-14). The line names
+    // both numbers: how big the chip is, and how much of it this recording used.
+    const extent = page.getByTestId(TID.meaChipExtent);
+    await expect(extent).toContainText('13 × 5');
+    await expect(extent).toContainText('21');
+    await expect(extent).toContainText('wired up for this recording');
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('the legend names the colours in real units, and says what a ring means', async ({ page }) => {
+  const id = await openFirstRecording(page, 'legend');
+  try {
+    const legend = page.getByTestId(TID.meaChipLegend);
+    await expect(legend).toBeVisible();
+    // ⭐ Real units. ⛔ The scale itself is HELD pending `docs/MAXWELL.md`, so this asserts the
+    // legend is in spikes/s and ordered — never a particular colour for a particular rate, which
+    // would have to be rewritten the moment he answers and would be protecting nothing.
+    await expect(legend).toContainText('spikes/s');
+    await expect(legend).toContainText('quiet');
+    await expect(legend).toContainText('busy');
+
+    // 🔴 **A PAD WITH NO SPIKES IS A RING, AND THE LEGEND SAYS WHAT THAT MEANS.** His correction,
+    // 2026-08-14: among the pads that WERE wired up, many have no neuron near them — so this is the
+    // ordinary case and must never be worded as a fault. If someone later "tidies" this into "dead
+    // electrode", this goes red.
+    const silent = page.getByTestId(TID.meaChipLegendSilent);
+    await expect(silent).toContainText('no neuron');
+    await expect(silent).not.toContainText(/dead|failed|broken|faulty/i);
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('clicking a pad reads it — the electrode is NAMED, and the spikes are drawn', async ({
+  page,
+}) => {
+  const id = await openFirstRecording(page, 'click a pad');
+  try {
+    await expect(page.getByTestId(TID.meaTraceIdle)).toBeVisible();
+
+    // Keyboard, deliberately: a canvas is the easiest place in the app to leave keyboard-dead, and
+    // 001 shipped exactly that bug on this feature's first screen. Arrow keys pick the first pad.
+    await page.getByTestId(TID.meaChipMap).locator('[role="application"]').focus();
+    await page.keyboard.press('ArrowRight');
+
+    const facts = page.getByTestId(TID.meaTraceFacts);
+    await expect(facts).toBeVisible({ timeout: SHORT });
+    // ⭐ It NAMES the electrode — MaxWell's own id, exact, because the file states it.
+    await expect(facts).toContainText('ELECTRODE', { ignoreCase: true });
+    await expect(facts).toContainText('CHANNEL', { ignoreCase: true });
+    await expect(page.getByTestId(TID.meaTraceChart)).toBeVisible();
+    await expect(page.getByTestId(TID.meaTraceScrub)).toBeVisible();
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('🔴 with no decoder the waveform SAYS SO — and the spike ticks are drawn anyway', async ({
+  page,
+}) => {
+  // 🔴 **THE POINT OF THE WHOLE SCREEN.** A railed window looks EXACTLY like a genuinely silent
+  // electrode, so drawing it unlabelled would be a laundered answer. The fixture's raw stream is
+  // declared and never written — the real files' behaviour through the published decoder — so this
+  // exercises the real failure.
+  const id = await openFirstRecording(page, 'no decoder');
+  try {
+    await page.getByTestId(TID.meaChipMap).locator('[role="application"]').focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(page.getByTestId(TID.meaTraceFacts)).toBeVisible({ timeout: SHORT });
+
+    const flat = page.getByTestId(TID.meaTraceFlat);
+    await expect(flat).toBeVisible({ timeout: SHORT });
+    await expect(flat).toContainText('did not decode');
+    // ⭐ And it says the ticks are still good, so he does not throw the whole panel away.
+    await expect(flat).toContainText(/unaffected|correct/i);
+
+    // 🔴 **ON THE PAGE, AS A LIVE REGION — ⛔ NEVER BEHIND THE `?`.** 001 moved prose behind the `?`
+    // on his instruction; that was a fact about the APP. This is a fact about HIS DATA right now,
+    // which is R3's standing exception. A fact he must not be able to miss cannot live somewhere he
+    // has to hover to find.
+    // It is announced, not merely present: `LiveWarning` renders a `role="status"` region, so a
+    // reader who is not looking at that corner of the screen is still told.
+    await expect(flat.locator('[role="status"]')).toBeVisible();
+    // ⛔ And it is NOT inside a `?` disclosure — the whole point. `Help` renders a button; there
+    // must not be one wrapping this warning.
+    await expect(flat.getByRole('button')).toHaveCount(0);
+
+    // The chart is still there, with the ticks on it.
+    await expect(page.getByTestId(TID.meaTraceChart)).toBeVisible();
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('⛔ there is NO chip-seating warning anywhere on this screen', async ({ page }) => {
+  // ⛔ **NOT AN OMISSION — A REQUIREMENT.** `features/electrodes/MeaTracePanel` says the chip's
+  // seating is provisional because it works from a mosaic and nobody has established which corner
+  // the chip's origin landed in. This screen works in the chip's OWN frame: the file states its
+  // `electrode`/`x_um`/`y_um`, so every id is exact. Importing that doubt would make the screen lie.
+  const id = await openFirstRecording(page, 'no seating doubt');
+  try {
+    await page.getByTestId(TID.meaChipMap).locator('[role="application"]').focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(page.getByTestId(TID.meaTraceFacts)).toBeVisible({ timeout: SHORT });
+
+    const screen = page.getByTestId(TID.meaOpen);
+    await expect(screen).not.toContainText(/provisional/i);
+    await expect(screen).not.toContainText(/which way the chip sits/i);
+    await expect(screen).not.toContainText(/seating/i);
+    await expect(page.getByTestId('mea-provisional')).toHaveCount(0);
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('the colour scale comes from the recording in front of it, not from a constant', async ({
+  page,
+}) => {
+  // ⛔ **I1 — a `Done when` box.** The two fixture recordings have different spike tables (different
+  // seeds), so their legends must differ. If anything had baked a maximum in, they would agree.
+  await toFilesStep(page, 'two scales');
+  await lookIn(page, MEA_FIXTURE.dir);
+  await page.getByTestId(TID.meaTickAll).check();
+  await page.getByTestId(TID.npCreate).click();
+  await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
+  const id = page.url().split('/').pop()!;
+  try {
+    await expect(page.getByTestId(TID.meaRecording)).toHaveCount(MEA_FIXTURE.count, {
+      timeout: FIRST_PAINT,
+    });
+
+    await rowFor(page, MEA_FIXTURE.labels[0]).getByTestId(TID.meaOpenButton).click();
+    await expect(page.getByTestId(TID.meaChipLegend)).toBeVisible({ timeout: FIRST_PAINT });
+    const first = await page.getByTestId(TID.meaChipLegend).innerText();
+
+    await page.getByTestId(TID.meaCloseRecording).click();
+    await rowFor(page, MEA_FIXTURE.labels[1]).getByTestId(TID.meaOpenButton).click();
+    await expect(page.getByTestId(TID.meaChipLegend)).toBeVisible({ timeout: FIRST_PAINT });
+    const second = await page.getByTestId(TID.meaChipLegend).innerText();
+
+    expect(first).not.toBe(second);
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('one recording at a time — opening one replaces the shelf, and Back returns', async ({
+  page,
+}) => {
+  // *"You pick one to load, and it opens it up."* ⛔ Comparing recordings side by side was
+  // explicitly rejected.
+  const id = await openFirstRecording(page, 'one at a time');
+  try {
+    await expect(page.getByTestId(TID.meaShelf)).toHaveCount(0);
+    await page.getByTestId(TID.meaCloseRecording).click();
+    await expect(page.getByTestId(TID.meaShelf)).toBeVisible({ timeout: SHORT });
+    await expect(page.getByTestId(TID.meaRecording)).toHaveCount(MEA_FIXTURE.count);
+    await expect(page.getByTestId(TID.meaChipMap)).toHaveCount(0);
+  } finally {
+    await deleteProject(page, id);
+  }
+});

@@ -123,6 +123,29 @@ export const TID = {
   meaTickAll: 'mea-tick-all',
   npMeaCount: 'np-mea-count', //            the wizard Files step's running count
   npMeaError: 'np-mea-error', //            a refusal, INLINE beside the ticks (never a toast)
+  // ── opening one recording (003): the chip, and one pad's trace ───────────────────────────────
+  meaOpenButton: 'mea-open-recording-button', // ⛔ OFF on a row whose file is at neither address
+  meaOpen: 'mea-open-recording', //         the viewer root
+  meaOpenLabel: 'mea-open-label',
+  meaOpenFacts: 'mea-open-facts',
+  meaOpenError: 'mea-open-error', //        🔴 refused BY NAME — never an empty chip map
+  meaCloseRecording: 'mea-close-recording',
+  meaChipMap: 'mea-chip-map',
+  meaChipCanvas: 'mea-chip-canvas', //      ⭐ ONE canvas, never a DOM node per pad
+  meaChipExtent: 'mea-chip-extent', //      "220 × 120 pads on the chip · 726 wired up"
+  meaChipFit: 'mea-chip-fit',
+  meaChipHover: 'mea-chip-hover', //        hover names the electrode without a click
+  meaChipLegend: 'mea-chip-legend', //      the ramp, in real spikes/s
+  meaChipLegendSilent: 'mea-chip-legend-silent', // ⭐ the hollow ring, and what it MEANS
+  meaTraceIdle: 'mea-trace-idle', //        "click a pad on the chip"
+  meaTraceFacts: 'mea-trace-facts', //      electrode · channel · position · spikes
+  meaTraceChart: 'mea-trace-chart', //      shared with the video pipeline (core/trace)
+  meaTraceScrub: 'mea-trace-scrub',
+  meaTraceFlat: 'mea-trace-flat', //        🔴 LIVE WARNING: the waveform did not decode
+  meaTraceUndecodable: 'mea-trace-undecodable', // 🔴 …or could not be read at all
+  meaTraceNoSpikes: 'mea-trace-no-spikes', // ⭐ a fact, NOT a warning — no neuron was near it
+  meaTraceUnrouted: 'mea-trace-unrouted', // this channel was never wired up
+  meaTraceError: 'mea-trace-error',
   // ── the ONE path box (R41.3 → R42 → ⭐ R44: "into" is gone, the app owns the folder) ────────
   paths: 'project-paths',
   fromField: 'from-field', //               "Pull data from" — a PathField
