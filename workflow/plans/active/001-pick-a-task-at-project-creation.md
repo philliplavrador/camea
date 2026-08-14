@@ -1,7 +1,7 @@
 ---
 id: 001
 title: A new project asks what you want to do — and "Analyze MEA" is a real answer
-status: queued # queued | active | done | abandoned
+status: active # queued | active | done | abandoned
 created: 2026-08-14
 needs: dev server # none | frontend | dev server | engine — which gates this build owes
 blocked-by: none
