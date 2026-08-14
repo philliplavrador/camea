@@ -1,3 +1,19 @@
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// FOLDER PICKER — ⭐ **CORE, NOT A FEATURE** (moved out of `features/home/` on 2026-08-14).
+//
+// It lived in `features/home/` because the new-project flow was the only screen that browsed for a
+// folder. Then `features/outputs/OutputsPanel` needed one and reached across to it — and ⛔ **a
+// feature may not import another feature**: `app/FeatureGate.tsx` is the only seam in the app that
+// is allowed to name features, precisely so that a task can be added or retired without unpicking
+// imports from three other screens. `features/mea/ImportRecordings` would have been the third
+// offender, so the cause was fixed instead of the symptom.
+//
+// ⚠️ Nothing about the component changed in the move: same props, same markup, same testids
+// (`folder-picker`, `folder-picker-entry`, `folder-picker-path`, `folder-picker-confirm`). It is
+// still the served picker that works in EVERY mode, which is what matters — the native OS dialog
+// does not exist over VSCode remote (BEHAVIOUR R38), where this app is actually driven.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../../api/client';

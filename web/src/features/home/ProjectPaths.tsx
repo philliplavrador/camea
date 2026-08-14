@@ -20,7 +20,7 @@ import type { DatasetSummary } from '../../api';
 import { Button } from '../../design/primitives/Button';
 import { Help } from '../../design/primitives/Help';
 import { cx } from '../../design/cx';
-import { FolderPicker } from './FolderPicker';
+import { FolderPicker } from '../../core/picker/FolderPicker';
 import { PathField } from './PathField';
 import styles from './ProjectPaths.module.css';
 

@@ -24,7 +24,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { copyOutputs, listOutputs, outputUrl } from '../../api';
 import type { OutputEntry } from '../../api';
 import { Help } from '../../design/primitives/Help';
-import { FolderPicker } from '../home/FolderPicker';
+import { FolderPicker } from '../../core/picker/FolderPicker';
 import { PathField } from '../home/PathField';
 import { shortPath } from '../home/pathText';
 import styles from './OutputsPanel.module.css';
