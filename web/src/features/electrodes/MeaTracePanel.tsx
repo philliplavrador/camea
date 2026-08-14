@@ -25,7 +25,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getElectrodeTrace } from '../../api';
 import type { ElectrodeTracePayload, MeaRecordingSummary } from '../../api';
 import { Button, LiveWarning, Panel } from '../../design';
-import { TraceChart } from './TraceChart';
+import { TraceChart } from '../../core/trace/TraceChart';
 import styles from './MeaTracePanel.module.css';
 
 /** How much of the recording one view shows. Kept small: the window is fetched, not cached whole. */

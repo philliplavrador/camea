@@ -2,6 +2,18 @@
 // one shared time axis. Canvas, not SVG: a one-second window is 20,000 samples and an SVG path with
 // 20k points is a scroll-killer on a panel that redraws on every click.
 //
+// ⭐ **CORE, NOT A FEATURE** (moved out of `features/electrodes/` on 2026-08-14, plan 003).
+// It lived beside `MeaTracePanel` because the video pipeline's electrode panel was the only screen
+// that drew a waveform. `Analyze MEA` is the second, and ⛔ **a feature may not import another
+// feature** — `app/FeatureGate.tsx` is the only seam allowed to name features, precisely so a task
+// can be added or retired without unpicking imports from three other screens. Same argument, and
+// the same fix, as `core/picker/FolderPicker` in plan 002.
+//
+// ⚠️ Nothing about the component changed in the move: same props, same drawing, same testid
+// (`mea-trace-chart`). Its two importers ask different questions — one about a pad clicked in a
+// mosaic, one about a pad clicked on the chip itself — and this draws for both without knowing
+// which, because it draws what it is given and decides nothing (see below).
+//
 // ⭐ **IT DRAWS A MIN/MAX ENVELOPE, NOT EVERY SAMPLE.** At 20 kHz there are far more samples than
 // pixels, so each column shows the range its samples covered. That is the honest reduction for a
 // spiky signal: plain decimation would drop the spikes (they are 1-2 samples wide at this zoom) and
