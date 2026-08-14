@@ -1,7 +1,7 @@
 ---
 id: 003
 title: Analyze MEA — open a recording, watch the chip light up, click a pad and read it
-status: queued # queued | active | done | abandoned
+status: active # queued | active | done | abandoned
 created: 2026-08-14
 needs: dev server # none | frontend | dev server | engine — which gates this build owes
 blocked-by: 002
