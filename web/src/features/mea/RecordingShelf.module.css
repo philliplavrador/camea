@@ -123,10 +123,16 @@
 
 /* ── the two dialogs: add, and the one confirm this screen has ───────────────────────────────── */
 
+/* 🔴 **JUST BELOW `--z-toast`, AND THAT IS THE WHOLE POINT.** Found by hand, 2026-08-14: with a
+   flat `z-index: 60` the Add dialog covered the FolderPicker that the dialog's own "Choose a
+   folder" button opens — the picker portals to `document.body`, so it is not nested inside this
+   backdrop and cannot ride on top of it. The picker sits at `--z-toast`, so this must sit under it.
+   Toasts land above both, which is also right: a refusal must be readable over a modal.
+   ⚠️ Any future overlay that opens something from inside itself has the same problem. */
 .backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: calc(var(--z-toast) - 1);
   display: flex;
   align-items: center;
   justify-content: center;

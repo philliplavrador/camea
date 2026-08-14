@@ -93,7 +93,35 @@ export const TID = {
   meaFeature: 'mea-feature', //             the project screen root
   meaProjectName: 'mea-project-name',
   meaEmpty: 'mea-empty', //                 the empty state: no recordings on the shelf yet
-  meaAddRecordings: 'mea-add-recordings', // disabled until plan 002 lands the import
+  meaAddRecordings: 'mea-add-recordings', // ⭐ ENABLED since 002. Opens the same picker the wizard
+  //                                        showed him — `mea-add-dialog`.
+  // ── the shelf (002) ─────────────────────────────────────────────────────────
+  meaShelf: 'mea-shelf',
+  meaRecording: 'mea-recording', //         one row; data-recording-id, data-copy, data-missing
+  meaRecordingLabel: 'mea-recording-label',
+  meaRecordingFacts: 'mea-recording-facts', // duration · channels · spikes · size, READ OFF THE
+  //                                        FILE every time. Absent on a row that lost its file.
+  meaRecordingCopy: 'mea-recording-copy', // where Camea is reading it from, in plain words
+  meaRecordingMissing: 'mea-recording-missing', // 🔴 the live warning: not where you left it
+  meaRemove: 'mea-remove-recording',
+  meaRemoveConfirm: 'mea-remove-confirm', // ⭐ the ONE confirm on this screen — appears only when
+  //                                        Camea's copy is the last one left (his ruling 2026-08-14)
+  meaRemoveAnyway: 'mea-remove-anyway',
+  meaAddDialog: 'mea-add-dialog',
+  meaAddConfirm: 'mea-add-confirm',
+  // ── the import tick-list (002) — ⭐ ONE component, mounted in the wizard AND in the shelf ──
+  meaImport: 'mea-import',
+  meaChooseFolder: 'mea-choose-folder',
+  meaPickFiles: 'mea-pick-files', //        the native multi-select; a 501 with no window
+  meaImportFolder: 'mea-import-folder',
+  meaImportRow: 'mea-import-row', //        data-readable, data-path
+  meaImportTick: 'mea-import-tick',
+  meaImportRefused: 'mea-import-refused', // ⛔ a file refused BY NAME, on the list, never dropped
+  meaImportNone: 'mea-import-none', //      "no recordings in this folder"
+  meaImportStart: 'mea-import-start', //    before he has chosen a folder
+  meaTickAll: 'mea-tick-all',
+  npMeaCount: 'np-mea-count', //            the wizard Files step's running count
+  npMeaError: 'np-mea-error', //            a refusal, INLINE beside the ticks (never a toast)
   // ── the ONE path box (R41.3 → R42 → ⭐ R44: "into" is gone, the app owns the folder) ────────
   paths: 'project-paths',
   fromField: 'from-field', //               "Pull data from" — a PathField

@@ -107,3 +107,21 @@ export const VIDEO_FIXTURE = {
   width: 480,
   height: 320,
 } as const;
+
+/**
+ * The committed synthetic MaxLab session (tests/fixtures/mea/ — regenerate with
+ * `uv run python tests/fixtures/make_synthetic_mea.py`). Two recordings under one plate, 19 kB
+ * each, so "pick several at once" is a real gesture in a test.
+ *
+ * ⛔ **The chip in it is 13 × 5 on a 12.5 µm pitch, which is no real device.** A fixture with
+ * MaxWell's own 220 / 17.5 would let a hard-coded 220 pass its own test. These are FIXTURE facts,
+ * which HARD RULE 3 permits inside `tests/`; the app must know none of them.
+ */
+export const MEA_FIXTURE = {
+  /** The folder to point the import at — it holds both recordings, one level down. */
+  dir: `${repoRoot}/tests/fixtures/mea`,
+  /** A folder with no recordings under it at all, for the "nothing here" case. */
+  emptyDir: `${repoRoot}/tests/fixtures/synthetic`,
+  labels: ['Network/000001', 'Network/000002'],
+  count: 2,
+} as const;

@@ -135,3 +135,13 @@
   font-family: var(--font-mono);
   font-size: var(--fs-readout);
 }
+
+/* The Files step's running count, beside Create. ⭐ It states the empty case in words rather than
+   disabling the button: he chose "create it empty" (2026-08-14), and a Create he can press with
+   nothing ticked needs to say what it will do. */
+.meaCount {
+  margin-right: auto;
+  align-self: center;
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+}

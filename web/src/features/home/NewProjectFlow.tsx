@@ -33,10 +33,17 @@
 // below — its cards, its step in the stepper, its Back button — woke up on its own, exactly as the
 // 2026-08-11 note promised it would. ⛔ Nothing in that machinery was rewritten to do it.
 //
-// ⭐ **A THIRD OUTCOME: A TASK THAT ASKS FOR NOTHING.** `Analyze MEA` has no input at creation —
-// the project is a shelf you put recordings on afterwards — so picking its card **creates and
-// navigates**, and the Data step never happens. That is why `STEPS` is per-task now: a numbered
-// step he will never reach would only make the count lie.
+// ⭐ **AND EVERY TASK ASKS FOR ITS DATA AGAIN** (2026-08-14, plan 002). For one day `Analyze MEA`
+// was the exception: picking its card created the project outright, with no Data step. That was an
+// intermediate state, shipped knowingly, and it is over — *"you create the project then you select
+// what you want to do in this project ... then after that it asks you to upload the files you need
+// for that task."* So the shape is **Name → Task → Files, for both tasks**, which is what restores
+// R41 and R44.2 rather than needing an exception written against them.
+//
+// ⚠️ **`createNow` IS GONE FROM `TASKS` WITH IT.** 001 left the invariant *"`dataStep: null` and
+// `createNow` being set are the same fact said twice, and they must agree"*; both changed together,
+// which is exactly what that invariant existed to force. ⛔ Do not reintroduce a create-on-card-
+// click path for a task that has a Data step — the two would race for the same project.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useState } from 'react';
@@ -51,7 +58,13 @@ import {
 } from '../../api';
 import type { AnalysisSummary } from '../../api';
 import { useToast } from '../../app';
-import { Button, Card } from '../../design';
+import { Button, Card, LiveWarning } from '../../design';
+// ⭐ **THE SAME COMPONENT THE PROJECT'S OWN "+ Add recordings" MOUNTS** — one tick-list, two mount
+// points. ⚠️ This is a feature importing another feature's file, which the app otherwise forbids;
+// it is allowed here for the one reason the rule exists to protect: `NewProjectFlow` is *about* the
+// tasks, so it already names every one of them (`TASKS`) and is the wizard half of `FeatureGate`'s
+// seam. A second picker written to avoid this import would be the actual harm.
+import { ImportRecordings } from '../mea/ImportRecordings';
 import { mosaicTrials } from '../../legacy/mosaic/trials';
 import { ProjectPaths } from './ProjectPaths';
 import { VideoPaths } from './VideoPaths';
@@ -75,12 +88,17 @@ interface Task {
   /** ⭐ What HE calls it. `key` is the manifest's and never changes; this is free to. */
   label: string;
   blurb: string;
-  /** What the third step asks for — or **null for a task that has nothing left to ask**. */
-  dataStep: 'video' | 'dataset' | null;
   /**
-   * ⭐ Set on a task with no Data step: picking its card **creates the project outright** and the
-   * flow ends there. `dataStep: null` and this being set are the same fact said twice — the first
-   * for the stepper, the second for the outcome — and they must agree.
+   * What the third step asks for. ⚠️ **`null` is still supported and is still meaningful** — a task
+   * with nothing to ask would skip the step — but no task is `null` today, and one that became so
+   * would also need a `createNow` again. The two are the same fact said twice and they must agree.
+   */
+  dataStep: 'video' | 'dataset' | 'recordings' | null;
+  /**
+   * ⭐ Set on a task with NO Data step: picking its card creates the project outright and the flow
+   * ends there. ⛔ Unused since 2026-08-14 (plan 002), and left standing for the same reason the
+   * whole `task` phase was left standing through the year it had nothing to ask: it is the seam a
+   * future task with no input would use, and rebuilding it is more expensive than keeping it.
    */
   createNow?: (name: string) => Promise<AnalysisSummary>;
 }
@@ -104,8 +122,7 @@ const TASKS: Task[] = [
     key: 'mea',
     label: 'Analyze MEA',
     blurb: 'Open a MaxWell recording on its own — click an electrode, read what it recorded.',
-    dataStep: null,
-    createNow: createMeaProject,
+    dataStep: 'recordings',
   },
 ];
 
@@ -114,6 +131,13 @@ const TASKS: Task[] = [
 const ONLY_TASK: string | null = TASKS.length === 1 ? TASKS[0].key : null;
 
 const taskOf = (key: string): Task => TASKS.find((t) => t.key === key) ?? TASKS[0];
+
+/** What the third step is CALLED, once he has picked a task and we know what it will ask for. */
+const DATA_STEP_LABEL: Record<'video' | 'dataset' | 'recordings', string> = {
+  video: 'Video',
+  dataset: 'Data',
+  recordings: 'Files',
+};
 
 /**
  * The stepper, for the task in hand. ⭐ **Per-task, because the tasks are not the same length.**
@@ -131,7 +155,7 @@ function stepsFor(task: string, picked: boolean): { key: Phase; label: string }[
   const data: { key: Phase; label: string }[] = !picked
     ? [{ key: 'dataset', label: 'Data' }]
     : t.dataStep
-      ? [{ key: 'dataset', label: t.dataStep === 'video' ? 'Video' : 'Data' }]
+      ? [{ key: 'dataset', label: DATA_STEP_LABEL[t.dataStep] }]
       : [];
   return [
     { key: 'name', label: 'Name' },
@@ -153,6 +177,10 @@ export function NewProjectFlow() {
   const [choice, setChoice] = useState<Choice | null>(null);
   const [videoChoice, setVideoChoice] = useState<VideoChoice | null>(null);
   const [creating, setCreating] = useState<string | null>(null); // progress message while creating
+  // The Files step's chosen paths, and the refusal that has to stay next to the tick-list rather
+  // than fly past on a toast — the fix for it is one untick away.
+  const [meaPaths, setMeaPaths] = useState<string[]>([]);
+  const [meaError, setMeaError] = useState<string | null>(null);
 
   // Identity-stable so `ProjectPaths`/`VideoPaths`' effects do not re-fire on every render.
   const onReady = useCallback((c: Choice | null) => setChoice(c), []);
@@ -228,12 +256,9 @@ export function NewProjectFlow() {
   }
 
   /**
-   * ⭐ **PICKING A TASK THAT ASKS FOR NOTHING IS CREATING IT.** `Analyze MEA` has no path, no
-   * probe, no folder and no build to start — the server makes an empty project out of the name and
-   * he is inside it. There is nothing left to ask, so there is no third step and no Create button.
-   *
-   * A failure lands on a toast and leaves him on the task cards with his name intact: unlike the
-   * video task there is no inline box to show the refusal next to, because there is no box.
+   * ⭐ Left for a future task that asks for nothing. See `Task.createNow` — unused since plan 002
+   * gave `Analyze MEA` its Files step, and kept for the same reason the whole `task` phase was kept
+   * through the year it had one entry.
    */
   async function createNow(make: (name: string) => Promise<{ analysis_id: string }>): Promise<void> {
     if (creating) return;
@@ -247,6 +272,34 @@ export function NewProjectFlow() {
         `Could not create the project: ${e instanceof Error ? e.message : String(e)}`,
         { tone: 'danger' },
       );
+    }
+  }
+
+  /**
+   * ⭐ **ANALYZE MEA: CREATE, WITH THE RECORDINGS ALREADY ON IT.** One call — `POST
+   * /api/mea/projects` takes the name and the chosen paths together. ⛔ Never create-then-add: a
+   * second call that failed would strand a project he can see on the home screen and cannot use,
+   * and he would have to delete it himself before he could try again.
+   *
+   * ⭐ **CREATE WORKS WITH NOTHING TICKED** (his ruling, 2026-08-14, asked with mockups). An empty
+   * project is a state the app can already be in — it is what he is left with the moment he removes
+   * his last recording — so a wizard that could not produce one would be a door that opens only one
+   * way. He lands on the shelf's empty state, whose **Add recordings** button does the same job.
+   *
+   * A refusal (one of the files is not a MaxLab recording) keeps him on this step with his ticks
+   * intact, and says so inline: the tick-list is right there, so unticking the named file and
+   * pressing Create again is the whole repair.
+   */
+  async function onCreateMea(): Promise<void> {
+    if (creating) return;
+    setCreating(meaPaths.length > 0 ? 'creating project…' : 'creating empty project…');
+    setMeaError(null);
+    try {
+      const project = await createMeaProject(name.trim(), meaPaths);
+      navigate(`/project/${project.analysis_id}`);
+    } catch (e) {
+      setCreating(null);
+      setMeaError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -364,7 +417,42 @@ export function NewProjectFlow() {
         </div>
       )}
 
-      {!creating && phase === 'dataset' && task !== 'videomosaic' && (
+      {/* ⭐ ANALYZE MEA — THE FILES STEP. Kept MOUNTED while creating (only hidden), for the same
+          reason the video step is: a refusal must land back on the tick-list with his ticks intact,
+          not on a remount that forgot them. */}
+      {phase === 'dataset' && task === 'mea' && (
+        <div className={styles.panel} style={creating ? { display: 'none' } : undefined}>
+          <div className={styles.nav}>
+            <Button variant="ghost" onClick={beforeData} data-testid="np-back">
+              Back
+            </Button>
+          </div>
+          <p className={styles.prompt}>Which recordings?</p>
+          <ImportRecordings onChange={setMeaPaths} busy={!!creating} />
+          {meaError && (
+            <LiveWarning variant="loud">
+              <span data-testid="np-mea-error">{meaError}</span>
+            </LiveWarning>
+          )}
+          <div className={styles.nav}>
+            <span className={styles.meaCount} data-testid="np-mea-count">
+              {meaPaths.length > 0
+                ? `${meaPaths.length} chosen`
+                : 'None chosen — the project starts empty and you can add them later.'}
+            </span>
+            <Button
+              variant="primary"
+              disabled={!!creating}
+              onClick={() => void onCreateMea()}
+              data-testid="np-create"
+            >
+              Create
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {!creating && phase === 'dataset' && task !== 'videomosaic' && task !== 'mea' && (
         <div className={styles.panel}>
           <div className={styles.nav}>
             <Button variant="ghost" onClick={beforeData} data-testid="np-back">

@@ -5,10 +5,19 @@
 // electrodes → regions pipeline, renamed to the experiment it serves) and **Analyze MEA** (a
 // MaxWell recording opened on its own).
 //
-// ⭐ **THE ONE THING THIS FILE EXISTS TO PROVE:** picking `Analyze MEA` asks **no path question of
-// any kind** — no dataset folder, no file, no save folder (R44 and then some) — and lands him
-// inside the project. Every other way to make a project in Camea names something on disk; if a
-// future change reintroduces a box here, this spec is what says so.
+// ⭐ **THE ONE THING THIS FILE EXISTS TO PROVE** — and it MOVED on 2026-08-14 (plan 002). It used
+// to be that picking `Analyze MEA` asked no data question at all. He reversed that the same day
+// after seeing it built: *"you create the project then you select what you want to do in this
+// project ... then after that it asks you to upload the files you need for that task."* So the
+// claim now is the opposite one, and it is the stronger one: **every task asks for its data at
+// creation, and asks exactly one data question** — R41 and R44.2, restored rather than excepted.
+//
+// ⚠️ What has NOT changed, and what this file still guards: the one question is about the data he
+// is bringing IN. There is still no save folder, no "where should this go", nowhere to browse to a
+// project. If a future change reintroduces one of those, this spec is what says so.
+//
+// The Files step's own behaviour — the tick-list, the copy, the refusals — is `analyze-mea.spec.ts`.
+// This file only checks that the wizard reaches it and comes out the other side with a project.
 //
 // The video task's own journey is `videomosaic.spec.ts`; this only checks that its card is the
 // door to it. ⛔ The retired snapshot task is deliberately NOT offered here — see
@@ -41,10 +50,19 @@ async function toTaskStep(page: Page, name: string): Promise<void> {
 const taskCard = (page: Page, task: string) =>
   page.locator(`[data-testid="${TID.taskCard}"][data-task="${task}"]`);
 
-/** Pick `Analyze MEA` and land in the project. -> its analysis id. */
+/**
+ * Pick `Analyze MEA`, take the Files step with nothing ticked, and land in the project.
+ * -> its analysis id.
+ *
+ * ⭐ **Create with an empty tick-list is deliberate and is his ruling** (2026-08-14, asked with
+ * side-by-side mockups): an empty project is a state the app can already reach — it is what he is
+ * left with the moment he removes his last recording — so the wizard must be able to produce one.
+ */
 async function createMeaProject(page: Page, name: string): Promise<string> {
   await toTaskStep(page, name);
   await taskCard(page, 'mea').click();
+  await expect(page.getByTestId(TID.meaImport)).toBeVisible({ timeout: FIRST_PAINT });
+  await page.getByTestId(TID.npCreate).click();
   await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
   return page.url().split('/').pop()!;
 }
@@ -65,27 +83,37 @@ test('Next lands on exactly two tasks, named the way he names them', async ({ pa
   await expect(taskCard(page, 'mosaic')).toHaveCount(0);
 });
 
-test('Analyze MEA: no path box anywhere, and the click IS the create', async ({ page }) => {
+test('Analyze MEA: one data question, and it is about the recordings he is bringing in', async ({
+  page,
+}) => {
   await toTaskStep(page, 'mea flow');
-
-  // ⭐ There is nothing to type on this step, and there is nothing after it.
-  await expect(page.getByTestId(TID.pathInput)).toHaveCount(0);
-  await expect(page.getByTestId(TID.npCreate)).toHaveCount(0);
-
   await taskCard(page, 'mea').click();
+
+  // ⭐ The Files step. It asks for his recordings — and for nothing else. ⛔ No path box to type a
+  // save folder into, no "where should this go": R44 answers that itself, and R44.2 says creation
+  // asks exactly ONE data question.
+  await expect(page.getByTestId(TID.meaImport)).toBeVisible({ timeout: FIRST_PAINT });
+  await expect(page.getByTestId(TID.pathInput)).toHaveCount(0);
+  await expect(page.getByTestId('into-field')).toHaveCount(0);
+  // The stepper names it, and names it for THIS task.
+  await expect(page.getByTestId(TID.newProjectFlow)).toContainText('Files');
+
+  // ⭐ Create works with nothing ticked (his ruling, 2026-08-14) and says what it will do.
+  await expect(page.getByTestId(TID.npCreate)).toBeEnabled();
+  await expect(page.getByTestId(TID.npMeaCount)).toContainText('None chosen');
+
+  await page.getByTestId(TID.npCreate).click();
   await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
   const id = page.url().split('/').pop()!;
   try {
-    // He is in the project, and it says what it is and what is not there yet.
     await expect(page.getByTestId(TID.meaFeature)).toBeVisible({ timeout: FIRST_PAINT });
     await expect(page.getByTestId(TID.meaProjectName)).toHaveText('mea flow');
     await expect(page.getByTestId(TID.meaEmpty)).toBeVisible();
-    // ⚠️ The import is plan 002. The button is present and OFF — the shape of the screen is the
-    // promise, and a screen that grows a control later reads as a different screen.
-    await expect(page.getByTestId(TID.meaAddRecordings)).toBeDisabled();
+    // ⭐ **AND THE BUTTON WORKS NOW.** It was disabled in 001 because the import did not exist; an
+    // enabled button is what makes the `?` beside it stop being a lie.
+    await expect(page.getByTestId(TID.meaAddRecordings)).toBeEnabled();
 
-    // ⭐ R3 (his ruling, 2026-08-14): the reason the button is off lives behind the `?`, not on the
-    // page. Nothing on this screen explains itself in prose.
+    // ⭐ R3 (his ruling, 2026-08-14): what the button does lives behind the `?`, not on the page.
     const empty = page.getByTestId(TID.meaEmpty);
     const longParas = await empty
       .locator('p')
@@ -97,6 +125,28 @@ test('Analyze MEA: no path box anywhere, and the click IS the create', async ({ 
   } finally {
     await deleteProject(page, id);
   }
+});
+
+test('Back from the Files step puts the task question back, and the third step goes neutral', async ({
+  page,
+}) => {
+  // ⚠️ The invariant `stepsFor` exists for: until he has answered "what do you want to do?", the
+  // third step must not be captioned with a guess. Back unmakes his answer, so the caption has to
+  // go back to being neutral too — this is the same machinery the video task uses, now exercised
+  // from the second task as well.
+  await toTaskStep(page, 'back out');
+  await taskCard(page, 'mea').click();
+  await expect(page.getByTestId(TID.meaImport)).toBeVisible({ timeout: FIRST_PAINT });
+  await expect(page.getByTestId(TID.newProjectFlow)).toContainText('Files');
+
+  await page.getByTestId(TID.npBack).click();
+  await expect(page.getByTestId(TID.taskCard).first()).toBeVisible({ timeout: SHORT });
+  await expect(page.getByTestId(TID.newProjectFlow)).not.toContainText('Files');
+  await expect(page.getByTestId(TID.newProjectFlow)).toContainText('Data');
+
+  // ...and the other card is still reachable from there, so Back is not a dead end.
+  await taskCard(page, 'videomosaic').click();
+  await expect(page.getByTestId('np-video-path')).toBeVisible({ timeout: SHORT });
 });
 
 test('the empty state explains itself only behind the `?`, and the `?` answers the keyboard', async ({
@@ -115,9 +165,9 @@ test('the empty state explains itself only behind the `?`, and the `?` answers t
       page.locator(`[data-testid="${TID.meaAddRecordings}"] [data-testid="${TID.help}"]`),
     ).toHaveCount(0);
 
-    // 🔴 The button beside it is DISABLED, so it takes no focus at all: the `?` is the only thing
-    // on this screen a Tab can land on, and it is the only route to the reason. Driven by keyboard
-    // alone — focus is what opens it (R3.2), so Tab is enough.
+    // Driven by keyboard alone — focus is what opens it (R3.2), so Tab is enough. (In 001 this
+    // mattered more: the button beside it was disabled and took no focus, so the `?` was the only
+    // thing on the screen a Tab could reach. The button works now; the `?` must still answer.)
     await expect(page.getByTestId(TID.helpTooltip)).toHaveCount(0);
     await mark.focus();
     await expect(mark).toBeFocused();
@@ -148,13 +198,8 @@ test('the task cards answer the keyboard — Tab to one, press Enter', async ({ 
   await expect(mea).toBeFocused();
   await page.keyboard.press('Enter');
 
-  await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
-  const id = page.url().split('/').pop()!;
-  try {
-    await expect(page.getByTestId(TID.meaFeature)).toBeVisible({ timeout: FIRST_PAINT });
-  } finally {
-    await deleteProject(page, id);
-  }
+  // Enter reaches the Files step (it reached the project itself in 001 — the card was the create).
+  await expect(page.getByTestId(TID.meaImport)).toBeVisible({ timeout: FIRST_PAINT });
 });
 
 test('Simultaneous MEA + 2P is still the door to the video pipeline', async ({ page }) => {
