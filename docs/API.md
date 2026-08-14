@@ -139,6 +139,22 @@ project. **There is no save route and no export route.** Getting a copy out is c
 ⛔ **`POST /api/videomosaic/save` was DELETED on 2026-08-10 (R44.9).** There is nothing to save into:
 the project has been in Camea's store since Create, and its mosaic is in that project's `outputs/`.
 
+### ANALYZE MEA — the third feature. Everything under `/api/mea`.
+
+⭐ **ZERO path questions** — one fewer than any other way to make a project. The video task names its
+video; the snapshot task names its dataset folder; this one names **nothing**, because at creation it
+has no input. The project is a *shelf*: he names it, and puts MaxWell `.h5` recordings on it from
+inside afterwards.
+
+⚠️ **Not to be confused with `/api/videomosaic/.../mea/*`.** Those routes attach an electrical
+recording to an *optical* project and resolve a `col-row` grid id through a chip seating nobody has
+established yet. This feature has no microscope in it: the file states its own `electrode`, `x_um`
+and `y_um`, so there is no seating question and it must not grow one.
+
+| | route | body → response |
+|---|---|---|
+| **create** | `POST /api/mea/projects` | `CreateMeaProjectRequest` (**a name, and nothing else**) → `AnalysisSummary`. The server authors the doc in the store (R44); the payload is an empty shelf (`recordings: []`). `dataset_key`/`dataset`/`data_dir` are **empty on purpose** — there is no dataset to address, and `src/camea/features/mea/routes.py` records what was read to decide that |
+
 ---
 
 ## Three things that will look like bugs and are not

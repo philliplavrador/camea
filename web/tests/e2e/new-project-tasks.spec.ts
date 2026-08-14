@@ -91,6 +91,27 @@ test('Analyze MEA: no path box anywhere, and the click IS the create', async ({ 
   }
 });
 
+test('the task cards answer the keyboard — Tab to one, press Enter', async ({ page }) => {
+  // 🔴 The cards are `<div>`s under the hood. Without role/tabIndex/onKeyDown a keyboard-only user
+  // cannot get past step 2 AT ALL, because this step is the only door to either task. Driven the
+  // way he would drive it: no click anywhere.
+  await toTaskStep(page, 'keyboard');
+
+  const mea = taskCard(page, 'mea');
+  await expect(mea).toHaveAttribute('role', 'button');
+  await mea.focus();
+  await expect(mea).toBeFocused();
+  await page.keyboard.press('Enter');
+
+  await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
+  const id = page.url().split('/').pop()!;
+  try {
+    await expect(page.getByTestId(TID.meaFeature)).toBeVisible({ timeout: FIRST_PAINT });
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
 test('Simultaneous MEA + 2P is still the door to the video pipeline', async ({ page }) => {
   await toTaskStep(page, 'video flow');
   await taskCard(page, 'videomosaic').click();

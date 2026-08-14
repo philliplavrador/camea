@@ -1781,7 +1781,13 @@ export interface components {
         };
         /**
          * AnalysisSummary
-         * @description A project = a document + its outputs, in Camea's store. Bound to ONE dataset.
+         * @description A project = a document + its outputs, in Camea's store.
+         *
+         *     ⚠️ **`dataset`/`dataset_key`/`data_dir` may all be empty, and that is not an error.** They were
+         *     mandatory while every task was a wrapper around something on disk; since `Analyze MEA`
+         *     (2026-08-14) a task may have no input at creation at all — its project is a shelf, filled from
+         *     inside. A client must render the blank as a state ("nothing added yet"), never as a missing
+         *     value it should go and look for.
          */
         AnalysisSummary: {
             /** Analysis Id */

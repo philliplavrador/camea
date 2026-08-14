@@ -318,26 +318,43 @@ export function NewProjectFlow() {
         <div className={styles.panel}>
           <p className={styles.prompt}>What do you want to do?</p>
           <div className={styles.tasks}>
-            {TASKS.map((t) => (
-              <Card
-                key={t.key}
-                interactive
-                className={styles.taskCard}
-                data-testid="task-card"
-                data-task={t.key}
-                onClick={() => {
-                  setTask(t.key);
-                  setPicked(true);
-                  // ⭐ A task with nothing left to ask brings its own create, and the card IS the
-                  // Create button.
-                  if (t.createNow) void createNow(t.createNow);
-                  else setPhase('dataset');
-                }}
-              >
-                <span className={styles.taskLabel}>{t.label}</span>
-                <span className={styles.taskBlurb}>{t.blurb}</span>
-              </Card>
-            ))}
+            {TASKS.map((t) => {
+              const pick = () => {
+                setTask(t.key);
+                setPicked(true);
+                // ⭐ A task with nothing left to ask brings its own create, and the card IS the
+                // Create button.
+                if (t.createNow) void createNow(t.createNow);
+                else setPhase('dataset');
+              };
+              return (
+                // 🔴 `role`/`tabIndex`/`onKeyDown` are not decoration. `Card` renders a plain
+                // `<div>`, so a bare `onClick` here is unreachable by Tab and deaf to Enter and
+                // Space — and this is the ONLY door to either task. (The gap sat harmless while the
+                // step was skipped; the moment it renders, the whole app is keyboard-dead at step
+                // 2.) Same three lines the project cards on the home screen carry, for the same
+                // reason — see `ProjectManager.ProjectCard`.
+                <Card
+                  key={t.key}
+                  interactive
+                  className={styles.taskCard}
+                  data-testid="task-card"
+                  data-task={t.key}
+                  role="button"
+                  tabIndex={0}
+                  onClick={pick}
+                  onKeyDown={(e: React.KeyboardEvent) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      pick();
+                    }
+                  }}
+                >
+                  <span className={styles.taskLabel}>{t.label}</span>
+                  <span className={styles.taskBlurb}>{t.blurb}</span>
+                </Card>
+              );
+            })}
           </div>
           <div className={styles.nav}>
             <Button variant="ghost" onClick={() => setPhase('name')} data-testid="np-back">

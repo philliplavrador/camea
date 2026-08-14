@@ -175,8 +175,11 @@ def post_mea_project(body: CreateMeaProjectRequest) -> dict:
         core_document.save_analysis(ws, pr.analysis_id, doc)
     except core_document.ValidationError as e:
         _abandon(pr)
-        raise ApiError(400, "bad_request",
-                       "; ".join(e.args[0]) if e.args else str(e)) from e
+        # ⚠️ `str(e)`, NOT `"; ".join(e.args[0])`. `ValidationError.__init__` has already joined
+        # `.problems` into one string, so `args[0]` is that string — and joining a string iterates
+        # its CHARACTERS ("bad thing" -> "b; a; d; ..."). The sibling video route still carries the
+        # copy this was taken from; it is filed, not silently fixed here.
+        raise ApiError(400, "bad_request", str(e)) from e
     except core_document.DocumentError as e:
         _abandon(pr)
         raise ApiError(400, "bad_request", str(e)) from e
