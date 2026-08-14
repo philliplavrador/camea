@@ -1846,6 +1846,100 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mea/{analysis_id}/recordings/{recording_id}/layout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea Layout
+         * @description The chip as this recording describes it — every routed pad, at its own µm position.
+         *
+         *     ⭐ **ONLY THE ROUTED PADS.** A MaxOne routes ~1k channels out of tens of thousands of pads, so
+         *     most of the chip carries no data at all — and a pad that was never routed is not a measurement
+         *     of silence, it is the *absence* of a measurement. Drawing them would invent data.
+         *
+         *     ⭐ `stride` and `pitch_um` are **derived from the file's own numbering and verified against every
+         *     routed pad**, never taken from a datasheet. ⚠️ And never measured from the routed spacing: one of
+         *     this project's recordings routed every other pad, so the smallest routed gap is twice the truth.
+         *
+         *     ⛔ Needs no proprietary decoder — the mapping table is plain HDF5.
+         */
+        get: operations["get_mea_layout_api_mea__analysis_id__recordings__recording_id__layout_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mea/{analysis_id}/recordings/{recording_id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea Activity
+         * @description The per-pad tally the chip map is coloured by — one row per routed pad, in `layout` order.
+         *
+         *     ⭐ **A GET, NOT A JOB, AND THAT WAS MEASURED** (plan 003 § Open asked). One pass over the spike
+         *     table of a real 300 s recording: **2.3–21 ms** end to end including the layout, over all five
+         *     readable recordings in the mirror (the worst is 982 channels × 244,925 spikes at 21 ms). Nothing
+         *     here is slow enough to need a spinner, let alone a job — so it is a plain GET and the screen
+         *     draws on the first paint.
+         *
+         *     ⭐ **AND IT NEEDS NO PROPRIETARY DECODER**, because the spike table is written uncompressed by
+         *     the on-chip detector. This is the reason the chip map is worth building before the decoder
+         *     problem is solved: it is exactly right on a machine where the waveform is a rail.
+         *
+         *     ⛔ A count. Not a rate per neuron, not a burst, not a verdict on whether the culture is healthy
+         *     (I1) — and `max_rate_hz` is the busiest pad *in this recording*, so the UI can scale its colours
+         *     to the file in front of it. There is no number in Camea for how active a chip should be.
+         */
+        get: operations["get_mea_activity_api_mea__analysis_id__recordings__recording_id__activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mea/{analysis_id}/recordings/{recording_id}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea Channel Trace
+         * @description One pad's stored waveform and its spikes, for the window `[t0, t1)`.
+         *
+         *     ⭐ **BY CHANNEL, BECAUSE THE CLICK ALREADY KNOWS ITS CHANNEL.** The chip map was drawn from
+         *     `layout`, so the dot he clicked carries its own channel — there is nothing to resolve and no
+         *     seating to guess. ⛔ That is the whole difference from the videomosaic trace route, and it is why
+         *     the two are separate rather than shared.
+         *
+         *     ⚠️ **`health` IS NOT DECORATION.** The published MaxWell decoder does not reconstruct this
+         *     project's files, and a railed window drawn without that caveat looks exactly like a genuinely
+         *     silent electrode. ⭐ The spikes are unaffected — the on-chip detector wrote them uncompressed —
+         *     so they are returned and drawn even when the waveform is refused.
+         */
+        get: operations["get_mea_channel_trace_api_mea__analysis_id__recordings__recording_id__trace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3652,6 +3746,245 @@ export interface components {
             truncated: boolean;
         };
         /**
+         * MeaChannelTrace
+         * @description `GET /api/mea/{analysis_id}/recordings/{recording_id}/trace?channel=&t0=&t1=` — one pad's
+         *     stored waveform and its spikes, for the window `[t0, t1)`.
+         *
+         *     ⭐ **ASKED FOR BY CHANNEL, BECAUSE THE CLICK ALREADY KNOWS ITS CHANNEL.** The videomosaic
+         *     `ElectrodeTracePayload` above answers the same question for a pad clicked in a *mosaic*, where
+         *     two thirds of the work is resolving a `col-row` id through the chip's seating. None of that
+         *     exists here, so none of it is on this model — ⛔ in particular there is no `orientation` and no
+         *     `chip_electrode`, because the electrode is not in doubt.
+         *
+         *     ⚠️ **`health` IS NOT DECORATION.** The published MaxWell decoder does not reconstruct this
+         *     project's files (measured: 98% of samples come back as one value), and a railed window drawn
+         *     without that caveat looks **exactly** like a genuinely silent electrode. The spike ticks stay
+         *     correct either way and are drawn either way.
+         */
+        MeaChannelTrace: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Recording Id */
+            recording_id: string;
+            /** Channel */
+            channel: number;
+            /**
+             * Electrode
+             * @description MaxWell's own electrode id for this channel, when it is routed.
+             */
+            electrode?: number | null;
+            /**
+             * Recorded
+             * @description ⭐ False when this channel is not in the recording's routed set — *'never recorded'* is the ordinary answer, and it must render as a fact about the experiment rather than as an error or an empty chart.
+             */
+            recorded: boolean;
+            /** X Um */
+            x_um?: number | null;
+            /** Y Um */
+            y_um?: number | null;
+            /**
+             * T0 S
+             * @default 0
+             */
+            t0_s: number;
+            /**
+             * T1 S
+             * @default 0
+             */
+            t1_s: number;
+            /**
+             * Duration S
+             * @description The whole recording, so the UI can scrub.
+             * @default 0
+             */
+            duration_s: number;
+            /**
+             * Sampling Hz
+             * @default 0
+             */
+            sampling_hz: number;
+            /**
+             * Trace Uv
+             * @description The stored waveform in µV. ⚠️ Judge it with `health` before believing it; empty when the raw stream could not be decoded at all (`decode_error` says so).
+             */
+            trace_uv?: number[];
+            health?: components["schemas"]["TraceHealthPayload"] | null;
+            /**
+             * Spikes
+             * @description Detected spikes inside the window. ⭐ Trustworthy independently of the trace.
+             */
+            spikes?: components["schemas"]["MeaSpike"][];
+            /**
+             * N Spikes Total
+             * @description On this channel, whole recording.
+             * @default 0
+             */
+            n_spikes_total: number;
+            /**
+             * First Spike S
+             * @description When this pad first fired. ⭐ The UI opens its window HERE rather than at t=0: a 300 s recording stepped a second at a time would take 200 clicks to reach the activity, and a dead opening window makes a working electrode look broken.
+             */
+            first_spike_s?: number | null;
+            /**
+             * Decode Error
+             * @description ⛔ Set when HDF5 could not run MaxWell's filter at all — the decoder library is absent. Said on the page; the spikes above are still returned and still correct.
+             * @default
+             */
+            decode_error: string;
+        };
+        /**
+         * MeaChipActivity
+         * @description `GET /api/mea/{analysis_id}/recordings/{recording_id}/activity` — the per-pad tally the chip
+         *     map is coloured by, one row per routed pad, in the same order as `layout`'s `pads`.
+         *
+         *     ⭐ **NO PROPRIETARY DECODER IS INVOLVED.** These come from MaxWell's spike table, which is
+         *     written uncompressed by the on-chip detector at acquisition. So the chip map is **trustworthy on
+         *     every machine**, including all of the ones where the raw waveform decodes to a rail
+         *     (`utils/knowledge/mea-recordings.md`). That is what makes this screen worth building before the
+         *     decoder problem is solved.
+         *
+         *     ⛔ **A COUNT, AND THE LEGEND SAYS SO.** No sorting, no bursts, no rates-per-neuron, no verdict.
+         *     Each of those is a project on its own and none was asked for.
+         *
+         *     ⛔ **AND NOTHING HERE IS A JUDGEMENT ABOUT THE CHIP** (I1). `max_rate_hz` is the largest number
+         *     *in this recording*, reported so the UI can scale its colours to the file in front of it. It is
+         *     not a maximum a chip is expected to reach, and there is no such number anywhere in Camea.
+         */
+        MeaChipActivity: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Recording Id */
+            recording_id: string;
+            /** Pads */
+            pads?: components["schemas"]["MeaPadActivity"][];
+            /**
+             * Duration S
+             * @description What `rate_hz` was divided by.
+             * @default 0
+             */
+            duration_s: number;
+            /**
+             * N Spikes
+             * @description Every spike in the recording.
+             * @default 0
+             */
+            n_spikes: number;
+            /**
+             * N Pads
+             * @default 0
+             */
+            n_pads: number;
+            /**
+             * N Silent
+             * @description ⭐ Routed pads with **zero** spikes. Silence is a MEASUREMENT — the amplifier sat on that pad for the whole recording and detected nothing — which is a different fact from a pad that was never routed, and the chip map must not let the two look alike.
+             * @default 0
+             */
+            n_silent: number;
+            /**
+             * Max Rate Hz
+             * @description The busiest pad in THIS recording. ⛔ Derived every time, never a constant: see the class docstring.
+             * @default 0
+             */
+            max_rate_hz: number;
+        };
+        /**
+         * MeaChipLayout
+         * @description `GET /api/mea/{analysis_id}/recordings/{recording_id}/layout` — the chip, as this file
+         *     describes it: every pad that was actually recorded, at its real position.
+         *
+         *     ⭐ **ONLY THE ROUTED PADS ARE HERE, AND THAT IS THE HONEST SET.** A MaxOne routes ~1k channels
+         *     of tens of thousands of pads, so *most of the chip has no data at all* — and a pad that was
+         *     never routed is not a measurement of silence, it is an absence of measurement. Drawing them
+         *     would invent data.
+         *
+         *     ⛔ Costs no proprietary decoder: the mapping table is plain HDF5.
+         */
+        MeaChipLayout: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Recording Id */
+            recording_id: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Run Id
+             * @default
+             */
+            run_id: string;
+            /**
+             * Assay
+             * @default
+             */
+            assay: string;
+            /** Pads */
+            pads?: components["schemas"]["MeaChipPad"][];
+            /**
+             * Stride
+             * @description ⭐ The array's long-axis length, **derived from this file's own numbering and then verified against every routed pad** (`derive_geometry`) — never a datasheet number. A file that does not satisfy the relation is refused rather than guessed at.
+             * @default 0
+             */
+            stride: number;
+            /**
+             * Pitch Um
+             * @description Centre-to-centre pad spacing, derived the same way. ⚠️ **Not** measured from the spacing of the routed pads: one of this project's recordings routed every OTHER pad, so the smallest routed gap is twice the truth.
+             * @default 0
+             */
+            pitch_um: number;
+            /**
+             * N Channels
+             * @default 0
+             */
+            n_channels: number;
+            /**
+             * N Samples
+             * @default 0
+             */
+            n_samples: number;
+            /**
+             * Duration S
+             * @default 0
+             */
+            duration_s: number;
+            /**
+             * Sampling Hz
+             * @default 0
+             */
+            sampling_hz: number;
+            /**
+             * N Spikes
+             * @description Across the whole recording, every channel.
+             * @default 0
+             */
+            n_spikes: number;
+        };
+        /**
+         * MeaChipPad
+         * @description One routed pad, at the position the file itself states for it.
+         *
+         *     ⛔ **`electrode` IS MAXWELL'S OWN ID, NOT A CAMEA `col-row` GRID ID.** The mosaic pipeline's
+         *     `col-row` ids exist because that pipeline has to *guess* how the chip was seated under a
+         *     microscope; here the file says where every pad is, so the two must never be confused.
+         */
+        MeaChipPad: {
+            /**
+             * Channel
+             * @description The amplifier channel this pad was routed to — what the trace route is asked for.
+             */
+            channel: number;
+            /**
+             * Electrode
+             * @description MaxWell's own electrode id, straight from the file.
+             */
+            electrode: number;
+            /** X Um */
+            x_um: number;
+            /** Y Um */
+            y_um: number;
+        };
+        /**
          * MeaCopyResult
          * @description `job.result` of a `mea_copy` job — one recording's copy has landed in the project.
          */
@@ -3712,6 +4045,21 @@ export interface components {
             region_id?: string | null;
             /** Run Id */
             run_id?: string | null;
+        };
+        /**
+         * MeaPadActivity
+         * @description How much happened on one routed pad. ⛔ A count, and nothing more — see `MeaChipActivity`.
+         */
+        MeaPadActivity: {
+            /** Channel */
+            channel: number;
+            /** N Spikes */
+            n_spikes: number;
+            /**
+             * Rate Hz
+             * @description Spikes per second of the recording. The unit the chip map's legend names.
+             */
+            rate_hz: number;
         };
         /**
          * MeaRecordingCandidate
@@ -8193,6 +8541,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeaShelf"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mea_layout_api_mea__analysis_id__recordings__recording_id__layout_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaChipLayout"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mea_activity_api_mea__analysis_id__recordings__recording_id__activity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaChipActivity"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mea_channel_trace_api_mea__analysis_id__recordings__recording_id__trace_get: {
+        parameters: {
+            query: {
+                /** @description The routed channel that was clicked on the chip map. */
+                channel: number;
+                t0?: number;
+                t1?: number | null;
+            };
+            header?: never;
+            path: {
+                analysis_id: string;
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaChannelTrace"];
                 };
             };
             /** @description Validation Error */

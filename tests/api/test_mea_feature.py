@@ -502,3 +502,267 @@ def test_a_stored_recording_survives_the_original_being_deleted(client, session)
     assert row["missing"] is False
     assert row["copy_state"] == "stored"
     assert row["n_spikes"] is not None
+
+
+# =================================================================================================
+# Plan 003 — opening one recording: the chip, what happened on it, and one pad's trace
+# =================================================================================================
+#
+# ⭐ **THE FIXTURE WAS BUILT FOR THIS** (`tests/fixtures/measynth.py`): 21 routed channels of a
+# 13 x 5 chip, channel 0 the busiest, and **the last routed channel deliberately silent** — so the
+# live end and the dead end of the colour scale are both real, and a broken ramp cannot pass.
+#
+# ⛔ **AND THE CHIP IS NOT A MAXWELL.** 13 x 5 on a 12.5 µm pitch is no device, so nothing that
+# hard-coded 220 / 17.5 could pass these.
+
+
+def _opened(client, session, name: str = "chip map") -> tuple[str, str]:
+    """A project with one recording on it, settled. -> `(analysis_id, recording_id)`."""
+    a = _create(client, name, paths=[session[0]])
+    aid = a["analysis_id"]
+    return aid, _settled(client, aid)[0]["id"]
+
+
+def _layout(client, aid: str, rid: str) -> dict:
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/layout")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _activity(client, aid: str, rid: str) -> dict:
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/activity")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+# ---- the chip ------------------------------------------------------------------------------------
+def test_layout_draws_one_pad_per_ROUTED_channel_at_the_files_own_coordinates(client, session,
+                                                                             measynth):
+    """⭐ **THE HEADLINE OF PLAN 003.** One dot per routed pad, positioned by the file's own µm
+    coordinates — not by a grid Camea guessed, and not one dot per pad *on the chip*.
+
+    ⛔ A pad that was never routed is **absent**, not zero: it is the absence of a measurement, and
+    drawing it would invent data. The fixture routes 21 of its 65 pads, so this is a real test."""
+    aid, rid = _opened(client, session)
+    lay = _layout(client, aid, rid)
+
+    routed = measynth.routed()
+    assert len(lay["pads"]) == len(routed) == 21
+    assert len(lay["pads"]) < measynth.STRIDE * measynth.N_ROWS, "⛔ only the ROUTED pads"
+    assert [p["channel"] for p in lay["pads"]] == [c for c, _ in routed]
+    assert [p["electrode"] for p in lay["pads"]] == [e for _, e in routed]
+
+    # Positions are the file's own, and they satisfy the numbering the file states.
+    for pad in lay["pads"]:
+        ex = pad["electrode"] % lay["stride"]
+        ey = pad["electrode"] // lay["stride"]
+        assert pad["x_um"] == pytest.approx(ex * lay["pitch_um"])
+        assert pad["y_um"] == pytest.approx(ey * lay["pitch_um"])
+
+
+def test_layout_derives_the_chip_geometry_and_does_not_assume_a_maxwell(client, session, measynth):
+    """⭐ `stride`/`pitch_um` come from the file's own numbering, verified against every routed pad.
+
+    ⚠️ And **not** from the routed spacing: this fixture routes every OTHER column, so the smallest
+    routed gap is 25 µm against a true pitch of 12.5. Anything that measured the gap reports double
+    and this goes red — which is the bug real data caught once already."""
+    aid, rid = _opened(client, session)
+    lay = _layout(client, aid, rid)
+    assert lay["stride"] == measynth.STRIDE == 13
+    assert lay["pitch_um"] == pytest.approx(measynth.PITCH_UM) == pytest.approx(12.5)
+
+
+def test_layout_carries_the_header_facts_and_needs_no_decoder(client, session, measynth):
+    """The recording's own numbers, beside the chip. ⭐ The fixture's raw stream is declared and
+    never written — exactly what the real files look like through the published decoder — so this
+    passing proves the chip map does not touch it."""
+    aid, rid = _opened(client, session)
+    lay = _layout(client, aid, rid)
+    assert lay["label"] == "Network/000001"
+    assert lay["n_channels"] == 21
+    assert lay["sampling_hz"] == pytest.approx(measynth.FS_HZ)
+    assert lay["duration_s"] == pytest.approx(60_000 / measynth.FS_HZ)   # 3.0 s
+    assert lay["n_spikes"] > 0
+
+
+# ---- what happened on it -------------------------------------------------------------------------
+def test_activity_is_one_row_per_pad_in_LAYOUT_ORDER(client, session):
+    """⭐ The two routes are joined by ORDER as well as by channel, so the UI never has to guess."""
+    aid, rid = _opened(client, session)
+    lay, act = _layout(client, aid, rid), _activity(client, aid, rid)
+    assert [p["channel"] for p in act["pads"]] == [p["channel"] for p in lay["pads"]]
+    assert act["n_pads"] == len(lay["pads"])
+
+
+def test_activity_counts_add_up_to_the_recordings_own_total(client, session):
+    aid, rid = _opened(client, session)
+    act = _activity(client, aid, rid)
+    assert sum(p["n_spikes"] for p in act["pads"]) == act["n_spikes"] > 0
+
+
+def test_activity_rate_is_spikes_per_second_of_this_recording(client, session):
+    aid, rid = _opened(client, session)
+    act = _activity(client, aid, rid)
+    assert act["duration_s"] == pytest.approx(3.0)
+    for pad in act["pads"]:
+        assert pad["rate_hz"] == pytest.approx(pad["n_spikes"] / act["duration_s"])
+    assert act["max_rate_hz"] == pytest.approx(max(p["rate_hz"] for p in act["pads"]))
+
+
+def test_a_pad_that_heard_NOTHING_is_reported_as_zero_not_dropped(client, session):
+    """🔴 **THE ONE THE CHIP MAP'S COLOURS DEPEND ON.** The fixture's last routed channel is
+    deliberately silent. It must arrive as a pad with **0 spikes**, not be missing from the list —
+    a dead pad is a measurement (the amplifier was there and heard nothing), and the screen has to
+    be able to draw it unmistakably. If it were dropped it would look like a pad that was never
+    routed, which is a different fact entirely."""
+    aid, rid = _opened(client, session)
+    lay, act = _layout(client, aid, rid), _activity(client, aid, rid)
+
+    silent = [p for p in act["pads"] if p["n_spikes"] == 0]
+    assert silent, "the fixture guarantees at least one"
+    assert act["n_silent"] == len(silent)
+    # It is on the chip too — it has a position, so the map can draw it.
+    for pad in silent:
+        assert any(q["channel"] == pad["channel"] for q in lay["pads"])
+    assert all(p["rate_hz"] == 0.0 for p in silent)
+
+
+def test_the_scale_is_the_recordings_own_and_nothing_declares_a_maximum(client, session):
+    """⛔ **I1.** `max_rate_hz` is the busiest pad in THIS file — the two fixture recordings have
+    different spike tables (different seeds), so if anything had baked a scale in, these two would
+    agree and they must not."""
+    a = _create(client, "two", paths=session)
+    aid = a["analysis_id"]
+    rows = _settled(client, aid)
+    one = _activity(client, aid, rows[0]["id"])
+    two = _activity(client, aid, rows[1]["id"])
+    assert one["max_rate_hz"] > 0 and two["max_rate_hz"] > 0
+    assert (one["n_spikes"], one["max_rate_hz"]) != (two["n_spikes"], two["max_rate_hz"])
+
+
+# ---- one pad's trace -----------------------------------------------------------------------------
+def test_trace_is_asked_for_BY_CHANNEL_and_names_its_electrode(client, session):
+    """⭐ By channel, because the click already knows its channel — the chip map was drawn from the
+    file's own coordinates, so there is nothing to resolve. ⛔ And no `orientation` anywhere on the
+    payload: there is no microscope in this task and no seating to be provisional about."""
+    aid, rid = _opened(client, session)
+    lay = _layout(client, aid, rid)
+    pad = lay["pads"][0]
+
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace",
+                   params={"channel": pad["channel"], "t0": 0.0, "t1": 1.0})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["recorded"] is True
+    assert body["channel"] == pad["channel"]
+    assert body["electrode"] == pad["electrode"]
+    assert (body["x_um"], body["y_um"]) == (pad["x_um"], pad["y_um"])
+    assert "orientation" not in body and "chip_electrode" not in body
+
+
+def test_trace_returns_the_spikes_even_though_the_waveform_did_not_decode(client, session):
+    """🔴 **THE POINT OF THE WHOLE SCREEN.** The fixture's raw stream is declared and never written,
+    which is exactly what the real recordings look like through the published MaxWell decoder. The
+    waveform must come back flagged `flat` — and the spike ticks must come back **correct anyway**,
+    because the on-chip detector wrote them uncompressed."""
+    aid, rid = _opened(client, session)
+    lay = _layout(client, aid, rid)
+    busiest = lay["pads"][0]["channel"]                      # the fixture makes channel 0 busiest
+
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace",
+                   params={"channel": busiest, "t0": 0.0, "t1": 3.0})
+    body = r.json()
+    assert body["health"] is not None
+    assert body["health"]["flat"] is True, "⛔ it must SAY the waveform is not usable"
+    assert body["n_spikes_total"] > 0, "⭐ and the spikes are right regardless"
+    assert len(body["spikes"]) > 0
+    assert all(0.0 <= s["t_s"] < 3.0 for s in body["spikes"])
+
+
+def test_trace_window_is_clamped_and_first_spike_points_somewhere_worth_looking(client, session):
+    aid, rid = _opened(client, session)
+    lay = _layout(client, aid, rid)
+    ch = lay["pads"][0]["channel"]
+
+    # t1 past the end of the recording is clipped to the recording, never invented.
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace", params={"channel": ch, "t1": 9999})
+    body = r.json()
+    assert body["t1_s"] == pytest.approx(body["duration_s"]) == pytest.approx(3.0)
+    assert body["first_spike_s"] is not None
+    assert 0.0 <= body["first_spike_s"] <= body["duration_s"]
+
+    # An empty window is refused rather than answered with an empty chart.
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace",
+                   params={"channel": ch, "t0": 2.0, "t1": 1.0})
+    assert r.status_code == 422
+    assert err(r)["code"] == "refused"
+
+
+def test_trace_of_a_channel_that_was_never_routed_is_a_FACT_not_an_error(client, session):
+    """⭐ *"never recorded"* is the ordinary answer on a MaxWell — ~1k pads of tens of thousands are
+    routed. The chip map only draws routed pads so a click cannot normally land here, but a stale
+    URL can, and it must read as a fact about the experiment rather than a 404."""
+    aid, rid = _opened(client, session)
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace", params={"channel": 9999})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["recorded"] is False
+    assert body["trace_uv"] == [] and body["spikes"] == []
+    assert body["electrode"] is None
+
+
+# ---- which file gets read, and what happens when there is none -----------------------------------
+def test_all_three_routes_read_the_PROJECTS_OWN_COPY_once_it_has_landed(client, session):
+    """⭐ **`recordings.open_path` IS THE ONE PLACE THAT DECIDES**, and all three of these call it.
+    Once the copy has landed, deleting his original changes nothing at all — which is exactly what
+    would break if a route had decided for itself and gone on reading `source_path`."""
+    aid, rid = _opened(client, session)
+    before = (_layout(client, aid, rid), _activity(client, aid, rid))
+
+    Path(session[0]).unlink()                                # his original goes; the copy remains
+
+    assert _layout(client, aid, rid) == before[0]
+    assert _activity(client, aid, rid) == before[1]
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace", params={"channel": 0})
+    assert r.status_code == 200, r.text
+
+
+def test_a_recording_with_no_file_at_either_address_is_refused_BY_NAME(client, session):
+    """🔴 Never an empty chip map. A recording read from the original, with the original gone, has
+    nothing to draw — and the refusal has to say *which* recording and *where* it looked."""
+    a = _create(client, "moved", paths=[session[0]])
+    aid = a["analysis_id"]
+    _settled(client, aid)
+
+    folder = Path(a["folder"])
+    doc = json.loads((folder / "document.camea.json").read_text("utf-8"))
+    rid = doc["recordings"][0]["id"]
+    doc["recordings"][0]["stored_path"] = ""
+    doc["recordings"][0]["copy_state"] = "referenced"
+    doc["recordings"][0]["source_path"] = "D:/somewhere/he/moved/it/data.raw.h5"
+    (folder / "document.camea.json").write_text(json.dumps(doc), encoding="utf-8")
+
+    for route in ("layout", "activity"):
+        r = client.get(f"/api/mea/{aid}/recordings/{rid}/{route}")
+        assert r.status_code == 409, (route, r.text)
+        assert err(r)["code"] == "refused"
+        assert "Network/000001" in err(r)["message"]
+        assert "somewhere/he/moved/it" in err(r)["message"]
+
+
+def test_an_unknown_recording_id_is_a_404_on_every_route(client, session):
+    aid, _rid = _opened(client, session)
+    for route in ("layout", "activity", "trace?channel=0"):
+        r = client.get(f"/api/mea/{aid}/recordings/rec_nope/{route}")
+        assert r.status_code == 404, (route, r.text)
+
+
+def test_these_routes_refuse_a_project_of_another_task(client, survey_video):
+    """The feature string on the manifest is the gate, the same way every other shelf route is."""
+    r = client.post("/api/videomosaic/projects",
+                    json={"name": "video", "video_path": survey_video})
+    assert r.status_code == 201, r.text
+    aid = r.json()["analysis_id"]
+    r = client.get(f"/api/mea/{aid}/recordings/rec_x/layout")
+    assert r.status_code == 409
+    assert err(r)["code"] == "refused"

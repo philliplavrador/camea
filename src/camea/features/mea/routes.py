@@ -73,6 +73,9 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     CreateMeaProjectRequest,
     ErrorCode,
     MeaBrowseResult,
+    MeaChannelTrace,
+    MeaChipActivity,
+    MeaChipLayout,
     MeaShelf,
 )
 from camea.core import document as core_document
@@ -428,4 +431,234 @@ def delete_mea_recording(analysis_id: str, recording_id: str) -> dict:
     return _shelf(ws, analysis_id, saved)
 
 
-__all__ = ["router", "ApiError", "set_store", "FEATURE", "DEFAULT_NAME"]
+# =================================================================================================
+# Opening one recording — the chip, what happened on it, and one pad's trace
+# =================================================================================================
+#
+# ⭐ **THIS IS THE WHOLE OF PLAN 003's BACKEND, AND IT IS SMALL ON PURPOSE.** `core/mearecording.py`
+# already reads these files and `MeaRecording.activity()` already does the tally; these three routes
+# resolve *which file* and hand back what it says.
+#
+# ⭐ **THE EXISTING `get_mea_trace` IN `features/videomosaic/routes.py` IS THE MODEL, NOT THE
+# TARGET.** It answers the same question for a pad clicked in a *mosaic*, and two thirds of it is
+# resolving a `col-row` id through the chip's seating to a channel. ⛔ **None of that belongs here:
+# the click already knows its channel**, because the chip map was drawn from the file's own
+# coordinates. What was reproduced deliberately is the half that is about being honest — the window
+# clamping, `MAX_TRACE_SECONDS`, the spike window, `first_spike_s`, `trace_health` and the
+# `RawUndecodable` arm. ⛔ And the two were NOT refactored to share: they answer different questions,
+# and the thing they genuinely share (`core/mearecording.py`) is already shared.
+#
+# ⛔ **AND THERE IS NO SEATING WARNING HERE, EVER.** No `orientation` on any payload, no
+# "provisional" anything. There is no microscope in this task; the file states its own `electrode`,
+# `x_um` and `y_um`, so every id is exact. Importing that doubt would make the screen lie.
+
+#: How much trace one request may return. A 300 s window at 20 kHz is 6M floats — far past what a
+#: chart can draw and past what JSON should carry. The UI asks for the window it is drawing.
+#: ⚠️ Same number and same reason as the videomosaic route's; deliberately not imported from it,
+#: because a feature must not depend on another feature.
+MAX_TRACE_SECONDS = 30.0
+
+
+def _recording_path(analysis_id: str, recording_id: str) -> tuple[Path, dict]:
+    """⭐ **THE ONE PLACE THESE THREE ROUTES DECIDE WHICH FILE TO OPEN.** -> `(path, entry)`.
+
+    A `referenced` recording is read from `source_path`; a `stored` one from the project's own copy.
+    ⚠️ That resolution is `recordings.open_path` and it is called here and nowhere else — three
+    routes each deciding for themselves is exactly how one ends up on a stale copy while another is
+    on the original, and the symptom would be two halves of this same screen disagreeing about the
+    same recording (plan 002 § Decisions built it for this; plan 003 § Approach asks for it).
+
+    ⛔ Refuses by name rather than 500ing when there is no file at either address — that is the
+    *"this recording is no longer where you left it"* case, and it is a fact about his data.
+    """
+    from . import recordings as mrec
+
+    doc, ws = _mea_project(analysis_id)
+    recs = list(doc.get("recordings") or [])
+    entry = next((r for r in recs if str(r.get("id")) == recording_id), None)
+    if entry is None:
+        raise ApiError(404, "not_found", f"no recording {recording_id!r} in this project")
+
+    path = mrec.open_path(ws.folder_of(analysis_id), entry)
+    if path is None:
+        raise ApiError(
+            409, "refused",
+            f"{entry.get('label') or recording_id} is no longer where you left it "
+            f"({entry.get('source_path') or 'no path recorded'}), and Camea has no copy of it.",
+            {"recording_id": recording_id, "source_path": str(entry.get("source_path") or "")},
+        )
+    return path, entry
+
+
+def _open(analysis_id: str, recording_id: str):
+    """`_recording_path`, opened. Raises the refusal by name if the file stopped being readable."""
+    from camea.core import mearecording as mr  # noqa: PLC0415
+
+    from . import recordings as mrec
+
+    path, entry = _recording_path(analysis_id, recording_id)
+    rec = None
+    try:
+        rec = mr.MeaRecording(path)
+        rec.info()                                           # touch it, so a bad file fails HERE
+    except Exception as e:                                   # noqa: BLE001
+        # ⚠️ The file is at the address and no longer reads — it changed under him. Same sentence
+        # the import would have given it, so he meets one refusal about this file, not two.
+        if rec is not None:
+            rec.close()                                      # ⛔ never leak the handle on the way out
+        raise ApiError(422, "refused", str(mrec.NotARecording(path, f"{type(e).__name__}: {e}")),
+                       {"recording_id": recording_id}) from e
+    return rec, entry
+
+
+@router.get("/api/mea/{analysis_id}/recordings/{recording_id}/layout",
+            response_model=MeaChipLayout)
+def get_mea_layout(analysis_id: str, recording_id: str) -> dict:
+    """The chip as this recording describes it — every routed pad, at its own µm position.
+
+    ⭐ **ONLY THE ROUTED PADS.** A MaxOne routes ~1k channels out of tens of thousands of pads, so
+    most of the chip carries no data at all — and a pad that was never routed is not a measurement
+    of silence, it is the *absence* of a measurement. Drawing them would invent data.
+
+    ⭐ `stride` and `pitch_um` are **derived from the file's own numbering and verified against every
+    routed pad**, never taken from a datasheet. ⚠️ And never measured from the routed spacing: one of
+    this project's recordings routed every other pad, so the smallest routed gap is twice the truth.
+
+    ⛔ Needs no proprietary decoder — the mapping table is plain HDF5.
+    """
+    rec, entry = _open(analysis_id, recording_id)
+    try:
+        info = rec.info()
+        m = rec.mapping()
+        return {
+            "analysis_id": analysis_id,
+            "recording_id": recording_id,
+            "label": str(entry.get("label") or info.label),
+            "run_id": str(entry.get("run_id") or info.run_id),
+            "assay": str(entry.get("assay") or info.assay),
+            "pads": [{"channel": int(p["channel"]), "electrode": int(p["electrode"]),
+                      "x_um": float(p["x_um"]), "y_um": float(p["y_um"])} for p in m],
+            "stride": rec.stride(),
+            "pitch_um": rec.pitch_um(),
+            "n_channels": info.n_channels,
+            "n_samples": info.n_samples,
+            "duration_s": info.duration_s,
+            "sampling_hz": info.sampling_hz,
+            "n_spikes": info.n_spikes,
+        }
+    finally:
+        rec.close()
+
+
+@router.get("/api/mea/{analysis_id}/recordings/{recording_id}/activity",
+            response_model=MeaChipActivity)
+def get_mea_activity(analysis_id: str, recording_id: str) -> dict:
+    """The per-pad tally the chip map is coloured by — one row per routed pad, in `layout` order.
+
+    ⭐ **A GET, NOT A JOB, AND THAT WAS MEASURED** (plan 003 § Open asked). One pass over the spike
+    table of a real 300 s recording: **2.3–21 ms** end to end including the layout, over all five
+    readable recordings in the mirror (the worst is 982 channels × 244,925 spikes at 21 ms). Nothing
+    here is slow enough to need a spinner, let alone a job — so it is a plain GET and the screen
+    draws on the first paint.
+
+    ⭐ **AND IT NEEDS NO PROPRIETARY DECODER**, because the spike table is written uncompressed by
+    the on-chip detector. This is the reason the chip map is worth building before the decoder
+    problem is solved: it is exactly right on a machine where the waveform is a rail.
+
+    ⛔ A count. Not a rate per neuron, not a burst, not a verdict on whether the culture is healthy
+    (I1) — and `max_rate_hz` is the busiest pad *in this recording*, so the UI can scale its colours
+    to the file in front of it. There is no number in Camea for how active a chip should be.
+    """
+    rec, _entry = _open(analysis_id, recording_id)
+    try:
+        info = rec.info()
+        act = rec.activity()
+        return {
+            "analysis_id": analysis_id,
+            "recording_id": recording_id,
+            "pads": [{"channel": int(a["channel"]), "n_spikes": int(a["n_spikes"]),
+                      "rate_hz": float(a["rate_hz"])} for a in act],
+            "duration_s": info.duration_s,
+            "n_spikes": info.n_spikes,
+            "n_pads": int(act.size),
+            "n_silent": int((act["n_spikes"] == 0).sum()),
+            "max_rate_hz": float(act["rate_hz"].max()) if act.size else 0.0,
+        }
+    finally:
+        rec.close()
+
+
+@router.get("/api/mea/{analysis_id}/recordings/{recording_id}/trace",
+            response_model=MeaChannelTrace)
+def get_mea_channel_trace(analysis_id: str, recording_id: str,
+                          channel: int = Query(..., description="The routed channel that was "
+                                                                "clicked on the chip map."),
+                          t0: float = 0.0, t1: float | None = None) -> dict:
+    """One pad's stored waveform and its spikes, for the window `[t0, t1)`.
+
+    ⭐ **BY CHANNEL, BECAUSE THE CLICK ALREADY KNOWS ITS CHANNEL.** The chip map was drawn from
+    `layout`, so the dot he clicked carries its own channel — there is nothing to resolve and no
+    seating to guess. ⛔ That is the whole difference from the videomosaic trace route, and it is why
+    the two are separate rather than shared.
+
+    ⚠️ **`health` IS NOT DECORATION.** The published MaxWell decoder does not reconstruct this
+    project's files, and a railed window drawn without that caveat looks exactly like a genuinely
+    silent electrode. ⭐ The spikes are unaffected — the on-chip detector wrote them uncompressed —
+    so they are returned and drawn even when the waveform is refused.
+    """
+    from camea.core import mearecording as mr  # noqa: PLC0415
+
+    rec, _entry = _open(analysis_id, recording_id)
+    try:
+        info = rec.info()
+        m = rec.mapping()
+        base = {"analysis_id": analysis_id, "recording_id": recording_id, "channel": int(channel),
+                "duration_s": info.duration_s, "sampling_hz": info.sampling_hz}
+
+        hit = m[m["channel"] == int(channel)]
+        if hit.size == 0:
+            # ⭐ The ordinary answer, and a FACT rather than a failure: this pad was never routed.
+            # The chip map only draws routed pads, so a click cannot normally land here — but a
+            # stale URL or a recording swapped under him can, and it must not read as an error.
+            return {**base, "recorded": False, "t0_s": 0.0, "t1_s": 0.0}
+
+        end = info.duration_s if t1 is None else float(t1)
+        start = max(0.0, float(t0))
+        end = min(end, start + MAX_TRACE_SECONDS, info.duration_s)
+        if end <= start:
+            raise ApiError(422, "refused", "the requested window is empty")
+
+        spikes = rec.spikes_of_channel(channel)
+        # Where the activity starts, so the caller can open ITS window somewhere worth looking
+        # rather than at t=0. ⚠️ Clamped at 0: a few spikes are logged during the pre-roll, i.e.
+        # before the first stored sample, and a negative window start is not a real window.
+        first = float(max(0.0, spikes["t_s"].min())) if spikes.size else None
+        window = spikes[(spikes["t_s"] >= start) & (spikes["t_s"] < end)]
+        out: dict = {
+            **base,
+            "recorded": True,
+            "electrode": int(hit["electrode"][0]),
+            "x_um": float(hit["x_um"][0]),
+            "y_um": float(hit["y_um"][0]),
+            "t0_s": start,
+            "t1_s": end,
+            "n_spikes_total": int(spikes.size),
+            "first_spike_s": first,
+            "spikes": [{"t_s": float(s["t_s"]), "amplitude_uv": float(s["amplitude_uv"])}
+                       for s in window],
+        }
+        try:
+            out["trace_uv"] = [float(v) for v in rec.trace(channel, start, end)]
+            out["health"] = rec.trace_health(channel, start, end).as_dict()
+        except mr.RawUndecodable as e:
+            # ⭐ The spikes above are still exactly right — return them, and say the waveform is
+            # unavailable rather than drawing a flat line that looks like a silent electrode.
+            out["trace_uv"] = []
+            out["health"] = None
+            out["decode_error"] = str(e)
+        return out
+    finally:
+        rec.close()
+
+
+__all__ = ["router", "ApiError", "set_store", "FEATURE", "DEFAULT_NAME", "MAX_TRACE_SECONDS"]

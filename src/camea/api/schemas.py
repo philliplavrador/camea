@@ -2682,6 +2682,174 @@ class MeaCopyResult(Res):
     bytes: int = 0
 
 
+# ── opening one recording: the chip, what happened on it, and one pad's trace ────────────────────
+#
+# ⭐ **THIS SCREEN WORKS ENTIRELY IN THE CHIP'S OWN FRAME, AND THAT IS THE POINT.** The file states
+# its own `electrode`, `x_um` and `y_um`, so every id below is *exact*. ⛔ There is no `orientation`
+# on any of these models and there must never be one: the seating question the `Mea*` models above
+# carry is a fact about a **microscope**, and this task has no microscope. Copying it across would
+# teach a doubt that does not exist here (his interview, 2026-08-14).
+#
+# ⛔ **AND NOTHING HERE SAYS HOW ACTIVE A CHIP SHOULD BE** (I1). No threshold, no expected rate, no
+# "healthy"/"dead" verdict, no scale maximum. `MeaChipActivity` reports what the on-chip detector
+# wrote and what the header says the recording lasted; the colour scale the UI draws is computed
+# from *that recording*, every time.
+
+
+class MeaChipPad(Res):
+    """One routed pad, at the position the file itself states for it.
+
+    ⛔ **`electrode` IS MAXWELL'S OWN ID, NOT A CAMEA `col-row` GRID ID.** The mosaic pipeline's
+    `col-row` ids exist because that pipeline has to *guess* how the chip was seated under a
+    microscope; here the file says where every pad is, so the two must never be confused.
+    """
+
+    channel: int = Field(description="The amplifier channel this pad was routed to — what the "
+                         "trace route is asked for.")
+    electrode: int = Field(description="MaxWell's own electrode id, straight from the file.")
+    x_um: float
+    y_um: float
+
+
+class MeaChipLayout(Res):
+    """`GET /api/mea/{analysis_id}/recordings/{recording_id}/layout` — the chip, as this file
+    describes it: every pad that was actually recorded, at its real position.
+
+    ⭐ **ONLY THE ROUTED PADS ARE HERE, AND THAT IS THE HONEST SET.** A MaxOne routes ~1k channels
+    of tens of thousands of pads, so *most of the chip has no data at all* — and a pad that was
+    never routed is not a measurement of silence, it is an absence of measurement. Drawing them
+    would invent data.
+
+    ⛔ Costs no proprietary decoder: the mapping table is plain HDF5.
+    """
+
+    analysis_id: str
+    recording_id: str
+    label: str = ""
+    run_id: str = ""
+    assay: str = ""
+    pads: list[MeaChipPad] = Field(default_factory=list)
+    stride: int = Field(
+        default=0,
+        description="⭐ The array's long-axis length, **derived from this file's own numbering and "
+        "then verified against every routed pad** (`derive_geometry`) — never a datasheet number. "
+        "A file that does not satisfy the relation is refused rather than guessed at.",
+    )
+    pitch_um: float = Field(
+        default=0.0,
+        description="Centre-to-centre pad spacing, derived the same way. ⚠️ **Not** measured from "
+        "the spacing of the routed pads: one of this project's recordings routed every OTHER pad, "
+        "so the smallest routed gap is twice the truth.",
+    )
+    n_channels: int = 0
+    n_samples: int = 0
+    duration_s: float = 0.0
+    sampling_hz: float = 0.0
+    n_spikes: int = Field(default=0, description="Across the whole recording, every channel.")
+
+
+class MeaPadActivity(Res):
+    """How much happened on one routed pad. ⛔ A count, and nothing more — see `MeaChipActivity`."""
+
+    channel: int
+    n_spikes: int
+    rate_hz: float = Field(description="Spikes per second of the recording. The unit the chip "
+                           "map's legend names.")
+
+
+class MeaChipActivity(Res):
+    """`GET /api/mea/{analysis_id}/recordings/{recording_id}/activity` — the per-pad tally the chip
+    map is coloured by, one row per routed pad, in the same order as `layout`'s `pads`.
+
+    ⭐ **NO PROPRIETARY DECODER IS INVOLVED.** These come from MaxWell's spike table, which is
+    written uncompressed by the on-chip detector at acquisition. So the chip map is **trustworthy on
+    every machine**, including all of the ones where the raw waveform decodes to a rail
+    (`utils/knowledge/mea-recordings.md`). That is what makes this screen worth building before the
+    decoder problem is solved.
+
+    ⛔ **A COUNT, AND THE LEGEND SAYS SO.** No sorting, no bursts, no rates-per-neuron, no verdict.
+    Each of those is a project on its own and none was asked for.
+
+    ⛔ **AND NOTHING HERE IS A JUDGEMENT ABOUT THE CHIP** (I1). `max_rate_hz` is the largest number
+    *in this recording*, reported so the UI can scale its colours to the file in front of it. It is
+    not a maximum a chip is expected to reach, and there is no such number anywhere in Camea.
+    """
+
+    analysis_id: str
+    recording_id: str
+    pads: list[MeaPadActivity] = Field(default_factory=list)
+    duration_s: float = Field(default=0.0, description="What `rate_hz` was divided by.")
+    n_spikes: int = Field(default=0, description="Every spike in the recording.")
+    n_pads: int = 0
+    n_silent: int = Field(
+        default=0,
+        description="⭐ Routed pads with **zero** spikes. Silence is a MEASUREMENT — the amplifier "
+        "sat on that pad for the whole recording and detected nothing — which is a different fact "
+        "from a pad that was never routed, and the chip map must not let the two look alike.",
+    )
+    max_rate_hz: float = Field(
+        default=0.0,
+        description="The busiest pad in THIS recording. ⛔ Derived every time, never a constant: "
+        "see the class docstring.",
+    )
+
+
+class MeaChannelTrace(Res):
+    """`GET /api/mea/{analysis_id}/recordings/{recording_id}/trace?channel=&t0=&t1=` — one pad's
+    stored waveform and its spikes, for the window `[t0, t1)`.
+
+    ⭐ **ASKED FOR BY CHANNEL, BECAUSE THE CLICK ALREADY KNOWS ITS CHANNEL.** The videomosaic
+    `ElectrodeTracePayload` above answers the same question for a pad clicked in a *mosaic*, where
+    two thirds of the work is resolving a `col-row` id through the chip's seating. None of that
+    exists here, so none of it is on this model — ⛔ in particular there is no `orientation` and no
+    `chip_electrode`, because the electrode is not in doubt.
+
+    ⚠️ **`health` IS NOT DECORATION.** The published MaxWell decoder does not reconstruct this
+    project's files (measured: 98% of samples come back as one value), and a railed window drawn
+    without that caveat looks **exactly** like a genuinely silent electrode. The spike ticks stay
+    correct either way and are drawn either way.
+    """
+
+    analysis_id: str
+    recording_id: str
+    channel: int
+    electrode: int | None = Field(
+        default=None, description="MaxWell's own electrode id for this channel, when it is routed.")
+    recorded: bool = Field(
+        description="⭐ False when this channel is not in the recording's routed set — *'never "
+        "recorded'* is the ordinary answer, and it must render as a fact about the experiment "
+        "rather than as an error or an empty chart.",
+    )
+    x_um: float | None = None
+    y_um: float | None = None
+    t0_s: float = 0.0
+    t1_s: float = 0.0
+    duration_s: float = Field(default=0.0, description="The whole recording, so the UI can scrub.")
+    sampling_hz: float = 0.0
+    trace_uv: list[float] = Field(
+        default_factory=list,
+        description="The stored waveform in µV. ⚠️ Judge it with `health` before believing it; "
+        "empty when the raw stream could not be decoded at all (`decode_error` says so).",
+    )
+    health: TraceHealthPayload | None = None
+    spikes: list[MeaSpike] = Field(
+        default_factory=list,
+        description="Detected spikes inside the window. ⭐ Trustworthy independently of the trace.",
+    )
+    n_spikes_total: int = Field(default=0, description="On this channel, whole recording.")
+    first_spike_s: float | None = Field(
+        default=None,
+        description="When this pad first fired. ⭐ The UI opens its window HERE rather than at t=0: "
+        "a 300 s recording stepped a second at a time would take 200 clicks to reach the activity, "
+        "and a dead opening window makes a working electrode look broken.",
+    )
+    decode_error: str = Field(
+        default="",
+        description="⛔ Set when HDF5 could not run MaxWell's filter at all — the decoder library is "
+        "absent. Said on the page; the spikes above are still returned and still correct.",
+    )
+
+
 # =================================================================================================
 # The job-result union — declared last, because it names every feature's result.
 # =================================================================================================

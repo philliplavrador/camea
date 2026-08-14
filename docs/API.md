@@ -164,12 +164,23 @@ and `y_um`, so there is no seating question and it must not grow one.
 | **shelf** | `GET /api/mea/{id}/recordings` | → `MeaShelf`. ⚠️ `copy_state` is **derived from the disk and the job registry**, not echoed from the document, so a copy interrupted by a restart reports as `referenced` (which it is) rather than a `copying` that will never finish. Every number is read off the file on the way past — ⛔ nothing about what is *in* a recording is stored (I1) |
 | **add** | `POST /api/mea/{id}/recordings` | `AddMeaRecordingsRequest` → `MeaShelf`, 201. Several at once; **all or nothing**, and the refusal names the file. Each lands as `referenced` and gets its own copy job (`mea_copy`, one **per recording** so the shelf can show a percentage per row) |
 | **remove** | `DELETE /api/mea/{id}/recordings/{rid}` | → `MeaShelf`. Forgets it and deletes **Camea's copy**. ⛔ **The user's original is never touched, under any circumstance** |
+| **the chip** | `GET /api/mea/{id}/recordings/{rid}/layout` | → `MeaChipLayout`. Every **routed** pad at the file's own `x_um`/`y_um`, plus `stride`/`pitch_um` **derived from the file's numbering and verified against every pad** (never a datasheet number, and never measured from the routed spacing — one of this project's recordings routed every other pad). ⛔ Only routed pads: a pad that was never routed is the *absence* of a measurement, not a silent one |
+| **activity** | `GET /api/mea/{id}/recordings/{rid}/activity` | → `MeaChipActivity`. Per-pad spike count and spikes/s, one row per pad in `layout` order. ⭐ **From the spike table, so no proprietary decoder is involved** — the chip map is trustworthy on every machine, including the ones where the waveform is a rail. ⛔ A count, not a verdict: `max_rate_hz` is the busiest pad *in this recording*, and no number anywhere says how active a chip should be (I1) |
+| **one pad's trace** | `GET /api/mea/{id}/recordings/{rid}/trace?channel=&t0=&t1=` | → `MeaChannelTrace`. ⭐ **By `channel`, because the click already knows its channel** — the chip map was drawn from the file's own coordinates, so nothing has to be resolved. ⛔ No `orientation` and no `chip_electrode`: there is no seating question here. `health.flat` says the waveform did not decode; the spikes are returned and correct either way |
 
 ⭐ **Where the bytes are.** A recording is usable the instant it is added, read from wherever it
 sits; a background job copies it into `<project>/recordings/<rid>/` (R44 — inside the project and
 nowhere else, source opened read-only) and every later read uses that copy.
 `features/mea/recordings.py :: open_path` is the **one** place that decides which of the two to
-read, and everything added later must call it rather than deciding again.
+read, and everything added later must call it rather than deciding again. ⭐ The three routes above
+reach it through `routes.py :: _recording_path`, so *"source or copy?"* is answered once for the
+whole screen — three routes each deciding for themselves is how one half of a screen ends up on a
+stale copy while the other is on the original.
+
+⭐ **`layout` and `activity` are plain GETs, and that was measured, not assumed** (plan 003 § Open).
+One pass over the spike table of a real recording from the mirror costs **2.3–21 ms** end to end —
+the worst case being 982 channels against 244,925 spikes. Nothing here needs a spinner, let alone a
+job, so the screen draws on its first paint.
 
 ---
 
