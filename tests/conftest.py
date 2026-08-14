@@ -227,3 +227,20 @@ def videosynth():
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.fixture(scope="session")
+def measynth():
+    """The synthetic MaxLab-recording helper (`tests/fixtures/measynth.py`), loaded the same way.
+
+    ⭐ **This is what makes `Analyze MEA` testable on a clean clone.** `tests/fixtures/synthetic/` is
+    a frame dataset and `survey.avi` is a video; neither is a `data.raw.h5`, so before this the
+    import, the copy and the shelf could only be exercised against the 35 GB mirror. See the module
+    for why the chip in it is 13×5 on a 12.5 µm pitch and not a MaxWell.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "measynth", Path(__file__).resolve().parent / "fixtures" / "measynth.py")
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
