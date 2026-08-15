@@ -4,29 +4,42 @@
 // is generated from the same object that colours the dots, so the two cannot drift apart.
 //
 // ═════════════════════════════════════════════════════════════════════════════════════════════
-// 🔴 **THE SCALE IS HELD. THIS IS A PLACEHOLDER CHOSEN ON EVIDENCE, NOT AN APPROVED DESIGN.**
+// ⭐ **SETTLED 2026-08-14: THE RANK RAMP, AND HE CHOSE IT ON THE EVIDENCE.**
 // ═════════════════════════════════════════════════════════════════════════════════════════════
-// He was shown three ways of handing out the colours on 2026-08-14 and picked none of them —
-// he corrected the premise of the question instead (see THE CORRECTION below). The decision is
-// pending `docs/MAXWELL.md`, the knowledge base being built about how these chips actually
-// work. ⚠️ **When it lands, this file is the only edit.** Nothing outside it knows how a rate
-// becomes a colour, and `ChipMap` cannot be changed by the answer — it asks `position()` for a
-// number between 0 and 1, or `null`, and draws that.
+// He was shown three ways of handing out the colours and picked none of them — he corrected the
+// premise instead (see THE CORRECTION below) and asked for research first. That research is
+// `docs/MAXWELL.md`; it measured all four candidates across **33 recordings, 57 configurations
+// and 4 chips**, and he was then re-asked with the result. He kept the rank ramp, and declined
+// a histogram beside the chip.
 //
-// The three he was shown, with what I measured on his own five recordings under `data/`:
+// ⚠️ **This is still the only file that knows how a rate becomes a colour, and it must stay that
+// way.** `ChipMap` asks `position()` for a number between 0 and 1, or `null`, and draws that. If
+// the scale is ever revisited, this is again the only edit.
+//
+// The four candidates, and why the corpus killed three of them (`docs/MAXWELL.md` § 7.2):
 //
 //   1. "Straight"       — busiest pad sets the top, everything a straight fraction of it.
-//                         ⛔ MEASURED: **90–99 % of live pads land in the darkest tenth** on
-//                         every one of his recordings (99 % on P003658/000690). The picture is
-//                         very nearly one flat colour, which hides the structure the screen
-//                         exists to show.
+//                         ⛔ MEASURED: **72–99 % of live pads land in the darkest tenth** —
+//                         000688 **72 %**, 000689 99 %, 000690 99 %, 000691 90 %, 000692 96 %.
+//                         Even at the 72 % end the picture is very nearly one flat colour, which
+//                         hides the structure the screen exists to show.
+//                         ⚠️ An earlier revision of this header said "90–99 % on every one of his
+//                         recordings". That was wrong — it read past the 72 % row in the source
+//                         note. The argument is untouched; the number was not.
 //   2. "Halfway"        — square root. Better, but recording-dependent: still 96 % in the
-//                         darkest tenth on 000690, while 000692 comes out well (41 %).
-//   3. "Spread them out"— every live pad's colour is its POSITION IN THE ORDER, so the picture
-//                         always uses the full range whatever the recording. ⭐ **The provisional
-//                         default below**, chosen only because it is the one of the three that
-//                         measured well on all five of his recordings. The cost is real and is
-//                         stated in the legend: equal colour steps are NOT equal rate steps.
+//                         darkest tenth on 000690, while 000692 comes out well (41 %). A ramp
+//                         that fixes some files and not others is not a fix.
+//   3. "Log"            — ⛔ tempting and wrong: log-normality holds on the BUSY recordings only
+//                         (log-skew 0.078–0.554 on four files, but 1.591 on 000689 and 2.316 on
+//                         000690). Never pick a ramp whose assumption breaks on a third of the
+//                         corpus.
+//   4. "Spread them out"— every live pad's colour is its POSITION IN THE ORDER, so the picture
+//                         always uses the full range whatever the recording. ⭐ **THE CHOICE.**
+//                         It is the only one of the four that measured well on every recording,
+//                         and it is the ASSUMPTION-FREE one precisely because the distribution
+//                         family is not stable: mean rate spans 171× across the corpus and 113×
+//                         between two runs of the SAME PLATE. The cost is real and stays stated
+//                         in the legend: equal colour steps are NOT equal rate steps.
 //
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // ⭐ **THE CORRECTION — HIS WORDS, 2026-08-14, AND THIS PART IS NOT PENDING ANYTHING**
@@ -61,7 +74,7 @@ export const SILENT_MEANING = 'no spikes — most likely no neuron near this pad
 
 /**
  * ⭐ **Why equal colour steps are not equal rate steps**, stated on the legend rather than left
- * for him to infer. Tied to the provisional scale below; it changes with it.
+ * for him to infer. Tied to the rank scale below; it changes with it.
  */
 export const SCALE_CAVEAT =
   'Colours are shared out evenly across the pads that fired, so the busiest and quietest parts ' +
