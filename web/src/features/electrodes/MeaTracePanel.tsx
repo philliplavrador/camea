@@ -9,10 +9,14 @@
 //      acquisition, so most clicks land on an electrode with no trace. That must read as a fact
 //      about the experiment, not as a failure or an empty chart.
 //   2. ⚠️ **the waveform may not have decoded.** MaxWell compresses the raw stream with a
-//      proprietary filter; the publicly available decoder does not reconstruct this project's
-//      files (measured: 98% of samples come back as one fill value). `health.flat` says so, and a
-//      railed window looks EXACTLY like a genuinely silent electrode — which is why this is stated
-//      and the trace is dimmed rather than quietly drawn.
+//      proprietary filter, and on SOME of this project's recordings the publicly available decoder
+//      returns a rail (~98% of samples one fill value). `health.flat` says so per window and per
+//      channel, and a railed window looks EXACTLY like a genuinely silent electrode — which is why
+//      this is stated and the trace is dimmed rather than quietly drawn.
+//      ⛔ **NOT "the decoder is broken" — corrected 2026-08-15.** Measured exactly over the whole
+//      of all five recordings in his project: 000690/691/692 rail (94-100%), but **000688 and
+//      000689 decode cleanly** (1.1% and 4.4%). It is those recordings, not the decoder. Read
+//      `health`; never assume.
 //   3. ⚠️ **the chip's seating is not established.** Which corner of the mosaic the chip's own
 //      origin landed in is a fact about the microscope that no file records. Until it is
 //      confirmed, the electrode's identity is PROVISIONAL and the panel says so.

@@ -1367,13 +1367,31 @@ Stated plainly, because it changes what a Camea screen is allowed to claim.
   the raw dataset — while **mapping, settings and spikes read fine** *(measured here)*. ⭐ **A chip map,
   an electrode layout and a spike-rate view are all reachable with no decoder at all.** Only waveforms
   need it.
-* 🔴 **Measured on this project's data (2026-08-13, recorded in the repo): the public plug-in does not
-  reconstruct these files.** 98% of samples come back as the constant **1023** = 2¹⁰−1 — the top of the
-  10-bit ADC, the *rail* — and the dataset's real HDF5 fill value is `0`, so this is not HDF5
-  substituting for absent chunks. Every chunk is allocated; the stream stores 1.59 GB against 12.15 GB
-  uncompressed (**7.6:1**, the same ratio on both files measured). ⇒ **The bytes are there. It is a
-  decode failure, not a recording mode** — and `assay/inputs/spike_only` is `false` on every Network
-  file, i.e. a full continuous trace *was* recorded.
+* 🔴 **On SOME of this project's files the public plug-in does not reconstruct the stream.** Where it
+  fails, ~98% of samples come back as the constant **1023** = 2¹⁰−1 — the top of the 10-bit ADC, the
+  *rail* — and the dataset's real HDF5 fill value is `0`, so this is not HDF5 substituting for absent
+  chunks. Every chunk is allocated; the stream stores 1.59 GB against 12.15 GB uncompressed
+  (**7.6:1**). ⇒ **The bytes are there. It is a decode failure, not a recording mode** — and
+  `assay/inputs/spike_only` is `false` on every Network file, i.e. a full continuous trace *was*
+  recorded.
+* ⚠️ 🔴 **BUT IT IS THREE FILES, NOT ALL OF THEM — corrected 2026-08-15, and the old wording here was
+  wrong.** This bullet used to read *"the public plug-in does not reconstruct these files"* full stop,
+  measured on the two files that happened to be open on 2026-08-13. Re-measured across the five
+  recordings in his project, per-channel, with an exact whole-recording tally (`build_envelope`):
+
+  | run | most-repeated value, whole recording, ch 0 | |
+  |---|---|---|
+  | **000688** | **1.1%** | decodes cleanly |
+  | **000689** | **4.4%** | decodes cleanly |
+  | 000690 | 96.5% | railed |
+  | 000691 | 100.0% | railed |
+  | 000692 | 93.9% | railed |
+
+  ⇒ **The rail is a property of particular recordings, not of the decoder, not of this machine, and
+  not of MaxWell's format.** A session that reads the old wording concludes every waveform in the
+  project is unreadable and designs around a problem that does not exist for most of the data. ⛔ Do
+  not restate the failure as general — in this file, in a code comment, or on a screen. `health` is
+  per window and per channel precisely so the app never has to hold an opinion about it.
 * ⭐ **The plug-in is 10 KB and self-contained, so "a missing sibling DLL" is ruled out.** The installed
   copy is `compression.dll`, **10,752 bytes**, MD5 `b9037dda7b710b2bfd92de1b6c0d9576`, dated
   2025-09-08, in `C:\Users\phill\hdf5_plugin_path_maxwell`. It exports `H5PLget_plugin_info` /

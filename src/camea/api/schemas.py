@@ -2193,9 +2193,12 @@ class ElectrodeMapResult(Res):
 #   1. **Most electrodes were never recorded.** ~1k of 26.4k are routed at acquisition, so
 #      `recorded: false` is the common answer and must render as a fact, not an empty chart.
 #   2. **The raw stream may not decode.** MaxWell compresses it with a proprietary filter whose
-#      decoder ships with MaxLab Live; the published one does not reconstruct this project's files
-#      (98% of samples come back as one fill value). `health` carries that measurement so the UI
-#      can say so — see `core/mearecording.py` for the evidence.
+#      decoder ships with MaxLab Live, and on SOME recordings the published one returns a rail
+#      (~98% of samples one fill value). `health` carries that measurement, per window and per
+#      channel, so the UI can say so — see `core/mearecording.py` for the evidence.
+#      ⛔ It is particular recordings, NOT the decoder (corrected 2026-08-15): measured exactly over
+#      the whole of his five, 000690/691/692 rail while 000688 and 000689 decode cleanly. Nothing
+#      in this contract may state the failure as general.
 #   3. **The chip's seating in the mosaic is not knowable from any file.** `orientation.confirmed`
 #      is false until something establishes it, and while it is false an electrode's identity is
 #      provisional. Never present an unconfirmed pairing as settled.

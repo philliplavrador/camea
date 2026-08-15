@@ -46,12 +46,21 @@ loads that filter from a plug-in library at read time; it is not part of the fil
 source. Two copies exist: the one MaxWell publishes (which ``spikeinterface`` auto-downloads to
 ``~/hdf5_plugin_path_maxwell``) and the one that ships inside MaxLab Live.
 
-**Measured on this project's data (2026-08-13), the published plug-in does not reconstruct these
-files.** 98% of samples come back as the constant 1023; around a spike the stored samples are a
+**On SOME of this project's files the published plug-in does not reconstruct the stream.** Where it
+fails, ~98% of samples come back as the constant 1023; around a spike the stored samples are a
 *comb* of isolated points rather than the ~20-40 consecutive samples a real extracellular waveform
 occupies; and the implied amplitudes are ~13x the amplitudes MaxWell's own on-chip detector wrote
 into the same file. The file's own ``assay/inputs/spike_only`` is ``false``, i.e. a FULL continuous
 trace was recorded — so 98% absent is a decode failure, not a recording mode.
+
+⚠️ **IT IS PARTICULAR RECORDINGS, NOT THE DECODER — corrected 2026-08-15.** This paragraph used to
+say "these files" without qualification, from two files measured on 2026-08-13. Re-measured exactly,
+per channel, over the whole of each of the five recordings in his project: **000688 sits at 1.1% and
+000689 at 4.4% — they decode cleanly** — while 000690/691/692 sit at 96.5%, 100.0% and 93.9%. So the
+rail is a property of those three recordings and NOT of the plug-in, this machine, or the format.
+⛔ Do not restate it as a general fact; that is how a future session ends up designing around a
+problem most of the data does not have. :meth:`trace_health` answers it per window, per channel,
+every time, which is why nothing here has to hold an opinion.
 
 Consequences, and they are deliberate:
 
