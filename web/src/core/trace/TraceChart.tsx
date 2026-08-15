@@ -29,9 +29,15 @@
 //
 // ⚠️ **THE OTHER CONSUMER HAS NO TEST COVERAGE.** `features/electrodes/MeaTracePanel` is not
 // asserted by any spec — not its chart, not its slider, not its lamp shading. So every prop added
-// here is **optional with a default that reproduces the old behaviour exactly**, and the drawing
-// path for a caller that passes none of them is byte-for-byte what it was. That is structural
+// here is **optional with a default that reproduces the old behaviour exactly**. That is structural
 // safety, not carefulness.
+//
+// ⚠️ **ONE DELIBERATE EXCEPTION, stated rather than glossed:** the spike-tick density switch below
+// (`spikes.length > w`) is NOT gated behind a new prop, so it reaches that consumer too. Its 1 s
+// window would need more spikes than the chart has pixels to trigger it — possible on a very busy
+// pad, not typical — and the result there is the same improvement it is here: a row that shows
+// *when* the pad was busy instead of a solid bar. Flagged in review, kept on purpose; an earlier
+// version of this comment claimed the old path was byte-for-byte unchanged, and that was wrong.
 
 import { useCallback, useEffect, useRef } from 'react';
 import type { MeaSpike, MeaSyncEpisode } from '../../api';

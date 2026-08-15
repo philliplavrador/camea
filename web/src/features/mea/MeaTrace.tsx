@@ -44,7 +44,7 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { meaChannelTrace, startMeaEnvelopes } from '../../api';
+import { meaChannelTrace, meaEnvelopes, startMeaEnvelopes } from '../../api';
 import type { MeaChannelTrace } from '../../api';
 import { ApiError } from '../../api/client';
 import { TRACE_PAD, TraceChart } from '../../core/trace/TraceChart';
@@ -71,6 +71,14 @@ const MIN_SPAN_SAMPLES = 20;
  *  through history with the keyboard does not fire a request per keystroke. */
 const SETTLE_MS = 90;
 
+// ⚠️ **MODULE CONSTANTS, NOT `[]` AT THE CALL SITE.** `TraceChart` keys its paint on prop identity,
+// so a fresh array literal in JSX repaints the canvas on every parent render — and `MeaTrace`
+// re-renders on every pointermove of a drag. This is the same defect `TraceChart` records having
+// fixed for its own `syncEpisodes` default; passing `[]` inline reintroduces it one level up. The
+// strip in particular has no business repainting while the close-up is being dragged. (In review.)
+const NO_TRACE: number[] = [];
+const NO_SPIKES: never[] = [];
+
 export interface MeaTraceProps {
   analysisId: string;
   recordingId: string;
@@ -87,6 +95,9 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
   const [error, setError] = useState<string | null>(null);
   const [needsEnvelope, setNeedsEnvelope] = useState(false);
   const [building, setBuilding] = useState(false);
+  // Bumped when a backfill finishes, purely to re-run the arrival fetch. Without it the panel keeps
+  // showing "not read yet" after the job it started has finished — see the effect below.
+  const [reload, setReload] = useState(0);
   const [said, setSaid] = useState('');
   const boxRef = useRef<HTMLDivElement | null>(null);
   // Every detail fetch carries a ticket; a late reply holding a stale one is dropped. Without it a
@@ -137,7 +148,42 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
     return () => {
       cancelled = true;
     };
-  }, [analysisId, recordingId, channel]);
+  }, [analysisId, recordingId, channel, reload]);
+
+  // ⚠️ **WAIT FOR THE BACKFILL AND THEN SHOW THE RECORDING.** Starting the job is not the feature;
+  // seeing the trace afterwards is. Without this the ~1 minute job finishes and the panel is still
+  // showing "Camea has not read this recording end to end yet", and the only way out is to click a
+  // different pad and come back — a button that appears to do nothing. (Caught in review.)
+  useEffect(() => {
+    if (!building) return;
+    let stop = false;
+    const tick = () => {
+      void meaEnvelopes(analysisId)
+        .then((s) => {
+          if (stop) return;
+          const rows = s.recordings ?? [];
+          const mine = rows.find((r) => r.recording_id === recordingId);
+          const running = rows.some((r) => r.job_id);
+          if (mine?.ready) {
+            setBuilding(false);
+            setNeedsEnvelope(false);
+            setError(null);
+            setSaid('The whole recording is ready.');
+            setReload((n) => n + 1);
+          } else if (!running) {
+            // Nothing is running and it still is not ready — the job failed or refused. Stop
+            // polling and leave the panel saying so rather than spinning for ever.
+            setBuilding(false);
+          }
+        })
+        .catch(() => setBuilding(false));
+    };
+    const timer = setInterval(tick, 2000);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, [analysisId, building, recordingId]);
 
   // ── the close-up follows the view he is standing on ───────────────────────────────────────
   useEffect(() => {
@@ -220,17 +266,29 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
         const a = Math.min(Math.max(t0, whole.t0_s), whole.t1_s - w);
         return { t0: a, t1: a + w };
       };
+      // ⚠️ **A KEY THAT CANNOT MOVE MUST PUSH NOTHING.** `vs.push` always returns a new stack, so
+      // `next !== stack` never catches a no-op — and at a boundary `clampTo` returns the view he is
+      // already on. Pressing ArrowLeft on the opening view (which spans the whole recording, i.e.
+      // sits at both edges at once) would light up Back, fire a fetch for the identical window, and
+      // bury real history under duplicates he then has to step through. The view stack states that
+      // refusing a no-op is the caller's job — `useTimeBrush` does it for a click; this does it for
+      // a key. (Caught in review.)
+      const moved = (v: vs.TimeView): vs.ViewStack | null =>
+        v.t0 === view.t0 && v.t1 === view.t1 ? null : vs.push(stack, v);
+
       let next: vs.ViewStack | null = null;
-      if (e.key === 'ArrowLeft') next = vs.push(stack, clampTo(view.t0 - span / 2, view.t1 - span / 2));
-      else if (e.key === 'ArrowRight') next = vs.push(stack, clampTo(view.t0 + span / 2, view.t1 + span / 2));
+      if (e.key === 'ArrowLeft') next = moved(clampTo(view.t0 - span / 2, view.t1 - span / 2));
+      else if (e.key === 'ArrowRight') next = moved(clampTo(view.t0 + span / 2, view.t1 + span / 2));
       else if (e.key === '+' || e.key === '=') {
         const mid = (view.t0 + view.t1) / 2;
-        next = vs.push(stack, clampTo(mid - span / 4, mid + span / 4));
+        next = moved(clampTo(mid - span / 4, mid + span / 4));
       } else if (e.key === '-' || e.key === '_') {
         const mid = (view.t0 + view.t1) / 2;
-        next = vs.push(stack, clampTo(mid - span, mid + span));
+        next = moved(clampTo(mid - span, mid + span));
       } else if (e.key === 'Backspace') next = vs.back(stack);
       else if (e.key === 'Home') next = vs.home(stack);
+      // ⛔ `Home` is exempt from the identity test on purpose: pressing it while already home is a
+      // real push in matplotlib, and the view stack pins that. It is undoable with one Back.
       if (next && next !== stack) {
         e.preventDefault();
         go(next);
@@ -268,10 +326,14 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
 
   const buildEnvelopes = useCallback(() => {
     setBuilding(true);
-    void startMeaEnvelopes(analysisId)
-      .then(() => setSaid('Reading the recordings end to end. This takes about a minute each.'))
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setBuilding(false));
+    setSaid('Reading the recording end to end. This takes about a minute.');
+    void startMeaEnvelopes(analysisId).catch((e: unknown) => {
+      setError(e instanceof Error ? e.message : String(e));
+      setBuilding(false);
+    });
+    // ⛔ No `finally` clearing `building` — the POST returns the moment the job is SUBMITTED, and
+    // clearing here is what made the button look finished while the read had barely started. The
+    // polling effect above owns the flag now, and it is what ends it.
   }, [analysisId]);
 
   const flat = data?.health?.flat ?? false;
@@ -321,7 +383,7 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
               Camea has not read this recording end to end yet, so it cannot show you the whole of
               it at once. It is a one-off job of about a minute per recording.{' '}
               <Button size="sm" variant="ghost" onClick={buildEnvelopes} disabled={building}>
-                {building ? 'Starting…' : 'Read it now'}
+                {building ? 'Reading…' : 'Read it now'}
               </Button>
             </LiveWarning>
           </div>
@@ -402,12 +464,12 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
               {...stripBrush.handlers}
             >
               <TraceChart
-                trace={[]}
+                trace={NO_TRACE}
                 minUv={whole.min_uv}
                 maxUv={whole.max_uv}
                 t0={whole.t0_s}
                 t1={whole.t1_s}
-                spikes={[]}
+                spikes={NO_SPIKES}
                 suspect={whole.health?.flat ?? false}
                 height={56}
                 // ⚠️ Its own testid: two charts on one screen sharing one makes every bare
@@ -421,7 +483,10 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
                   `The whole recording, 0 to ${whole.t1_s.toFixed(0)} seconds. ` +
                   `The stretch shown below is ${view.t0.toFixed(2)} to ${view.t1.toFixed(2)} seconds.`
                 }
-                band={{ t0: view.t0, t1: view.t1 }}
+                // ⚠️ `view` itself, not a fresh `{t0, t1}` literal: it is the entry object out of the
+                // view stack, whose identity only changes when a genuinely new view is pushed, so
+                // the strip does not repaint through a drag on the close-up.
+                band={view}
                 // ⚠️ Zoomed deep into a 300 s recording the box is a fraction of a pixel wide. A
                 // "you are here" marker you cannot see is the same as not having one.
                 bandMinPx={2}
@@ -440,7 +505,7 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
               {...brush.handlers}
             >
               <TraceChart
-                trace={data.trace_uv ?? []}
+                trace={data.trace_uv ?? NO_TRACE}
                 minUv={data.min_uv}
                 maxUv={data.max_uv}
                 t0={data.t0_s}

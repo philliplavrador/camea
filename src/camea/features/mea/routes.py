@@ -895,6 +895,13 @@ def get_mea_channel_trace(analysis_id: str, recording_id: str,
             # ⭐ The spikes above are still exactly right — return them, and say the waveform is
             # unavailable rather than drawing a flat line that looks like a silent electrode.
             out["trace_uv"] = []
+            out["min_uv"] = []
+            out["max_uv"] = []
+            # ⚠️ Say which SHAPE was asked for even though nothing was read. `resolution` is
+            # documented as the field a client reads instead of guessing from which array is
+            # populated — and here neither is — so leaving it at the model default would report
+            # "samples" for a request that asked for an envelope. (Caught in review.)
+            out["resolution"] = "samples" if max_points is None else "envelope"
             out["health"] = None
             out["decode_error"] = str(e)
         return out

@@ -405,8 +405,14 @@ def load_envelope(path: Path) -> Envelope | None:
                 fill_fraction=z["fill_fraction"],
                 distinct_values=z["distinct_values"],
             )
-    except (OSError, KeyError, ValueError):
-        # A truncated or foreign file is a cache miss, never an error the user has to read about.
+    except Exception:  # noqa: BLE001
+        # ⭐ **DELIBERATELY EVERYTHING, AND THAT IS THE POINT OF THIS FUNCTION.** A cache that will
+        # not load is a cache miss; the caller rebuilds it. Anything that escapes here becomes a 500
+        # on a screen whose whole design is to say "not read yet" honestly instead.
+        # ⚠️ This used to be `(OSError, KeyError, ValueError)` and that was not enough: a file
+        # truncated mid-write — a killed process, a full disk, a half-copied project folder — makes
+        # numpy hand the file to `zipfile`, which raises `zipfile.BadZipFile`, a plain `Exception`.
+        # Reproduced, and caught in review. Do not narrow this again.
         return None
 
 
