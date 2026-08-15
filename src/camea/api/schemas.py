@@ -2953,6 +2953,17 @@ class MeaChannelTrace(Res):
         "Sent so the client never writes the number down.",
     )
     health: TraceHealthPayload | None = None
+    health_scope: Literal["window", "recording"] = Field(
+        default="window",
+        description="⚠️ **WHAT `health` WAS MEASURED OVER, AND IT CHANGES.** A window read live off "
+        "the file reports that window (`window`); a wide view served from the precomputed cache "
+        "reports the **whole recording** (`recording`), because the cache carries its own figure and "
+        "may not borrow a window's. That matters: the rail fraction genuinely differs with window "
+        "length (measured 1.000 over 1 s but 0.827 over 30 s on one of his recordings), so `flat` "
+        "can legitimately differ either side of that boundary. ⛔ A UI quoting the percentage MUST "
+        "say which it is quoting — *'of this stretch'* or *'of this recording'* — or the number "
+        "changes as he zooms with nothing on screen to explain it.",
+    )
     spikes: list[MeaSpike] = Field(
         default_factory=list,
         description="Detected spikes inside the window. ⭐ Trustworthy independently of the trace.",

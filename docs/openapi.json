@@ -7460,6 +7460,16 @@
               }
             ]
           },
+          "health_scope": {
+            "type": "string",
+            "enum": [
+              "window",
+              "recording"
+            ],
+            "title": "Health Scope",
+            "description": "\u26a0\ufe0f **WHAT `health` WAS MEASURED OVER, AND IT CHANGES.** A window read live off the file reports that window (`window`); a wide view served from the precomputed cache reports the **whole recording** (`recording`), because the cache carries its own figure and may not borrow a window's. That matters: the rail fraction genuinely differs with window length (measured 1.000 over 1 s but 0.827 over 30 s on one of his recordings), so `flat` can legitimately differ either side of that boundary. \u26d4 A UI quoting the percentage MUST say which it is quoting \u2014 *'of this stretch'* or *'of this recording'* \u2014 or the number changes as he zooms with nothing on screen to explain it.",
+            "default": "window"
+          },
           "spikes": {
             "items": {
               "$ref": "#/components/schemas/MeaSpike"

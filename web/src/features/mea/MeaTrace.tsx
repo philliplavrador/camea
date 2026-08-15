@@ -445,11 +445,18 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
                 </LiveWarning>
               </div>
             )}
+            {/* ⚠️ **THE PERCENTAGE NAMES WHAT IT MEASURED.** A narrow window is read live and its
+                health is that window's; a wide one comes from the cache and carries the whole
+                recording's. The rail fraction really does differ with window length (1.000 over 1 s
+                vs 0.827 over 30 s on one of his), so this number changes as he zooms — and a number
+                that changes while the sentence around it claims a fixed scope is a number he cannot
+                trust. `health_scope` says which; say it. (Caught in review.) */}
             {!undecodable && flat && (
               <div data-testid="mea-trace-flat">
                 <LiveWarning variant="warn">
                   The waveform did not decode.{' '}
-                  {Math.round((data.health?.fill_fraction ?? 0) * 100)}% of this recording is a
+                  {Math.round((data.health?.fill_fraction ?? 0) * 100)}% of{' '}
+                  {data.health_scope === 'recording' ? 'this recording' : 'the stretch shown'} is a
                   single repeated value, which no live electrode produces — MaxWell&rsquo;s own
                   decoder (part of MaxLab Live) is needed to read it properly. The spike marks below
                   are unaffected and remain correct.

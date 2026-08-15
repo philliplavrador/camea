@@ -853,6 +853,7 @@ def get_mea_channel_trace(analysis_id: str, recording_id: str,
                 # better than a cached approximation when it is affordable.
                 trace, health = rec.trace_window(channel, start, end)
                 out["health"] = health.as_dict()
+                out["health_scope"] = "window"
                 if max_points is None:
                     out["resolution"] = "samples"
                     out["trace_uv"] = [float(v) for v in trace]
@@ -891,6 +892,7 @@ def get_mea_channel_trace(analysis_id: str, recording_id: str,
                 # changes with window length (1.000 over 1 s vs 0.827 over 30 s on 000690).
                 eh = env.health_of(channel)
                 out["health"] = eh.as_dict() if eh is not None else None
+                out["health_scope"] = "recording"
         except mr.RawUndecodable as e:
             # ⭐ The spikes above are still exactly right — return them, and say the waveform is
             # unavailable rather than drawing a flat line that looks like a silent electrode.
