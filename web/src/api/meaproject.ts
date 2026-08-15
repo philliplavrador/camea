@@ -78,6 +78,25 @@ export async function addRecordings(analysisId: string, paths: string[]): Promis
 }
 
 /**
+ * Rename one recording (`PATCH /api/mea/{id}/recordings/{rid}`).
+ *
+ * ⭐ A rename is a fact about the ROW, never about the bytes — it changes what the shelf calls the
+ * recording, and no file on any disk moves or changes. A blank name is refused by the backend.
+ */
+export async function renameRecording(
+  analysisId: string,
+  recordingId: string,
+  label: string,
+): Promise<MeaShelf> {
+  return unwrap(
+    await api.PATCH('/api/mea/{analysis_id}/recordings/{recording_id}', {
+      params: { path: { analysis_id: analysisId, recording_id: recordingId } },
+      body: { label },
+    }),
+  );
+}
+
+/**
  * Forget one recording (`DELETE /api/mea/{id}/recordings/{rid}`).
  *
  * ⛔ **Deletes CAMEA'S COPY ONLY.** The user's own file is never touched, whatever happens.

@@ -79,11 +79,37 @@
   min-width: 0;
 }
 
-.label {
+/* The name is the rename control — a button dressed as the text it edits, so the row stays a list
+   of facts with no third button on it. The affordance is the hover underline and the title. */
+.labelButton {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  text-align: left;
+  cursor: text;
   font-family: var(--font-mono);
   font-size: var(--fs-body);
   color: var(--text);
   overflow-wrap: anywhere;
+}
+
+.labelButton:hover:not(:disabled),
+.labelButton:focus-visible {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.labelInput {
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 2px 6px;
+  min-width: 0;
+  width: min(420px, 100%);
 }
 
 .facts {

@@ -465,6 +465,72 @@ def test_deleting_the_project_takes_the_recordings_with_it(client, session):
     assert all(Path(p).is_file() for p in session), "⛔ and his originals are still his"
 
 
+# ---- renaming one -------------------------------------------------------------------------------
+def test_renaming_a_recording_changes_the_LABEL_and_touches_no_file(client, session):
+    """⭐ A rename is a fact about the ROW, never about the bytes. His original stays byte-for-byte
+    where it was, Camea's copy stays at its id-keyed path, and only the document's `label` moves."""
+    a = _create(client, "rename", paths=[session[0]])
+    aid = a["analysis_id"]
+    row = _settled(client, aid)[0]
+    folder = Path(a["folder"])
+    original = Path(row["source_path"])
+    before = original.read_bytes()
+
+    r = client.patch(f"/api/mea/{aid}/recordings/{row['id']}", json={"label": "chip 3693 day 12"})
+    assert r.status_code == 200, r.text
+    renamed = r.json()["recordings"][0]
+    assert renamed["label"] == "chip 3693 day 12"
+    assert renamed["id"] == row["id"], "the id is forever — a rename does not re-mint it"
+    assert renamed["stored_path"] == row["stored_path"], "the copy did not move"
+
+    assert original.read_bytes() == before, "⛔ HIS FILE IS UNTOUCHED"
+    assert (folder / row["stored_path"]).is_file(), "and the copy is where it was"
+
+    doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
+    assert doc["recordings"][0]["label"] == "chip 3693 day 12"
+
+
+def test_the_new_name_survives_a_reload_and_reaches_the_open_screen(client, session):
+    """The label the shelf shows is the document's, so the rename holds across a fresh read — and
+    the layout route names the recording the same way, so the two screens cannot disagree."""
+    aid, rid = _opened(client, session, "rename sticks")
+    assert client.patch(f"/api/mea/{aid}/recordings/{rid}",
+                        json={"label": "day 12"}).status_code == 200
+
+    assert _shelf(client, aid)[0]["label"] == "day 12"
+    assert _layout(client, aid, rid)["label"] == "day 12"
+
+
+def test_a_blank_name_is_refused_and_whitespace_is_trimmed(client, session):
+    """A nameless row is one he cannot pick out of a list — refused, not silently kept."""
+    a = _create(client, "blank", paths=[session[0]])
+    aid = a["analysis_id"]
+    rid = _shelf(client, aid)[0]["id"]
+
+    r = client.patch(f"/api/mea/{aid}/recordings/{rid}", json={"label": "   "})
+    assert r.status_code == 400
+    assert err(r)["code"] == "bad_request"
+    assert _shelf(client, aid)[0]["label"] == "Network/000001", "nothing changed"
+
+    r2 = client.patch(f"/api/mea/{aid}/recordings/{rid}", json={"label": "  day 12  "})
+    assert r2.status_code == 200
+    assert r2.json()["recordings"][0]["label"] == "day 12"
+
+
+def test_renaming_something_that_is_not_there_is_a_404(client, session):
+    a = _create(client, "404 rename", paths=[session[0]])
+    r = client.patch(f"/api/mea/{a['analysis_id']}/recordings/rec_nope", json={"label": "x"})
+    assert r.status_code == 404
+
+
+def test_rename_refuses_a_project_of_another_task(client, survey_video):
+    vm = client.post("/api/videomosaic/projects",
+                     json={"name": "optical", "video_path": survey_video}).json()
+    r = client.patch(f"/api/mea/{vm['analysis_id']}/recordings/rec_x", json={"label": "x"})
+    assert r.status_code == 409
+    assert "not an Analyze MEA project" in err(r)["message"]
+
+
 # ---- the original moved -------------------------------------------------------------------------
 def test_a_referenced_recording_whose_original_moved_says_so(client, session):
     """🔴 The second refusal that has to be *said*, not swallowed. A recording read from the

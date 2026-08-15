@@ -1843,7 +1843,16 @@ export interface paths {
         delete: operations["delete_mea_recording_api_mea__analysis_id__recordings__recording_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Patch Mea Recording
+         * @description Rename a recording — the row's `label`, and nothing else.
+         *
+         *     ⭐ **A RENAME IS A FACT ABOUT THE ROW, NEVER ABOUT THE BYTES** (the project rename's rule,
+         *     restated one level down: the manifest moves, the folder never does). His original `.h5` is
+         *     read-only by hard rule; the project's copy lives at `recordings/<id>/`, and the id is forever.
+         *     ⛔ A blank name is refused — a nameless row is one he cannot pick out of a list.
+         */
+        patch: operations["patch_mea_recording_api_mea__analysis_id__recordings__recording_id__patch"];
         trace?: never;
     };
     "/api/mea/{analysis_id}/recordings/{recording_id}/layout": {
@@ -5140,6 +5149,19 @@ export interface components {
         RenameAnalysisRequest: {
             /** Name */
             name: string;
+        };
+        /**
+         * RenameMeaRecordingRequest
+         * @description `PATCH /api/mea/{analysis_id}/recordings/{recording_id}` — call the row something else.
+         *
+         *     ⭐ **A RENAME IS A FACT ABOUT THE ROW, NEVER ABOUT THE BYTES.** It rewrites the document's
+         *     `label` only: his original `.h5` is read-only by hard rule, and the project's copy lives at a
+         *     path keyed by the recording's id, which is forever. A blank name is refused (400) — a nameless
+         *     row is one he cannot pick out of a list.
+         */
+        RenameMeaRecordingRequest: {
+            /** Label */
+            label: string;
         };
         /**
          * RescopeRequest
@@ -8552,6 +8574,42 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaShelf"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_mea_recording_api_mea__analysis_id__recordings__recording_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameMeaRecordingRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -3339,6 +3339,63 @@
       }
     },
     "/api/mea/{analysis_id}/recordings/{recording_id}": {
+      "patch": {
+        "summary": "Patch Mea Recording",
+        "description": "Rename a recording \u2014 the row's `label`, and nothing else.\n\n\u2b50 **A RENAME IS A FACT ABOUT THE ROW, NEVER ABOUT THE BYTES** (the project rename's rule,\nrestated one level down: the manifest moves, the folder never does). His original `.h5` is\nread-only by hard rule; the project's copy lives at `recordings/<id>/`, and the id is forever.\n\u26d4 A blank name is refused \u2014 a nameless row is one he cannot pick out of a list.",
+        "operationId": "patch_mea_recording_api_mea__analysis_id__recordings__recording_id__patch",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          },
+          {
+            "name": "recording_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Recording Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameMeaRecordingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeaShelf"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "summary": "Delete Mea Recording",
         "description": "Forget a recording, and delete **Camea's copy** of it.\n\n\u26d4 **THE USER'S ORIGINAL IS NEVER TOUCHED**, and there is no confirm box, because there is\nnothing of his to lose: the only bytes removed are a copy Camea made itself, inside the project\nfolder (his ruling, 2026-08-14). A copy still in flight is cancelled first.",
@@ -9753,6 +9810,21 @@
         ],
         "title": "RenameAnalysisRequest",
         "description": "Rename a project (`PATCH /api/projects/{id}`). Rewrites the manifest only \u2014 **the folder\nnever moves; the id is forever.** This is what the project manager's rename does."
+      },
+      "RenameMeaRecordingRequest": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "title": "RenameMeaRecordingRequest",
+        "description": "`PATCH /api/mea/{analysis_id}/recordings/{recording_id}` \u2014 call the row something else.\n\n\u2b50 **A RENAME IS A FACT ABOUT THE ROW, NEVER ABOUT THE BYTES.** It rewrites the document's\n`label` only: his original `.h5` is read-only by hard rule, and the project's copy lives at a\npath keyed by the recording's id, which is forever. A blank name is refused (400) \u2014 a nameless\nrow is one he cannot pick out of a list."
       },
       "RescopeRequest": {
         "properties": {

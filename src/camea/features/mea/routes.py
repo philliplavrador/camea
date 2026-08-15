@@ -77,6 +77,7 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     MeaChipActivity,
     MeaChipLayout,
     MeaShelf,
+    RenameMeaRecordingRequest,
 )
 from camea.core import document as core_document
 from camea.core import project as core_project
@@ -408,6 +409,33 @@ def post_mea_recordings(analysis_id: str, body: AddMeaRecordingsRequest) -> dict
     saved = _save_recordings(ws, analysis_id, recs)
     _start_copies(ws, analysis_id, records)
     return _shelf(ws, analysis_id, saved)
+
+
+@router.patch("/api/mea/{analysis_id}/recordings/{recording_id}", response_model=MeaShelf)
+def patch_mea_recording(analysis_id: str, recording_id: str,
+                        body: RenameMeaRecordingRequest) -> dict:
+    """Rename a recording — the row's `label`, and nothing else.
+
+    ⭐ **A RENAME IS A FACT ABOUT THE ROW, NEVER ABOUT THE BYTES** (the project rename's rule,
+    restated one level down: the manifest moves, the folder never does). His original `.h5` is
+    read-only by hard rule; the project's copy lives at `recordings/<id>/`, and the id is forever.
+    ⛔ A blank name is refused — a nameless row is one he cannot pick out of a list.
+    """
+    doc, ws = _mea_project(analysis_id)
+    label = body.label.strip()
+    if not label:
+        raise ApiError(400, "bad_request", "a recording needs a name")
+
+    recs = list(doc.get("recordings") or [])
+    hit = next((r for r in recs if str(r.get("id")) == recording_id), None)
+    if hit is None:
+        raise ApiError(404, "not_found", f"no recording {recording_id!r} in this project")
+
+    # Through `_patch_recording`, the same door the copy jobs use — under the document lock, on a
+    # fresh read, so a rename cannot silently drop a `stored` flip landing at the same moment.
+    _patch_recording(analysis_id, recording_id, {"label": label})
+    fresh, _ = core_document.load_analysis(ws, analysis_id)
+    return _shelf(ws, analysis_id, fresh)
 
 
 @router.delete("/api/mea/{analysis_id}/recordings/{recording_id}", response_model=MeaShelf)

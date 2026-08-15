@@ -165,6 +165,60 @@ test('Add recordings inside the project shows THE SAME picker the wizard showed'
 });
 
 // =================================================================================================
+// 2b · renaming a row
+// =================================================================================================
+
+// R44: a rename rewrites the row's name in the project's own document. No file on any disk is
+// moved or renamed, and he is never asked where anything lives — the store owns the data.
+test('clicking a recording’s name renames it in place — and only the name changes', async ({
+  page,
+}) => {
+  await toFilesStep(page, 'rename row');
+  await lookIn(page, MEA_FIXTURE.dir);
+  await page.getByTestId(TID.meaTickAll).check();
+  await page.getByTestId(TID.npCreate).click();
+  await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
+  const id = page.url().split('/').pop()!;
+  try {
+    const row = rowFor(page, MEA_FIXTURE.labels[0]);
+    await expect(row).toBeVisible({ timeout: FIRST_PAINT });
+
+    // Click the name, type a new one, Enter.
+    await row.getByTestId(TID.meaRecordingLabel).click();
+    const input = page.getByTestId(TID.meaRenameInput);
+    await expect(input).toBeVisible({ timeout: SHORT });
+    await input.fill('chip 3693 day 12');
+    await input.press('Enter');
+
+    const renamed = rowFor(page, 'chip 3693 day 12');
+    await expect(renamed.getByTestId(TID.meaRecordingLabel)).toHaveText('chip 3693 day 12', {
+      timeout: SHORT,
+    });
+    // ⭐ Only the NAME moved — the numbers and the copy state are the same recording's.
+    await expect(renamed.getByTestId(TID.meaRecordingFacts)).toContainText('spikes');
+
+    // ...and it holds across a reload: the rename is in the document, not in this tab.
+    await page.reload();
+    await expect(rowFor(page, 'chip 3693 day 12')).toBeVisible({ timeout: FIRST_PAINT });
+
+    // Esc is "never mind" — the name stays what it was.
+    await rowFor(page, 'chip 3693 day 12').getByTestId(TID.meaRecordingLabel).click();
+    await page.getByTestId(TID.meaRenameInput).fill('typo I regret');
+    await page.getByTestId(TID.meaRenameInput).press('Escape');
+    await expect(rowFor(page, 'chip 3693 day 12')).toBeVisible({ timeout: SHORT });
+    await expect(page.getByTestId(TID.meaRenameInput)).toHaveCount(0);
+
+    // ⭐ ...and focus comes back to the name he was editing, so a keyboard user is not dropped at
+    // the top of the page every time he renames a row.
+    await expect(
+      rowFor(page, 'chip 3693 day 12').getByTestId(TID.meaRecordingLabel),
+    ).toBeFocused();
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+// =================================================================================================
 // 3 · what the shelf says
 // =================================================================================================
 

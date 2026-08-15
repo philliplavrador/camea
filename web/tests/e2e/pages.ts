@@ -98,7 +98,8 @@ export const TID = {
   // ── the shelf (002) ─────────────────────────────────────────────────────────
   meaShelf: 'mea-shelf',
   meaRecording: 'mea-recording', //         one row; data-recording-id, data-copy, data-missing
-  meaRecordingLabel: 'mea-recording-label',
+  meaRecordingLabel: 'mea-recording-label', //  a BUTTON — click it to rename the row in place
+  meaRenameInput: 'mea-rename-input', //    Enter/blur saves, Esc cancels; blank reverts quietly
   meaRecordingFacts: 'mea-recording-facts', // duration · channels · spikes · size, READ OFF THE
   //                                        FILE every time. Absent on a row that lost its file.
   meaRecordingCopy: 'mea-recording-copy', // where Camea is reading it from, in plain words

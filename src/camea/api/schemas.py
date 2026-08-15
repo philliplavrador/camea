@@ -2672,6 +2672,17 @@ class AddMeaRecordingsRequest(Req):
     paths: list[str] = Field(default_factory=list)
 
 
+class RenameMeaRecordingRequest(Req):
+    """`PATCH /api/mea/{analysis_id}/recordings/{recording_id}` — call the row something else.
+
+    ⭐ **A RENAME IS A FACT ABOUT THE ROW, NEVER ABOUT THE BYTES.** It rewrites the document's
+    `label` only: his original `.h5` is read-only by hard rule, and the project's copy lives at a
+    path keyed by the recording's id, which is forever. A blank name is refused (400) — a nameless
+    row is one he cannot pick out of a list."""
+
+    label: str
+
+
 class MeaCopyResult(Res):
     """`job.result` of a `mea_copy` job — one recording's copy has landed in the project."""
 
@@ -2956,6 +2967,7 @@ __all__ = [
     # Analyze MEA (its own feature — see the section note; not the videomosaic `Mea*` models)
     "CreateMeaProjectRequest",
     "AddMeaRecordingsRequest",
+    "RenameMeaRecordingRequest",
     "MeaBrowseResult",
     "MeaCopyResult",
     "MeaRecordingCandidate",

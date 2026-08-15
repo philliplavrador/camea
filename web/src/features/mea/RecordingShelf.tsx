@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { addRecordings, listRecordings, removeRecording } from '../../api';
+import { addRecordings, listRecordings, removeRecording, renameRecording } from '../../api';
 import type { MeaShelfEntry } from '../../api';
 import { useToast } from '../../app';
 import { Button, LiveWarning } from '../../design';
@@ -70,6 +70,12 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<MeaShelfEntry | null>(null);
+  const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
+  /** Which row's name to put focus back on when an edit closes. ⭐ The input and the name-button are
+   *  different elements, so React unmounts the focused one and focus would otherwise fall to
+   *  `<body>` — i.e. a keyboard user who renames a row has to Tab from the top of the page again. */
+  const refocus = useRef<string | null>(null);
+  const labelRefs = useRef(new Map<string, HTMLButtonElement>());
   const alive = useRef(true);
 
   /**
@@ -172,6 +178,47 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
     await doRemove(fresh);
   }
 
+  /**
+   * Put focus back on the name he was editing, once the button is on the page again.
+   *
+   * ⚠️ **DEFERRED A FRAME, AND THAT IS NOT A TIDINESS CHOICE.** Enter closes the editor during
+   * `keydown`; focusing the name-button synchronously puts it under the cursor in time to receive
+   * the *rest* of that same keystroke, which the browser turns into a click — so the editor sprang
+   * straight back open with the old name. Caught by the e2e test. One frame later the keystroke is
+   * spent, and the focus lands where he left it.
+   */
+  useEffect(() => {
+    if (editing !== null || refocus.current === null) return;
+    const id = refocus.current;
+    refocus.current = null;
+    const t = requestAnimationFrame(() => labelRefs.current.get(id)?.focus());
+    return () => cancelAnimationFrame(t);
+  }, [editing, rows]);
+
+  /**
+   * ⭐ **A RENAME CHANGES WHAT THE ROW IS CALLED, AND NOTHING ELSE.** No file on any disk moves —
+   * the backend rewrites the document's `label` only. Enter saves, Esc cancels, and clicking away
+   * saves too (an edit he typed and then clicked off is an edit he meant).
+   *
+   * ⚠️ A name emptied to nothing is treated as "never mind" and reverts quietly, rather than
+   * bouncing the backend's refusal at him for something he can see is blank.
+   */
+  async function commitRename(): Promise<void> {
+    if (editing === null) return;
+    const { id, value } = editing;
+    refocus.current = id;
+    setEditing(null);
+    const next = value.trim();
+    const was = (rows ?? []).find((r) => r.id === id);
+    if (!next || was === undefined || next === was.label) return;
+    try {
+      const shelf = await renameRecording(analysisId, id, next);
+      setRows(shelf.recordings ?? []);
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : String(e), { tone: 'danger' });
+    }
+  }
+
   async function doRemove(row: MeaShelfEntry): Promise<void> {
     setBusy(true);
     setConfirming(null);
@@ -237,9 +284,39 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
               data-missing={r.missing ? 'true' : 'false'}
             >
               <div className={styles.rowMain}>
-                <span className={styles.label} data-testid="mea-recording-label">
-                  {r.label || r.run_id || r.id}
-                </span>
+                {editing?.id === r.id ? (
+                  <input
+                    className={styles.labelInput}
+                    value={editing.value}
+                    autoFocus
+                    aria-label="Recording name"
+                    data-testid="mea-rename-input"
+                    onChange={(e) => setEditing({ id: r.id, value: e.target.value })}
+                    onBlur={() => void commitRename()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void commitRename();
+                      if (e.key === 'Escape') {
+                        refocus.current = r.id;
+                        setEditing(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    ref={(el) => {
+                      if (el) labelRefs.current.set(r.id, el);
+                      else labelRefs.current.delete(r.id);
+                    }}
+                    className={styles.labelButton}
+                    title="Click to rename"
+                    disabled={busy}
+                    onClick={() => setEditing({ id: r.id, value: r.label || r.run_id || r.id })}
+                    data-testid="mea-recording-label"
+                  >
+                    {r.label || r.run_id || r.id}
+                  </button>
+                )}
                 {r.missing ? (
                   // 🔴 LIVE WARNING, ON THE PAGE. Never behind the `?` — see the header.
                   <LiveWarning variant="warn" className={styles.gone}>
