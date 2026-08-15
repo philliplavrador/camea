@@ -4192,7 +4192,7 @@ export interface components {
             recordings?: components["schemas"]["MeaEnvelopeRow"][];
             /**
              * Started
-             * @description Job ids started by this call. Empty on a `GET`, and empty on a `POST` when everything was already built.
+             * @description The jobs now reading a recording end to end as a result of this call — poll these, or poll `recordings[].ready`. Empty on a `GET`, and empty on a `POST` when everything was already built. ⚠️ **Not strictly 'started by this call':** a `POST` issued while an earlier backfill is still running reports that earlier job's id rather than starting a duplicate, which is what a caller waiting on it actually wants.
              */
             started?: string[];
         };
