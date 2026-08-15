@@ -76,6 +76,7 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     MeaChannelTrace,
     MeaChipActivity,
     MeaChipLayout,
+    MeaEnvelopeStatus,
     MeaShelf,
     RenameMeaRecordingRequest,
 )
@@ -247,7 +248,15 @@ def _patch_recording(analysis_id: str, recording_id: str, changes: dict) -> None
 
 
 def _start_copies(ws: core_project.ProjectSet, analysis_id: str, recs: list[dict]) -> None:
-    """Kick off one copy job per new recording — see `recordings.py` for why per recording."""
+    """Kick off one copy job per new recording — see `recordings.py` for why per recording.
+
+    ⭐ **AND THE ENVELOPE, HERE, AT IMPORT.** His answer, 2026-08-15, on when the one-off read of the
+    whole recording should happen: *"When you import."* It is the moment he is already waiting, and
+    it means every pad on the `Analyze MEA` screen is instant by the time he first opens it.
+
+    ⚠️ Started **beside** the copy rather than after it: `open_path` falls back to the original,
+    which is on disk the whole time, so the envelope never has to wait for the copy to land.
+    """
     from . import recordings as mrec
 
     folder = ws.folder_of(analysis_id)
@@ -263,6 +272,13 @@ def _start_copies(ws: core_project.ProjectSet, analysis_id: str, recs: list[dict
             _patch_recording(analysis_id, str(rec.get("id") or ""),
                              {"copy_state": "failed",
                               "copy_error": "the copy could not be started"})
+        try:
+            mrec.start_envelope(folder, analysis_id, rec, n_buckets=ENVELOPE_BUCKETS)
+        except Exception:                                    # noqa: BLE001
+            # ⛔ Same rule, and it matters more here: the envelope is an optimisation. Without it the
+            # trace panel still reads narrow windows live, so a failed build costs detail at wide
+            # zoom and nothing else. It must never turn an import into a failed import.
+            pass
 
 
 def _shelf(ws: core_project.ProjectSet, analysis_id: str, doc: dict) -> dict:
@@ -389,6 +405,55 @@ def get_mea_recordings(analysis_id: str) -> dict:
     return _shelf(ws, analysis_id, doc)
 
 
+def _envelope_status(analysis_id: str, started: list[str] | None = None) -> dict:
+    from . import recordings as mrec
+
+    doc, ws = _mea_project(analysis_id)
+    folder = ws.folder_of(analysis_id)
+    rows = []
+    for rec in list(doc.get("recordings") or []):
+        rid = str(rec.get("id") or "")
+        job = mrec.live_envelope_job(rid)
+        running = job is not None and job.state in ("queued", "running")
+        rows.append({
+            "recording_id": rid,
+            "label": str(rec.get("label") or ""),
+            "ready": mrec.has_envelope(folder, rec),
+            "job_id": job.job_id if running and job is not None else "",
+            "pct": float(job.progress.pct) if running and job is not None and job.progress else 0.0,
+        })
+    return {"analysis_id": analysis_id, "recordings": rows, "started": list(started or [])}
+
+
+@router.get("/api/mea/{analysis_id}/recordings/envelopes", response_model=MeaEnvelopeStatus)
+def get_mea_envelopes(analysis_id: str) -> dict:
+    """Which recordings can be shown whole yet, and what is still being read.
+
+    ⚠️ `ready: false` never means a recording is broken — it means only the narrow windows the app
+    can read live are available for it, which is still a working trace panel.
+    """
+    return _envelope_status(analysis_id)
+
+
+@router.post("/api/mea/{analysis_id}/recordings/envelopes", response_model=MeaEnvelopeStatus)
+def post_mea_envelopes(analysis_id: str, force: bool = False) -> dict:
+    """⭐ **THE BACKFILL** — read every recording in this project end to end, once, so the trace
+    panel can show the whole of any pad.
+
+    His instruction, 2026-08-15: *"go ahead and run the loader on the MEAs I have already imported."*
+    New recordings get this at import time; this is how everything already in a project catches up.
+
+    Recordings that already have one are skipped, so calling this twice costs nothing. Measured
+    37-70 s per recording on his five, in the background, cancellable.
+    """
+    from . import recordings as mrec
+
+    doc, ws = _mea_project(analysis_id)
+    started = mrec.start_envelopes(ws.folder_of(analysis_id), analysis_id, doc,
+                                   n_buckets=ENVELOPE_BUCKETS, force=force)
+    return _envelope_status(analysis_id, started)
+
+
 @router.post("/api/mea/{analysis_id}/recordings", status_code=201, response_model=MeaShelf)
 def post_mea_recordings(analysis_id: str, body: AddMeaRecordingsRequest) -> dict:
     """Add several recordings at once — *"opens file explorer, can import multiple at a time"*.
@@ -485,6 +550,18 @@ def delete_mea_recording(analysis_id: str, recording_id: str) -> dict:
 #: ⚠️ Same number and same reason as the videomosaic route's; deliberately not imported from it,
 #: because a feature must not depend on another feature.
 MAX_TRACE_SECONDS = 30.0
+
+#: How many stored samples one request may read live off the disk before the precomputed envelope is
+#: used instead. ⚠️ A cost budget about THIS MACHINE, not a fact about any recording — it is compared
+#: against a sample count derived from the file's own `sampling_hz`, never against a number of
+#: seconds. Measured 2026-08-15: 200k samples is 0.4-0.8 s of HDF5 read, which a zoom gesture can
+#: afford; a whole 300 s channel is 12-23 s, which it cannot.
+LIVE_READ_MAX_SAMPLES = 200_000
+
+#: Columns in a stored envelope, i.e. how finely the whole recording is remembered. A rendering
+#: choice (a wide canvas is ~1-2k columns, and zooming in past this falls back to a live read), not
+#: a dataset fact. At uint16 this is ~32 MB for a 1000-channel recording.
+ENVELOPE_BUCKETS = 8192
 
 
 def _recording_path(analysis_id: str, recording_id: str) -> tuple[Path, dict]:
@@ -689,7 +766,12 @@ def get_mea_activity(analysis_id: str, recording_id: str) -> dict:
 def get_mea_channel_trace(analysis_id: str, recording_id: str,
                           channel: int = Query(..., description="The routed channel that was "
                                                                 "clicked on the chip map."),
-                          t0: float = 0.0, t1: float | None = None) -> dict:
+                          t0: float = 0.0, t1: float | None = None,
+                          max_points: int | None = Query(
+                              default=None, gt=0,
+                              description="Reduce to at most this many min/max columns instead of "
+                                          "returning raw samples. Lifts the window cap entirely.",
+                          )) -> dict:
     """One pad's stored waveform and its spikes, for the window `[t0, t1)`.
 
     ⭐ **BY CHANNEL, BECAUSE THE CLICK ALREADY KNOWS ITS CHANNEL.** The chip map was drawn from
@@ -697,10 +779,24 @@ def get_mea_channel_trace(analysis_id: str, recording_id: str,
     seating to guess. ⛔ That is the whole difference from the videomosaic trace route, and it is why
     the two are separate rather than shared.
 
-    ⚠️ **`health` IS NOT DECORATION.** The published MaxWell decoder does not reconstruct this
-    project's files, and a railed window drawn without that caveat looks exactly like a genuinely
-    silent electrode. ⭐ The spikes are unaffected — the on-chip detector wrote them uncompressed —
-    so they are returned and drawn even when the waveform is refused.
+    ⭐ **`max_points` IS HOW THE WHOLE RECORDING FITS DOWN THE WIRE.** Without it, this returns raw
+    samples and `MAX_TRACE_SECONDS` still applies — that is the old contract, unchanged, and the
+    videomosaic sibling keeps it too. With it, the answer is a **min/max envelope** of at most
+    `max_points` columns, so a 300 s window costs the same as a 1 s one and **the cap does not
+    apply**. His ruling, 2026-08-15: *"make it so it can go beyond the 30 sec limit"* — the answer is
+    a smaller payload, not a bigger one.
+
+    ⚠️ **A WIDE ENVELOPE IS SERVED FROM THE PRECOMPUTED CACHE, AND MUST BE.** Reading one channel's
+    full length out of a MaxWell file costs 12-23 s (the raw stream is chunked across every channel),
+    so a live read is only used when the window is narrow enough to be cheap. When the cache is
+    missing the route says so by name rather than blocking for half a minute.
+
+    ⚠️ **`health` IS NOT DECORATION.** On some of these files the decoder returns a rail, and a
+    railed window drawn without that caveat looks exactly like a genuinely silent electrode. ⭐ The
+    spikes are unaffected — the on-chip detector wrote them uncompressed — so they are returned and
+    drawn even when the waveform is refused. ⚠️ On the envelope path the health number is the
+    **cache's own, whole-recording** figure, never a window's: the rail fraction changes with window
+    length (measured 1.000 over 1 s but 0.827 over 30 s on 000690).
     """
     from camea.core import mearecording as mr  # noqa: PLC0415
 
@@ -709,7 +805,8 @@ def get_mea_channel_trace(analysis_id: str, recording_id: str,
         info = rec.info()
         m = rec.mapping()
         base = {"analysis_id": analysis_id, "recording_id": recording_id, "channel": int(channel),
-                "duration_s": info.duration_s, "sampling_hz": info.sampling_hz}
+                "duration_s": info.duration_s, "sampling_hz": info.sampling_hz,
+                "max_window_s": MAX_TRACE_SECONDS}
 
         hit = m[m["channel"] == int(channel)]
         if hit.size == 0:
@@ -720,7 +817,12 @@ def get_mea_channel_trace(analysis_id: str, recording_id: str,
 
         end = info.duration_s if t1 is None else float(t1)
         start = max(0.0, float(t0))
-        end = min(end, start + MAX_TRACE_SECONDS, info.duration_s)
+        if max_points is None:
+            # ⚠️ Silent clamp, deliberately kept: this is the old contract and other callers rely on
+            # it. The client must label its axis from `t0_s`/`t1_s`, never from what it asked for.
+            end = min(end, start + MAX_TRACE_SECONDS, info.duration_s)
+        else:
+            end = min(end, info.duration_s)
         if end <= start:
             raise ApiError(422, "refused", "the requested window is empty")
 
@@ -743,9 +845,52 @@ def get_mea_channel_trace(analysis_id: str, recording_id: str,
             "spikes": [{"t_s": float(s["t_s"]), "amplitude_uv": float(s["amplitude_uv"])}
                        for s in window],
         }
+        n_wanted = int(round((end - start) * (info.sampling_hz or 1.0)))
         try:
-            out["trace_uv"] = [float(v) for v in rec.trace(channel, start, end)]
-            out["health"] = rec.trace_health(channel, start, end).as_dict()
+            if max_points is None or n_wanted <= LIVE_READ_MAX_SAMPLES:
+                # Narrow enough to read for real. Measured: 200k samples is 0.4-0.8 s of HDF5, which
+                # is what a zoom gesture can afford; the full window at full resolution is always
+                # better than a cached approximation when it is affordable.
+                trace, health = rec.trace_window(channel, start, end)
+                out["health"] = health.as_dict()
+                if max_points is None:
+                    out["resolution"] = "samples"
+                    out["trace_uv"] = [float(v) for v in trace]
+                else:
+                    lo, hi = mr.minmax_columns(trace, max_points)
+                    out["resolution"] = "envelope"
+                    out["min_uv"] = [float(v) for v in lo]
+                    out["max_uv"] = [float(v) for v in hi]
+            else:
+                # ⭐ **TOO WIDE TO READ LIVE — THIS IS WHAT THE CACHE IS FOR.** `raw` is chunked
+                # across every channel, so reading one channel's 300 s costs 12-23 s (measured on his
+                # five). That is not a request; it is the import-time job that wrote this file.
+                from . import recordings as mrec  # noqa: PLC0415
+
+                _doc, ws = _mea_project(analysis_id)
+                env = mrec.load_envelope_for(ws.folder_of(analysis_id), _entry)
+                if env is None:
+                    raise ApiError(
+                        409, "refused",
+                        "Camea has not finished reading this recording end to end yet, so it "
+                        "cannot show you the whole of it at once. It is a one-off job of about a "
+                        "minute per recording.",
+                        {"recording_id": recording_id, "needs": "envelope"},
+                    )
+                got = env.window(channel, start, end, max_points)
+                if got is None:
+                    return {**base, "recorded": False, "t0_s": 0.0, "t1_s": 0.0}
+                lo, hi, w0, w1 = got
+                out["resolution"] = "envelope"
+                out["min_uv"] = [float(v) for v in lo]
+                out["max_uv"] = [float(v) for v in hi]
+                # ⚠️ The buckets actually covered, not what was asked for — the client labels its
+                # axis from these, because the cache cannot honestly report a finer edge.
+                out["t0_s"], out["t1_s"] = w0, w1
+                # ⚠️ The cache's OWN whole-recording health, never this window's: the rail fraction
+                # changes with window length (1.000 over 1 s vs 0.827 over 30 s on 000690).
+                eh = env.health_of(channel)
+                out["health"] = eh.as_dict() if eh is not None else None
         except mr.RawUndecodable as e:
             # ⭐ The spikes above are still exactly right — return them, and say the waveform is
             # unavailable rather than drawing a flat line that looks like a silent electrode.

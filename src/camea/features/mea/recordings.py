@@ -68,6 +68,10 @@ from camea.core import workspace as core_workspace
 #: The job kind for one recording's copy. `api.schemas.MeaCopyResult` discriminates on it.
 COPY_JOB_KIND = "mea_copy"
 
+#: The job kind for one recording's whole-recording envelope. `api.schemas.MeaEnvelopeResult`
+#: discriminates on it.
+ENVELOPE_JOB_KIND = "mea_envelope"
+
 #: 8 MiB. Big enough that a multi-GB copy is not a syscall storm, small enough that cancel is felt
 #: within a moment and the percentage moves visibly on a file of any size.
 _CHUNK = 8 * 1024 * 1024
@@ -82,6 +86,11 @@ _DOC_LOCK = threading.RLock()
 #: It is a handle on a *running* job, and a job does not survive the process; the shelf falls back
 #: to what is on disk, which is the durable answer. See the module docstring.
 _COPY_JOBS: dict[str, str] = {}
+
+#: `recording id -> job id` for the envelope builds this process started. Same reasoning as
+#: `_COPY_JOBS`: a handle on a running job, never persisted. The durable answer is whether
+#: `envelope.npz` is on disk and loads.
+_ENVELOPE_JOBS: dict[str, str] = {}
 
 
 class NotARecording(Exception):
@@ -396,6 +405,108 @@ def start_copy(project_dir: str | Path, analysis_id: str, rec: Mapping,
     job = core_jobs.JOBS.submit_thread(COPY_JOB_KIND, guarded)
     _COPY_JOBS[rid] = job.job_id
     return job.job_id
+
+
+# ── the whole-recording envelope ────────────────────────────────────────────────────────────────
+#
+# ⭐ **WHY THIS IS A JOB AND NOT A REQUEST.** `groups/routed/raw` is chunked across every channel, so
+# reading ONE channel end to end decompresses ALL of them. Measured on his five recordings
+# (2026-08-15): one channel 12-23 s; all 726-1015 channels 19-32 s, and 37-70 s once the exact health
+# tally is included. A factor of 1.4 between one and all is why every channel is done in a single
+# pass, and 37-70 s is why it cannot sit inside a GET.
+#
+# ⭐ **AND WHY IT IS BACKFILLED, NOT ONLY BUILT AT IMPORT.** His instruction, 2026-08-15: *"go ahead
+# and run the loader on the MEAs I have already imported."* A precompute that only ran on the way in
+# would leave every recording already in a project permanently without one.
+#
+# 🔴 R44: it is written to `<project>/recordings/<id>/`, beside the copy, and never to `outputs/` —
+# `outputs/` is the panel he browses, and a cache is not something he asked Camea to make.
+
+
+def envelope_path(project_dir: str | Path, rec: Mapping) -> Path:
+    """Where this recording's envelope cache lives. **Always inside the project** (R44), even for a
+    `referenced` recording whose `data.raw.h5` sits somewhere else entirely — the cache is Camea's,
+    not his, so it goes where Camea's things go."""
+    rid = str(rec.get("id") or "")
+    return Path(project_dir) / core_workspace.RECORDINGS / rid / mr.ENVELOPE_FILENAME
+
+
+def load_envelope_for(project_dir: str | Path, rec: Mapping) -> mr.Envelope | None:
+    """This recording's envelope, or None when it has not been built (or was built by an older
+    Camea). None is a cache miss, never an error."""
+    return mr.load_envelope(envelope_path(project_dir, rec))
+
+
+def has_envelope(project_dir: str | Path, rec: Mapping) -> bool:
+    return load_envelope_for(project_dir, rec) is not None
+
+
+def live_envelope_job(recording_id: str) -> core_jobs.Job | None:
+    """The envelope job running for this recording right now, if there is one."""
+    jid = _ENVELOPE_JOBS.get(recording_id)
+    if not jid:
+        return None
+    return core_jobs.JOBS.get(jid)
+
+
+def start_envelope(project_dir: str | Path, analysis_id: str, rec: Mapping, *,
+                   n_buckets: int, force: bool = False) -> str | None:
+    """Build one recording's envelope in the background. -> the job id, or `None` when there is
+    nothing to do.
+
+    `None` covers four honest cases, none of which is a failure: it is already built; a job for it is
+    already running; the file is not where it was left; or the recording stores no continuous trace
+    at all (an ActivityScan — a fact about the assay, not a broken file).
+    """
+    project_dir = Path(project_dir)
+    rid = str(rec.get("id") or "")
+    if not rid:
+        return None
+    live = live_envelope_job(rid)
+    if live is not None and live.state in ("queued", "running"):
+        return live.job_id
+    dest = envelope_path(project_dir, rec)
+    if not force and mr.load_envelope(dest) is not None:
+        return None
+    path = open_path(project_dir, rec)
+    if path is None:
+        return None
+
+    def fn(report, cancel) -> dict:
+        emit = core_jobs.report_adapter(report)
+        with mr.MeaRecording(path) as opened:
+            if opened.info().n_samples == 0:
+                # No continuous trace was ever recorded. Nothing to reduce, and nothing wrong.
+                return {"kind": ENVELOPE_JOB_KIND, "analysis_id": analysis_id,
+                        "recording_id": rid, "built": False, "n_buckets": 0}
+
+            def on_progress(frac: float) -> None:
+                core_jobs.check_cancelled(cancel, "envelope")
+                emit(phase="envelope", pct=100.0 * frac,
+                     message=f"{int(frac * 100)}% of the recording read")
+
+            env = opened.build_envelope(n_buckets, progress=on_progress)
+        core_workspace.refuse_write(dest)            # belt and braces: never outside the project
+        mr.save_envelope(dest, env)
+        return {"kind": ENVELOPE_JOB_KIND, "analysis_id": analysis_id, "recording_id": rid,
+                "built": True, "n_buckets": int(env.n_buckets)}
+
+    job = core_jobs.JOBS.submit_thread(ENVELOPE_JOB_KIND, fn)
+    _ENVELOPE_JOBS[rid] = job.job_id
+    return job.job_id
+
+
+def start_envelopes(project_dir: str | Path, analysis_id: str, doc: Mapping, *,
+                    n_buckets: int, force: bool = False) -> list[str]:
+    """⭐ **THE BACKFILL.** Every recording in the project that has no envelope yet gets one. The
+    jobs are submitted together and the registry runs them; each is skipped in `start_envelope` if it
+    turns out to be unnecessary, so calling this repeatedly is free."""
+    out: list[str] = []
+    for rec in list(doc.get("recordings") or []):
+        jid = start_envelope(project_dir, analysis_id, rec, n_buckets=n_buckets, force=force)
+        if jid:
+            out.append(jid)
+    return out
 
 
 def _rel(project_dir: Path, p: Path) -> str:

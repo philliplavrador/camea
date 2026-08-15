@@ -79,14 +79,17 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 __all__ = [
+    "ENVELOPE_FILENAME",
+    "ENVELOPE_VERSION",
     "MEA_FILENAME",
+    "Envelope",
     "MeaError",
     "MeaRecording",
     "NoRecordingsFound",
@@ -98,8 +101,12 @@ __all__ = [
     "derive_geometry",
     "derive_stride",
     "find_recordings",
+    "health_of",
+    "load_envelope",
+    "minmax_columns",
     "plugin_dir",
     "plugin_present",
+    "save_envelope",
     "suggest_recordings",
 ]
 
@@ -150,6 +157,15 @@ def _arm_plugin() -> None:
     """Point HDF5 at the decoder if the caller has not already."""
     if not os.environ.get("HDF5_PLUGIN_PATH"):
         os.environ["HDF5_PLUGIN_PATH"] = str(_DEFAULT_PLUGIN_DIR)
+
+
+def _undecodable() -> RawUndecodable:
+    """The one wording for a missing decoder, so every reader says the same thing."""
+    return RawUndecodable(
+        "the raw stream could not be decoded. MaxWell compresses it with a proprietary "
+        f"HDF5 filter (id {_MXW_FILTER_ID}); the matching decoder library must be present "
+        f"in {plugin_dir()}. It ships with MaxLab Live."
+    )
 
 
 # ── what a recording is ─────────────────────────────────────────────────────────────────────────
@@ -208,6 +224,181 @@ class TraceHealth:
 
     def as_dict(self) -> dict:
         return {**dataclasses.asdict(self), "flat": self.flat}
+
+
+def health_of(counts: np.ndarray) -> TraceHealth:
+    """:class:`TraceHealth` for raw counts already in hand — no read, no file.
+
+    Exists so a caller that has just read a window (or a whole recording) can measure it without
+    paying for the decompression a second time. Identical arithmetic to
+    :meth:`MeaRecording.trace_health`.
+    """
+    if counts.size == 0:
+        return TraceHealth(0, 0, 0.0, 0)
+    vals, cnts = np.unique(counts, return_counts=True)
+    k = int(np.argmax(cnts))
+    return TraceHealth(
+        n_samples=int(counts.size),
+        fill_value=int(vals[k]),
+        fill_fraction=float(cnts[k] / counts.size),
+        distinct_values=int(vals.size),
+    )
+
+
+def minmax_columns(values: np.ndarray, n_columns: int) -> tuple[np.ndarray, np.ndarray]:
+    """Reduce ``values`` to at most ``n_columns`` ``(min, max)`` pairs — the honest thinning.
+
+    ⭐ Min/max, never every n-th value. A spike is 5-16 samples wide at 20 kHz, so sub-sampling a
+    long window would land on one roughly never and draw a calm line over a burst. Each column keeps
+    the true extent of what is under it, so a spike of any width forces its column tall.
+    """
+    if values.size == 0:
+        return values.astype(np.float64), values.astype(np.float64)
+    if n_columns < 1 or values.size <= n_columns:
+        return values.astype(np.float64), values.astype(np.float64)
+    cut = np.linspace(0, values.size, n_columns + 1, dtype=np.int64)[:-1]
+    return np.minimum.reduceat(values, cut), np.maximum.reduceat(values, cut)
+
+
+#: Bumped whenever the on-disk envelope layout changes. A cache written by an older Camea is
+#: rebuilt rather than reinterpreted — a stale shape served as a current one is worse than a wait.
+ENVELOPE_VERSION = 1
+
+#: What :func:`save_envelope` writes, beside the recording it describes.
+ENVELOPE_FILENAME = "envelope.npz"
+
+#: Channels tallied per `bincount` call while building an envelope. A tuning constant about memory
+#: bandwidth, not about any recording — see the comment at its use.
+_TALLY_STRIP = 128
+
+
+@dataclass(frozen=True)
+class Envelope:
+    """Every routed channel's whole recording, reduced to ``n_buckets`` min/max pairs.
+
+    ⭐ **A CACHE, NOT DATA.** Deleting it costs a rebuild and nothing else; nothing a user authored
+    is in here. It exists because reading one channel's full length out of a MaxWell file costs
+    almost as much as reading all of them (see :meth:`MeaRecording.build_envelope`).
+
+    ``lo``/``hi`` are raw counts, in the file's own dtype, ``(n_channels, n_buckets)``. Multiply by
+    :attr:`lsb_uv` for microvolts — stored unscaled so the cache is half the size and exactly
+    reversible. Rows are in ``groups/routed/channels`` order; :meth:`row_of` resolves a channel id.
+    """
+
+    version: int
+    channels: np.ndarray
+    lo: np.ndarray
+    hi: np.ndarray
+    n_samples: int
+    sampling_hz: float
+    lsb_uv: float
+    fill_value: np.ndarray
+    fill_fraction: np.ndarray
+    distinct_values: np.ndarray
+
+    @property
+    def n_buckets(self) -> int:
+        return int(self.lo.shape[1])
+
+    @property
+    def duration_s(self) -> float:
+        return self.n_samples / self.sampling_hz if self.sampling_hz else 0.0
+
+    def row_of(self, channel: int) -> int | None:
+        """The row carrying ``channel``, or None when it was never routed."""
+        hit = np.nonzero(self.channels == int(channel))[0]
+        return int(hit[0]) if hit.size else None
+
+    def health_of(self, channel: int) -> TraceHealth | None:
+        """That channel's **whole-recording** health — never a window's. See ``build_envelope``."""
+        row = self.row_of(channel)
+        if row is None:
+            return None
+        return TraceHealth(
+            n_samples=self.n_samples,
+            fill_value=int(self.fill_value[row]),
+            fill_fraction=float(self.fill_fraction[row]),
+            distinct_values=int(self.distinct_values[row]),
+        )
+
+    def window(
+        self, channel: int, t0: float, t1: float, max_points: int
+    ) -> tuple[np.ndarray, np.ndarray, float, float] | None:
+        """``(min_uv, max_uv, t0, t1)`` for ``[t0, t1)``, further reduced to ``max_points`` columns.
+
+        The returned times are the **bucket edges actually covered**, not what was asked for — a
+        caller must label its axis from these, because the buckets are the finest thing this cache
+        can honestly report.
+        """
+        row = self.row_of(channel)
+        if row is None:
+            return None
+        dur = self.duration_s
+        if dur <= 0 or self.n_buckets == 0:
+            return None
+        a = max(0, min(self.n_buckets - 1, int(np.floor(t0 / dur * self.n_buckets))))
+        b = max(a + 1, min(self.n_buckets, int(np.ceil(t1 / dur * self.n_buckets))))
+        lo = self.lo[row, a:b].astype(np.float64)
+        hi = self.hi[row, a:b].astype(np.float64)
+        if max_points >= 1 and lo.size > max_points:
+            # Fold whole buckets together — still min/max, so a spike still cannot be lost.
+            cut = np.linspace(0, lo.size, max_points + 1, dtype=np.int64)
+            lo = np.minimum.reduceat(lo, cut[:-1])
+            hi = np.maximum.reduceat(hi, cut[:-1])
+        return (
+            lo * self.lsb_uv,
+            hi * self.lsb_uv,
+            a / self.n_buckets * dur,
+            b / self.n_buckets * dur,
+        )
+
+
+def save_envelope(path: Path, env: Envelope) -> None:
+    """Write ``env`` to ``path``. The caller chooses where — this module never picks a location."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".part")
+    with tmp.open("wb") as fh:
+        np.savez(
+            fh,
+            version=np.int64(env.version),
+            channels=env.channels,
+            lo=env.lo,
+            hi=env.hi,
+            n_samples=np.int64(env.n_samples),
+            sampling_hz=np.float64(env.sampling_hz),
+            lsb_uv=np.float64(env.lsb_uv),
+            fill_value=env.fill_value,
+            fill_fraction=env.fill_fraction,
+            distinct_values=env.distinct_values,
+        )
+    # ⚠️ Atomic: a half-written cache that loads is worse than no cache. The rename is the commit.
+    tmp.replace(path)
+
+
+def load_envelope(path: Path) -> Envelope | None:
+    """Read an envelope back, or None when it is absent, unreadable, or of an older version."""
+    if not path.exists():
+        return None
+    try:
+        with np.load(path) as z:
+            version = int(z["version"])
+            if version != ENVELOPE_VERSION:
+                return None
+            return Envelope(
+                version=version,
+                channels=z["channels"],
+                lo=z["lo"],
+                hi=z["hi"],
+                n_samples=int(z["n_samples"]),
+                sampling_hz=float(z["sampling_hz"]),
+                lsb_uv=float(z["lsb_uv"]),
+                fill_value=z["fill_value"],
+                fill_fraction=z["fill_fraction"],
+                distinct_values=z["distinct_values"],
+            )
+    except (OSError, KeyError, ValueError):
+        # A truncated or foreign file is a cache miss, never an error the user has to read about.
+        return None
 
 
 @dataclass(frozen=True)
@@ -717,6 +908,149 @@ class MeaRecording:
             fill_value=int(vals[k]),
             fill_fraction=float(cnts[k] / counts.size),
             distinct_values=int(vals.size),
+        )
+
+    def _bounds(self, t0: float, t1: float | None) -> tuple[int, int]:
+        """The sample range ``[a, b)`` covering ``[t0, t1)`` seconds, clipped to the file."""
+        info = self.info()
+        fs = info.sampling_hz or 1.0
+        a = max(0, int(round(t0 * fs)))
+        b = info.n_samples if t1 is None else min(info.n_samples, int(round(t1 * fs)))
+        return a, b
+
+    def trace_window(
+        self, channel: int, t0: float = 0.0, t1: float | None = None
+    ) -> tuple[np.ndarray, TraceHealth]:
+        """The waveform in µV over ``[t0, t1)`` **and** its health, from a SINGLE read.
+
+        ⭐ **THIS EXISTS BECAUSE THE PAIR COST DOUBLE.** :meth:`trace` and :meth:`trace_health` each
+        slice ``raw[row, a:b]`` independently, and every caller that presents a trace honestly needs
+        both — so the API route was paying for the window twice (measured 1.05 s + 1.06 s on a 30 s
+        window of P003658/000689). Decompression is the whole cost here, and it is now paid once.
+
+        ⚠️ :meth:`trace` and :meth:`trace_health` are deliberately left in place and unchanged. They
+        have their own callers and their own tests; this is an addition, not a replacement.
+        """
+        info = self.info()
+        a, b = self._bounds(t0, t1)
+        if b <= a:
+            return np.empty(0, dtype=np.float64), TraceHealth(0, 0, 0.0, 0)
+        row = self._row_of_channel(channel)
+        raw = self._grp()["groups/routed/raw"]
+        try:
+            counts = np.asarray(raw[row, a:b])
+        except OSError as e:
+            raise _undecodable() from e
+        return counts.astype(np.float64) * info.lsb_uv, health_of(counts)
+
+    # -- the whole recording at a glance: the min/max envelope ------------------------------------
+
+    def build_envelope(
+        self,
+        n_buckets: int,
+        *,
+        max_block_values: int = 25_000_000,
+        progress: Callable[[float], None] | None = None,
+    ) -> Envelope:
+        """Reduce **every routed channel** to ``n_buckets`` min/max pairs spanning the recording.
+
+        ⭐ **WHY EVERY CHANNEL AT ONCE, AND WHY THIS IS PRECOMPUTED RATHER THAN SERVED ON DEMAND.**
+        ``groups/routed/raw`` is chunked ``(n_channels, 200)`` and gzipped, so reading **one**
+        channel's full length decompresses **all** of them. Measured on his five recordings
+        (2026-08-15): one channel costs 12-23 s; all 726-1015 channels cost 19-32 s — a factor of
+        **1.4**, not 1000. So a per-pad whole-recording read is unaffordable (15-23 s per click) and
+        a whole-file pass is affordable exactly once. That single ratio is why this method exists.
+
+        ⭐ **MIN/MAX, NEVER SUB-SAMPLING.** A spike is 5-16 samples wide at 20 kHz; taking every
+        n-th sample across a 300 s recording would miss essentially all of them and draw a calm line
+        over a burst. Each bucket keeps the true extent of the samples under it, so a spike of any
+        width forces its bucket to be tall and cannot be made invisible. Same rule the client already
+        states in ``web/src/core/trace/TraceChart.tsx``; now binding on the writer too.
+
+        ⚠️ **HEALTH IS COMPUTED HERE, EXACTLY, AND OVER THE WHOLE RECORDING.** A railed window is
+        indistinguishable from a genuinely quiet electrode, and the rail fraction **changes with
+        window length** (measured 1.000 over 1 s but 0.827 over 30 s on P003693/000690) — so an
+        overview may not borrow a window's health number and must carry its own. Exact, not sampled:
+        the pass already has every value in hand, and the value span is small enough (this file's own
+        maximum, derived below — never assumed) that a per-channel tally costs a few MB.
+
+        ⛔ Nothing here knows a sample rate, a duration, a channel count or a bucket count. ``n_buckets``
+        is the caller's rendering choice; everything else comes from the file.
+        """
+        info = self.info()
+        n_ch, n_s = info.n_channels, info.n_samples
+        if n_buckets < 1:
+            raise ValueError("n_buckets must be at least 1")
+        if n_s == 0:
+            # An ActivityScan writes no continuous trace at all. That is a fact about the assay, not
+            # a failure, and it is worded differently everywhere it surfaces.
+            raise MeaError(f"{self.path} stores no continuous trace (0 samples) — nothing to reduce")
+
+        n_buckets = min(n_buckets, n_s)
+        edges = np.linspace(0, n_s, n_buckets + 1, dtype=np.int64)
+        channels = np.asarray(self._grp()["groups/routed/channels"][:], dtype=np.int64)
+        raw = self._grp()["groups/routed/raw"]
+
+        lo = np.zeros((n_ch, n_buckets), dtype=np.uint16)
+        hi = np.zeros((n_ch, n_buckets), dtype=np.uint16)
+        span = 1
+        hist = np.zeros((n_ch, span), dtype=np.uint32)
+
+        # Buckets per read. Sized by VALUES so wide-channel files do not blow the temporary up.
+        per_bucket = max(1, n_s // n_buckets)
+        group = max(1, int(max_block_values // max(1, n_ch * per_bucket)))
+
+        k = 0
+        while k < n_buckets:
+            k1 = min(n_buckets, k + group)
+            a, b = int(edges[k]), int(edges[k1])
+            try:
+                block = np.asarray(raw[:, a:b])
+            except OSError as e:
+                raise _undecodable() from e
+
+            for j in range(k, k1):
+                seg = block[:, int(edges[j]) - a : int(edges[j + 1]) - a]
+                if seg.size == 0:  # pragma: no cover - only when n_buckets == n_samples
+                    continue
+                lo[:, j] = seg.min(axis=1)
+                hi[:, j] = seg.max(axis=1)
+
+            top = int(block.max()) + 1
+            if top > span:
+                hist = np.pad(hist, ((0, 0), (0, top - span)))
+                span = top
+            # ⭐ **THE TALLY, EXACT, IN THE SAME PASS.** Offset each channel into its own stretch of
+            # bins so a whole strip is one `bincount` rather than one call per channel. Strips rather
+            # than the whole block because `bincount` widens its input to intp: at 6e9 samples per
+            # recording an all-at-once cast writes tens of GB, and 128 channels at a time keeps the
+            # temporary inside cache. Measured on P003658/000691: 39 s -> 8 s.
+            for s0 in range(0, n_ch, _TALLY_STRIP):
+                sub = block[s0 : s0 + _TALLY_STRIP]
+                rows = sub.shape[0]
+                offs = (np.arange(rows, dtype=np.int32) * span)[:, None]
+                idx = np.add(sub, offs, dtype=np.int32).ravel()
+                hist[s0 : s0 + rows] += (
+                    np.bincount(idx, minlength=rows * span).reshape(rows, span).astype(np.uint32)
+                )
+
+            k = k1
+            if progress is not None:
+                progress(k / n_buckets)
+
+        modal = hist.argmax(axis=1)
+        counts = hist[np.arange(n_ch), modal]
+        return Envelope(
+            version=ENVELOPE_VERSION,
+            channels=channels.astype(np.int32),
+            lo=lo,
+            hi=hi,
+            n_samples=n_s,
+            sampling_hz=info.sampling_hz,
+            lsb_uv=info.lsb_uv,
+            fill_value=modal.astype(np.int32),
+            fill_fraction=(counts / n_s).astype(np.float32),
+            distinct_values=(hist > 0).sum(axis=1).astype(np.int32),
         )
 
     # -- the lamp episodes ------------------------------------------------------------------------

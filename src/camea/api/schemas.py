@@ -2693,6 +2693,57 @@ class MeaCopyResult(Res):
     bytes: int = 0
 
 
+class MeaEnvelopeResult(Res):
+    """`job.result` of a `mea_envelope` job — one recording has been read end to end and reduced.
+
+    ⭐ **WHY THIS IS A JOB.** MaxWell chunks the raw stream across every channel at once, so reading
+    one channel's full length decompresses all of them: measured 12-23 s for one channel against
+    19-32 s for all of them, and 37-70 s once the exact per-channel health tally is included. Doing
+    every channel in one pass is therefore 1.4x the cost of doing one, and it is paid once per
+    recording rather than once per click.
+
+    `built` is False — with no error — when the recording stores no continuous trace at all (an
+    ActivityScan). That is a fact about the assay, not a failure.
+    """
+
+    kind: Literal["mea_envelope"] = "mea_envelope"
+    analysis_id: str
+    recording_id: str
+    built: bool = False
+    n_buckets: int = 0
+
+
+class MeaEnvelopeRow(Res):
+    """Whether one recording can be shown whole yet."""
+
+    recording_id: str
+    label: str = ""
+    ready: bool = Field(
+        description="⭐ True when the whole recording can be drawn at once. False means only the "
+        "narrow windows the app can read live are available — never that the recording is broken.",
+    )
+    job_id: str = Field(default="", description="The build running for it, if one is.")
+    pct: float = Field(default=0.0, description="0-100 while a build is running.")
+
+
+class MeaEnvelopeStatus(Res):
+    """`GET`/`POST /api/mea/{analysis_id}/recordings/envelopes` — the state of the one-off read that
+    lets the trace panel show a whole recording, and the way to start it for the ones that lack it.
+
+    ⭐ **THE BACKFILL EXISTS BECAUSE HE ASKED FOR IT BY NAME** (2026-08-15): *"go ahead and run the
+    loader on the MEAs I have already imported."* New recordings get this at import; everything
+    already in a project gets it from here.
+    """
+
+    analysis_id: str
+    recordings: list[MeaEnvelopeRow] = Field(default_factory=list)
+    started: list[str] = Field(
+        default_factory=list,
+        description="Job ids started by this call. Empty on a `GET`, and empty on a `POST` when "
+        "everything was already built.",
+    )
+
+
 # ── opening one recording: the chip, what happened on it, and one pad's trace ────────────────────
 #
 # ⭐ **THIS SCREEN WORKS ENTIRELY IN THE CHIP'S OWN FRAME, AND THAT IS THE POINT.** The file states
@@ -2836,10 +2887,17 @@ class MeaChannelTrace(Res):
     exists here, so none of it is on this model — ⛔ in particular there is no `orientation` and no
     `chip_electrode`, because the electrode is not in doubt.
 
-    ⚠️ **`health` IS NOT DECORATION.** The published MaxWell decoder does not reconstruct this
-    project's files (measured: 98% of samples come back as one value), and a railed window drawn
-    without that caveat looks **exactly** like a genuinely silent electrode. The spike ticks stay
-    correct either way and are drawn either way.
+    ⚠️ **`health` IS NOT DECORATION.** On some of this project's files the published MaxWell decoder
+    returns a rail (measured 2026-08-15 across his five imported recordings: 000690/691/692 come back
+    94-100% one repeated value, while 000688 and 000689 decode cleanly at 1.1% and 4.4%). A railed
+    window drawn without that caveat looks **exactly** like a genuinely silent electrode. The spike
+    ticks stay correct either way and are drawn either way.
+
+    ⭐ **TWO RESOLUTIONS, AND THE CALLER SAYS WHICH IT CAN DRAW.** Without `max_points` this is raw
+    samples and `MAX_TRACE_SECONDS` still caps the window. With `max_points` the server reduces to a
+    min/max envelope — `min_uv`/`max_uv` instead of `trace_uv` — and **the cap does not apply**, so a
+    whole 300 s recording is one small response. `resolution` says which arrived; never guess from
+    which array is populated.
     """
 
     analysis_id: str
@@ -2863,6 +2921,31 @@ class MeaChannelTrace(Res):
         description="The stored waveform in µV. ⚠️ Judge it with `health` before believing it; "
         "empty when the raw stream could not be decoded at all (`decode_error` says so).",
     )
+    resolution: Literal["samples", "envelope"] = Field(
+        default="samples",
+        description="⭐ Which picture came back. `samples` — `trace_uv` holds real samples, one per "
+        "stored sample. `envelope` — `min_uv`/`max_uv` hold the lowest and highest value in each "
+        "column, and `trace_uv` is empty. ⛔ Read this field; do not infer it from which array is "
+        "non-empty, because a genuinely empty window populates neither.",
+    )
+    min_uv: list[float] = Field(
+        default_factory=list,
+        description="Envelope only: the lowest µV in each column, evenly spaced across "
+        "`[t0_s, t1_s)`. Same length as `max_uv`.",
+    )
+    max_uv: list[float] = Field(
+        default_factory=list,
+        description="Envelope only: the highest µV in each column. ⭐ Min/max, never every n-th "
+        "sample — a spike is 5-16 samples wide at 20 kHz and sub-sampling would draw a calm line "
+        "over a burst. Whatever the eye sees here, a spike is never invisible.",
+    )
+    max_window_s: float = Field(
+        default=0.0,
+        description="⚠️ The widest window `resolution: samples` can return — a transport limit of "
+        "this build (30 s at 20 kHz is 600k JSON numbers), **not** a fact about anyone's recording. "
+        "Ask for anything wider with `max_points` and you get an envelope instead, at any width. "
+        "Sent so the client never writes the number down.",
+    )
     health: TraceHealthPayload | None = None
     spikes: list[MeaSpike] = Field(
         default_factory=list,
@@ -2871,9 +2954,9 @@ class MeaChannelTrace(Res):
     n_spikes_total: int = Field(default=0, description="On this channel, whole recording.")
     first_spike_s: float | None = Field(
         default=None,
-        description="When this pad first fired. ⭐ The UI opens its window HERE rather than at t=0: "
-        "a 300 s recording stepped a second at a time would take 200 clicks to reach the activity, "
-        "and a dead opening window makes a working electrode look broken.",
+        description="When this pad first fired. ⚠️ Server-supplied and free, but the `Analyze MEA` "
+        "screen no longer opens here — it opens at the start, showing the whole recording, so there "
+        "is no empty stretch to skip past (his ruling, 2026-08-15).",
     )
     decode_error: str = Field(
         default="",
@@ -2894,7 +2977,7 @@ class MeaChannelTrace(Res):
 JobResult = Annotated[
     Union[OpenJobResult, BuildResult, ExportResult, RecheckResult, RecomputeResult,
           VideoMosaicBuildResult, ElectrodeMapResult, LocateRegionResult,
-          OrientationTestResult, MeaCopyResult],
+          OrientationTestResult, MeaCopyResult, MeaEnvelopeResult],
     Field(discriminator="kind"),
 ]
 
