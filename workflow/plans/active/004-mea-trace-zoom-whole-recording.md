@@ -43,6 +43,34 @@ The interview, recorded 2026-08-15. Research behind it:
 | When does the one-off ~20 s precompute run? | **At import.** |
 | *(volunteered, mid-turn)* | **"run the loader on the MEAs I have already imported"** — the precompute must **backfill** recordings already in a project, not only new ones. He has 5 sitting in `p003658-19cc31` today. |
 
+### Decided during the build, and told to him
+
+| Question | Answer |
+|---|---|
+| The envelope build measured **37–70 s**, not the ~20 s quoted — exact per-channel health costs 38 s of it (measured: read 24 s, min/max 2.6 s, tally 38 s). Approximate it? | **No — keep it exact.** The number is printed in the "did not decode" warning, which is an honesty guarantee (R3.8). One background minute is the right thing to trade. He was told the corrected figure (~5½ min for his five, not 2¼). |
+| The close-up's opening width, once the auto-jump was removed. | **The whole recording, in both pictures.** It is literally *"I have the whole trace, and then I make a rectangle around the area I want to zoom in"*, it teaches what the strip is for, and it makes "open at the start" moot. ⚠️ The one choice made **for** him — confirm in preview. |
+| How to go past 30 s without a 10 MB response. | **A `max_points` query parameter and a reduced payload.** `MAX_TRACE_SECONDS` stays at 30.0 and still governs raw-sample requests, so the old contract and the videomosaic sibling are untouched. |
+| Where the readout's numbers come from — the requested range or the served one. | **The served one**, the same range the chart is drawn from. They differ by up to one bucket when a wide view comes from the cache, and a caption disagreeing with its own chart is a small lie. |
+| The spike row merged into a solid bar at full zoom (1166 ticks, ~530 px). | **Above one tick per pixel, stroke them separately at low alpha** so the row becomes a firing density. No spike is dropped at any zoom. |
+
+### Measured on his own files, 2026-08-15 (`p003658-19cc31`)
+
+`groups/routed/raw` is chunked `(n_channels, 200)`, gzip, on all five. One channel end to end costs
+**12–23 s**; **all** 726–1015 channels cost **19–32 s** — a factor of **1.4**. That single ratio is
+why the envelope is built for every channel in one pass and cached, rather than read per pad.
+
+| run | shape | one ch | all ch | build (with tally) | cache | ch-0 most-repeated |
+|---|---|---|---|---|---|---|
+| 000688 | 982 × 3.60 M (180 s) | 12.1 s | 19.3 s | 37 s | 32.2 MB | **1.1 %** — clean |
+| 000689 | 1015 × 6.00 M (300 s) | 23.0 s | 32.1 s | — | 33.3 MB | **4.4 %** — clean |
+| 000690 | 726 × 6.00 M | 17.9 s | 21.8 s | — | 23.8 MB | 96.5 % — railed |
+| 000691 | 1012 × 6.00 M | 22.1 s | 31.5 s | 70 s | 33.2 MB | 100 % — railed |
+| 000692 | 1012 × 6.00 M | 19.7 s | 29.4 s | — | 33.2 MB | 93.9 % — railed |
+
+⭐ **The rail is three recordings, not the decoder** — which contradicts what `docs/MAXWELL.md` §6
+said and has been corrected there. The recording he was looking at when he asked for this (000688)
+is one of the clean ones.
+
 **Explicitly rejected:**
 
 - **A whole-recording strip of spike marks instead of voltage.** It was the recommendation — instant,
