@@ -174,19 +174,16 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
   }, [analysisId, recordingId, channel, view, whole]);
 
   // ── navigation ─────────────────────────────────────────────────────────────────────────────
-  const announce = useCallback(
-    (v: vs.TimeView, n: number) => setSaid(readout(v.t0, v.t1, duration, n)),
-    [duration],
-  );
+  const go = useCallback((next: vs.ViewStack) => setStack(next), []);
 
-  const go = useCallback(
-    (next: vs.ViewStack) => {
-      setStack(next);
-      const v = vs.current(next);
-      if (v) announce(v, 0);
-    },
-    [announce],
-  );
+  // ⚠️ **THE ANNOUNCEMENT WAITS FOR THE DATA, AND THAT IS THE POINT.** Announcing at the moment of
+  // navigation is a keystroke earlier but the spike count is not known yet, so every keyboard zoom
+  // said "0 spikes in view" — false, and false in exactly the place a sighted user reads off the
+  // picture. It says what actually arrived, from the range the server actually served.
+  useEffect(() => {
+    if (!data?.recorded) return;
+    setSaid(readout(data.t0_s, data.t1_s, data.duration_s, data.spikes?.length ?? 0));
+  }, [data]);
 
   const onSelect = useCallback(
     (v: vs.TimeView) => go(vs.push(stack, v)),
@@ -424,6 +421,7 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
             <div
               ref={boxRef}
               className={styles.detail}
+              data-testid="mea-trace-detail"
               tabIndex={0}
               role="application"
               aria-label="The stretch of the recording you are looking at. Drag sideways to zoom in."
@@ -442,9 +440,13 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
               />
             </div>
 
+            {/* ⚠️ The readout states the range the server ACTUALLY SERVED, not the one that was
+                asked for — the same range the picture above is drawn from. They differ by up to
+                one stored bucket when a wide view comes from the cache, and a caption that
+                disagreed with its own chart would be the worst kind of small lie. */}
             <TraceNav
-              t0={view.t0}
-              t1={view.t1}
+              t0={data.t0_s}
+              t1={data.t1_s}
               duration={duration}
               nSpikes={spikes.length}
               canBack={vs.canBack(stack)}

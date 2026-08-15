@@ -62,12 +62,16 @@
   white-space: nowrap;
 }
 
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .controls {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .pos {
@@ -75,7 +79,9 @@
   font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  text-align: center;
+  /* Left, not centred: it gains decimals as he zooms in, and a centred number that grows shifts
+     both its ends every time the view changes. */
+  text-align: left;
 }
 
 .facts {

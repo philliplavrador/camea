@@ -221,16 +221,36 @@ export function TraceChart({
     }
 
     // ── spikes last, as ticks under the axis: they are TRUSTWORTHY even when the trace is not ──
+    // ⭐ **AND ONCE THERE ARE MORE OF THEM THAN PIXELS, THE ROW BECOMES A DENSITY.** A busy pad over
+    // a whole recording is thousands of ticks across a few hundred pixels, and drawn at full
+    // strength they merge into a solid bar that reads as a rule under the axis rather than as data
+    // — it says only "there were spikes", which he already knows. Stroked separately at low alpha
+    // instead, they accumulate: the busy stretches darken and the quiet ones stay pale, so the row
+    // answers "when was this pad busy" at a glance. ⛔ No spike is ever dropped, at any zoom.
     g.strokeStyle = spikeCol;
     g.lineWidth = 1.5;
-    g.beginPath();
-    for (const s of spikes) {
-      const x = xOf(s.t_s);
-      if (x < TRACE_PAD.left || x > TRACE_PAD.left + w) continue;
-      g.moveTo(x, TRACE_PAD.top + h);
-      g.lineTo(x, TRACE_PAD.top + h + 5);
+    const dense = spikes.length > w;
+    if (dense) {
+      g.globalAlpha = 0.28;
+      for (const s of spikes) {
+        const x = xOf(s.t_s);
+        if (x < TRACE_PAD.left || x > TRACE_PAD.left + w) continue;
+        g.beginPath();
+        g.moveTo(x, TRACE_PAD.top + h);
+        g.lineTo(x, TRACE_PAD.top + h + 5);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    } else {
+      g.beginPath();
+      for (const s of spikes) {
+        const x = xOf(s.t_s);
+        if (x < TRACE_PAD.left || x > TRACE_PAD.left + w) continue;
+        g.moveTo(x, TRACE_PAD.top + h);
+        g.lineTo(x, TRACE_PAD.top + h + 5);
+      }
+      g.stroke();
     }
-    g.stroke();
 
     // ── the band: where you are, or where you are dragging ──────────────────────────────────
     if (band) {

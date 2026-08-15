@@ -41,32 +41,38 @@ export function TraceNav({
   onBack,
   onForward,
 }: TraceNavProps): React.JSX.Element {
+  // ⚠️ The buttons on one row and the readout on its own, rather than all four in a line: the
+  // readout grows as he zooms in (it gains decimals, deliberately — see `readout`), and a row that
+  // reflows under the pointer as the number of decimals changes is the worst possible place for a
+  // Back button to move to.
   return (
-    <div className={styles.controls} data-testid="mea-trace-nav">
-      <Button size="sm" variant="ghost" onClick={onHome} data-testid="mea-trace-home">
-        Whole recording
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={onBack}
-        disabled={!canBack}
-        data-testid="mea-trace-back"
-      >
-        ← Back
-      </Button>
+    <div className={styles.nav} data-testid="mea-trace-nav">
+      <div className={styles.controls}>
+        <Button size="sm" variant="ghost" onClick={onHome} data-testid="mea-trace-home">
+          Whole recording
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onBack}
+          disabled={!canBack}
+          data-testid="mea-trace-back"
+        >
+          ← Back
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onForward}
+          disabled={!canForward}
+          data-testid="mea-trace-forward"
+        >
+          Forward →
+        </Button>
+      </div>
       <span className={styles.pos} data-testid="mea-trace-pos">
         {readout(t0, t1, duration, nSpikes)}
       </span>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={onForward}
-        disabled={!canForward}
-        data-testid="mea-trace-forward"
-      >
-        Forward →
-      </Button>
     </div>
   );
 }
