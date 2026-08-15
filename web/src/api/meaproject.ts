@@ -24,6 +24,8 @@ export type MeaChipPad = components['schemas']['MeaChipPad'];
 export type MeaChipActivity = components['schemas']['MeaChipActivity'];
 export type MeaPadActivity = components['schemas']['MeaPadActivity'];
 export type MeaChannelTrace = components['schemas']['MeaChannelTrace'];
+export type MeaEnvelopeStatus = components['schemas']['MeaEnvelopeStatus'];
+export type MeaEnvelopeRow = components['schemas']['MeaEnvelopeRow'];
 
 /**
  * Create an Analyze MEA project (`POST /api/mea/projects` → 201).
@@ -154,19 +156,57 @@ export async function meaChipActivity(analysisId: string, recordingId: string)
  * ⭐ **Asked for by `channel`**, because the chip map was drawn from the file's own coordinates so
  * the clicked dot already knows its channel. ⚠️ Read `health.flat` before believing `trace_uv` —
  * a railed window looks exactly like a genuinely silent electrode.
+ *
+ * ⭐ **`maxPoints` IS HOW YOU ASK FOR MORE THAN 30 SECONDS.** Leave it out and you get raw samples,
+ * capped at `max_window_s`. Pass it — the number of columns you can actually draw — and the server
+ * folds the window into that many min/max pairs (`min_uv`/`max_uv`, with `resolution: "envelope"`)
+ * and the cap does not apply, so a whole recording costs the same as a second of one.
+ *
+ * ⚠️ **Label your axis from the RETURNED `t0_s`/`t1_s`, never from what you asked for.** Both paths
+ * may hand back a different range: the raw path clamps silently to the cap, and the envelope path
+ * snaps to the stored bucket edges.
  */
 export async function meaChannelTrace(
   analysisId: string,
   recordingId: string,
   channel: number,
-  window: { t0?: number; t1?: number } = {},
+  window: { t0?: number; t1?: number; maxPoints?: number } = {},
 ): Promise<MeaChannelTrace> {
   return unwrap(
     await api.GET('/api/mea/{analysis_id}/recordings/{recording_id}/trace', {
       params: {
         path: { analysis_id: analysisId, recording_id: recordingId },
-        query: { channel, t0: window.t0 ?? 0, t1: window.t1 ?? null },
+        query: {
+          channel,
+          t0: window.t0 ?? 0,
+          t1: window.t1 ?? null,
+          max_points: window.maxPoints ?? null,
+        },
       },
+    }),
+  );
+}
+
+/**
+ * Which recordings can be shown whole yet (`GET .../recordings/envelopes`), and the way to start
+ * the one-off read for the ones that cannot (`POST`).
+ *
+ * ⭐ **THE BACKFILL.** New recordings get this at import; anything already in a project catches up
+ * here. `ready: false` never means a recording is broken — only that the whole of it cannot be
+ * drawn at once yet, while narrow windows still read live.
+ */
+export async function meaEnvelopes(analysisId: string): Promise<MeaEnvelopeStatus> {
+  return unwrap(
+    await api.GET('/api/mea/{analysis_id}/recordings/envelopes', {
+      params: { path: { analysis_id: analysisId } },
+    }),
+  );
+}
+
+export async function startMeaEnvelopes(analysisId: string): Promise<MeaEnvelopeStatus> {
+  return unwrap(
+    await api.POST('/api/mea/{analysis_id}/recordings/envelopes', {
+      params: { path: { analysis_id: analysisId }, query: { force: false } },
     }),
   );
 }

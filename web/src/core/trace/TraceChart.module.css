@@ -12,6 +12,10 @@
   /* The 2P lamp episodes: the same "outstanding work" amber, held back so it stays behind the
      signal rather than competing with it. */
   --trace-lamp: color-mix(in srgb, var(--unverified) 26%, transparent);
+  /* The time band: the stretch being dragged, and the "you are here" box on the overview strip.
+     Same accent as every other selection in the app, held back so the signal reads through it. */
+  --trace-band: color-mix(in srgb, var(--accent) 22%, transparent);
+  --trace-band-edge: color-mix(in srgb, var(--accent) 85%, transparent);
 
   display: block;
   width: 100%;

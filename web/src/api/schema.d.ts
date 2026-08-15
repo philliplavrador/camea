@@ -1822,6 +1822,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mea/{analysis_id}/recordings/envelopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea Envelopes
+         * @description Which recordings can be shown whole yet, and what is still being read.
+         *
+         *     ⚠️ `ready: false` never means a recording is broken — it means only the narrow windows the app
+         *     can read live are available for it, which is still a working trace panel.
+         */
+        get: operations["get_mea_envelopes_api_mea__analysis_id__recordings_envelopes_get"];
+        put?: never;
+        /**
+         * Post Mea Envelopes
+         * @description ⭐ **THE BACKFILL** — read every recording in this project end to end, once, so the trace
+         *     panel can show the whole of any pad.
+         *
+         *     His instruction, 2026-08-15: *"go ahead and run the loader on the MEAs I have already imported."*
+         *     New recordings get this at import time; this is how everything already in a project catches up.
+         *
+         *     Recordings that already have one are skipped, so calling this twice costs nothing. Measured
+         *     37-70 s per recording on his five, in the background, cancellable.
+         */
+        post: operations["post_mea_envelopes_api_mea__analysis_id__recordings_envelopes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mea/{analysis_id}/recordings/{recording_id}": {
         parameters: {
             query?: never;
@@ -1935,10 +1969,24 @@ export interface paths {
          *     seating to guess. ⛔ That is the whole difference from the videomosaic trace route, and it is why
          *     the two are separate rather than shared.
          *
-         *     ⚠️ **`health` IS NOT DECORATION.** The published MaxWell decoder does not reconstruct this
-         *     project's files, and a railed window drawn without that caveat looks exactly like a genuinely
-         *     silent electrode. ⭐ The spikes are unaffected — the on-chip detector wrote them uncompressed —
-         *     so they are returned and drawn even when the waveform is refused.
+         *     ⭐ **`max_points` IS HOW THE WHOLE RECORDING FITS DOWN THE WIRE.** Without it, this returns raw
+         *     samples and `MAX_TRACE_SECONDS` still applies — that is the old contract, unchanged, and the
+         *     videomosaic sibling keeps it too. With it, the answer is a **min/max envelope** of at most
+         *     `max_points` columns, so a 300 s window costs the same as a 1 s one and **the cap does not
+         *     apply**. His ruling, 2026-08-15: *"make it so it can go beyond the 30 sec limit"* — the answer is
+         *     a smaller payload, not a bigger one.
+         *
+         *     ⚠️ **A WIDE ENVELOPE IS SERVED FROM THE PRECOMPUTED CACHE, AND MUST BE.** Reading one channel's
+         *     full length out of a MaxWell file costs 12-23 s (the raw stream is chunked across every channel),
+         *     so a live read is only used when the window is narrow enough to be cheap. When the cache is
+         *     missing the route says so by name rather than blocking for half a minute.
+         *
+         *     ⚠️ **`health` IS NOT DECORATION.** On some of these files the decoder returns a rail, and a
+         *     railed window drawn without that caveat looks exactly like a genuinely silent electrode. ⭐ The
+         *     spikes are unaffected — the on-chip detector wrote them uncompressed — so they are returned and
+         *     drawn even when the waveform is refused. ⚠️ On the envelope path the health number is the
+         *     **cache's own, whole-recording** figure, never a window's: the rail fraction changes with window
+         *     length (measured 1.000 over 1 s but 0.827 over 30 s on 000690).
          */
         get: operations["get_mea_channel_trace_api_mea__analysis_id__recordings__recording_id__trace_get"];
         put?: never;
@@ -3384,7 +3432,7 @@ export interface components {
              * Result
              * @description null until state == 'done'. Discriminated on `kind`.
              */
-            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"] | components["schemas"]["OrientationTestResult"] | components["schemas"]["MeaCopyResult"]) | null;
+            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"] | components["schemas"]["OrientationTestResult"] | components["schemas"]["MeaCopyResult"] | components["schemas"]["MeaEnvelopeResult"]) | null;
             /** @description Set iff state == 'failed'. */
             error?: components["schemas"]["JobError"] | null;
         };
@@ -3765,10 +3813,17 @@ export interface components {
          *     exists here, so none of it is on this model — ⛔ in particular there is no `orientation` and no
          *     `chip_electrode`, because the electrode is not in doubt.
          *
-         *     ⚠️ **`health` IS NOT DECORATION.** The published MaxWell decoder does not reconstruct this
-         *     project's files (measured: 98% of samples come back as one value), and a railed window drawn
-         *     without that caveat looks **exactly** like a genuinely silent electrode. The spike ticks stay
-         *     correct either way and are drawn either way.
+         *     ⚠️ **`health` IS NOT DECORATION.** On some of this project's files the published MaxWell decoder
+         *     returns a rail (measured 2026-08-15 across his five imported recordings: 000690/691/692 come back
+         *     94-100% one repeated value, while 000688 and 000689 decode cleanly at 1.1% and 4.4%). A railed
+         *     window drawn without that caveat looks **exactly** like a genuinely silent electrode. The spike
+         *     ticks stay correct either way and are drawn either way.
+         *
+         *     ⭐ **TWO RESOLUTIONS, AND THE CALLER SAYS WHICH IT CAN DRAW.** Without `max_points` this is raw
+         *     samples and `MAX_TRACE_SECONDS` still caps the window. With `max_points` the server reduces to a
+         *     min/max envelope — `min_uv`/`max_uv` instead of `trace_uv` — and **the cap does not apply**, so a
+         *     whole 300 s recording is one small response. `resolution` says which arrived; never guess from
+         *     which array is populated.
          */
         MeaChannelTrace: {
             /** Analysis Id */
@@ -3817,6 +3872,29 @@ export interface components {
              * @description The stored waveform in µV. ⚠️ Judge it with `health` before believing it; empty when the raw stream could not be decoded at all (`decode_error` says so).
              */
             trace_uv?: number[];
+            /**
+             * Resolution
+             * @description ⭐ Which picture came back. `samples` — `trace_uv` holds real samples, one per stored sample. `envelope` — `min_uv`/`max_uv` hold the lowest and highest value in each column, and `trace_uv` is empty. ⛔ Read this field; do not infer it from which array is non-empty, because a genuinely empty window populates neither.
+             * @default samples
+             * @enum {string}
+             */
+            resolution: "samples" | "envelope";
+            /**
+             * Min Uv
+             * @description Envelope only: the lowest µV in each column, evenly spaced across `[t0_s, t1_s)`. Same length as `max_uv`.
+             */
+            min_uv?: number[];
+            /**
+             * Max Uv
+             * @description Envelope only: the highest µV in each column. ⭐ Min/max, never every n-th sample — a spike is 5-16 samples wide at 20 kHz and sub-sampling would draw a calm line over a burst. Whatever the eye sees here, a spike is never invisible.
+             */
+            max_uv?: number[];
+            /**
+             * Max Window S
+             * @description ⚠️ The widest window `resolution: samples` can return — a transport limit of this build (30 s at 20 kHz is 600k JSON numbers), **not** a fact about anyone's recording. Ask for anything wider with `max_points` and you get an envelope instead, at any width. Sent so the client never writes the number down.
+             * @default 0
+             */
+            max_window_s: number;
             health?: components["schemas"]["TraceHealthPayload"] | null;
             /**
              * Spikes
@@ -3831,7 +3909,7 @@ export interface components {
             n_spikes_total: number;
             /**
              * First Spike S
-             * @description When this pad first fired. ⭐ The UI opens its window HERE rather than at t=0: a 300 s recording stepped a second at a time would take 200 clicks to reach the activity, and a dead opening window makes a working electrode look broken.
+             * @description When this pad first fired. ⚠️ Server-supplied and free, but the `Analyze MEA` screen no longer opens here — it opens at the start, showing the whole recording, so there is no empty stretch to skip past (his ruling, 2026-08-15).
              */
             first_spike_s?: number | null;
             /**
@@ -4033,6 +4111,90 @@ export interface components {
              * @default 0
              */
             bytes: number;
+        };
+        /**
+         * MeaEnvelopeResult
+         * @description `job.result` of a `mea_envelope` job — one recording has been read end to end and reduced.
+         *
+         *     ⭐ **WHY THIS IS A JOB.** MaxWell chunks the raw stream across every channel at once, so reading
+         *     one channel's full length decompresses all of them: measured 12-23 s for one channel against
+         *     19-32 s for all of them, and 37-70 s once the exact per-channel health tally is included. Doing
+         *     every channel in one pass is therefore 1.4x the cost of doing one, and it is paid once per
+         *     recording rather than once per click.
+         *
+         *     `built` is False — with no error — when the recording stores no continuous trace at all (an
+         *     ActivityScan). That is a fact about the assay, not a failure.
+         */
+        MeaEnvelopeResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "mea_envelope";
+            /** Analysis Id */
+            analysis_id: string;
+            /** Recording Id */
+            recording_id: string;
+            /**
+             * Built
+             * @default false
+             */
+            built: boolean;
+            /**
+             * N Buckets
+             * @default 0
+             */
+            n_buckets: number;
+        };
+        /**
+         * MeaEnvelopeRow
+         * @description Whether one recording can be shown whole yet.
+         */
+        MeaEnvelopeRow: {
+            /** Recording Id */
+            recording_id: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Ready
+             * @description ⭐ True when the whole recording can be drawn at once. False means only the narrow windows the app can read live are available — never that the recording is broken.
+             */
+            ready: boolean;
+            /**
+             * Job Id
+             * @description The build running for it, if one is.
+             * @default
+             */
+            job_id: string;
+            /**
+             * Pct
+             * @description 0-100 while a build is running.
+             * @default 0
+             */
+            pct: number;
+        };
+        /**
+         * MeaEnvelopeStatus
+         * @description `GET`/`POST /api/mea/{analysis_id}/recordings/envelopes` — the state of the one-off read that
+         *     lets the trace panel show a whole recording, and the way to start it for the ones that lack it.
+         *
+         *     ⭐ **THE BACKFILL EXISTS BECAUSE HE ASKED FOR IT BY NAME** (2026-08-15): *"go ahead and run the
+         *     loader on the MEAs I have already imported."* New recordings get this at import; everything
+         *     already in a project gets it from here.
+         */
+        MeaEnvelopeStatus: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Recordings */
+            recordings?: components["schemas"]["MeaEnvelopeRow"][];
+            /**
+             * Started
+             * @description Job ids started by this call. Empty on a `GET`, and empty on a `POST` when everything was already built.
+             */
+            started?: string[];
         };
         /**
          * MeaOrientation
@@ -8563,6 +8725,70 @@ export interface operations {
             };
         };
     };
+    get_mea_envelopes_api_mea__analysis_id__recordings_envelopes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaEnvelopeStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_mea_envelopes_api_mea__analysis_id__recordings_envelopes_post: {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaEnvelopeStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_mea_recording_api_mea__analysis_id__recordings__recording_id__delete: {
         parameters: {
             query?: never;
@@ -8702,6 +8928,8 @@ export interface operations {
                 channel: number;
                 t0?: number;
                 t1?: number | null;
+                /** @description Reduce to at most this many min/max columns instead of returning raw samples. Lifts the window cap entirely. */
+                max_points?: number | null;
             };
             header?: never;
             path: {
