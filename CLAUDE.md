@@ -93,7 +93,9 @@ src/camea/       the app (one installable package)
   api/           FastAPI + schemas.py (the contract the TS client is generated from)
 web/             the frontend (TS/React/Vite). Feature UIs under web/src/features/.
 tests/           unit · api · slow (the guard) · fixtures/ (a committed ~5.6 MB synthetic dataset)
-docs/            BEHAVIOUR.md (the ~44 rulings) · SPLIT.md · ENGINE_MOVE.md · API.md · FRONTEND.md
+docs/            BEHAVIOUR.md (the ~44 rulings) · MAXWELL.md (the MEA hardware reference —
+                 read before any activity/silence/geometry work) · SPLIT.md · ENGINE_MOVE.md ·
+                 API.md · FRONTEND.md
 workflow/        ⭐ how work gets from an idea to a commit: plans · issues · hunts · said. TRACKED.
 scripts/         the small node tools the workflow runs (claim-number, check-links, ship, …). TRACKED.
 .claude/         slash commands · review subagents · gate hooks. TRACKED (settings.local.json is not).
