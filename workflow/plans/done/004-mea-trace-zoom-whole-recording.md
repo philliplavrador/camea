@@ -1,7 +1,7 @@
 ---
 id: 004
 title: The MEA trace shows the whole recording, and you drag a stretch to zoom into it
-status: active # queued | active | done | abandoned
+status: done # queued | active | done | abandoned
 created: 2026-08-15
 needs: dev server # none | frontend | dev server | engine — which gates this build owes
 blocked-by: none
@@ -282,24 +282,30 @@ once and review caught a second; it does not get deferred.
 
 ## Done when
 
-- [ ] Clicking a pad shows the **whole recording's voltage** in both pictures, with no wait.
-- [ ] Dragging sideways on **either** picture zooms the close-up to that stretch; the strip's
-      rectangle shrinks to match.
-- [ ] A drag wider than 30 s **works** and is not clamped or trimmed.
-- [ ] `← Back` returns to the previous view; `Forward →` returns to the one after; zooming after a
+- [x] Clicking a pad shows the **whole recording's voltage** in both pictures, with no wait.
+- [x] Dragging sideways on **either** picture zooms the close-up to that stretch; the strip's
+      rectangle shrinks to match. *(Both drivable in a browser; e2e covers the close-up.)*
+- [x] A drag wider than 30 s **works** and is not clamped or trimmed. *(A 45 s recording comes back
+      whole with `t1_s > MAX_TRACE_SECONDS` — `tests/api/test_mea_feature.py`.)*
+- [x] `← Back` returns to the previous view; `Forward →` returns to the one after; zooming after a
       Back clears the forward history; `Home` returns to the whole recording and is itself undoable
-      with one Back.
-- [ ] A click (release < 5 px from press) changes nothing and adds no history entry.
-- [ ] The slider, both step buttons and `WINDOW_S` are gone from `MeaTrace.tsx`.
-- [ ] The panel opens at the **start** of the recording — no jump to the first spike.
-- [ ] The five recordings under `p003658-19cc31` get envelopes **without being re-imported**, and
-      the job reports progress rather than blocking.
-- [ ] A newly imported recording has its envelope before the screen is first opened.
-- [ ] The "did not decode" warning still appears immediately on a railed pad, on the page, at
-      **every** zoom level.
-- [ ] The spike ticks still draw at full strength under the close-up when the waveform is dimmed.
-- [ ] Every control is reachable and operable by keyboard, and each new range is announced.
-- [ ] `MeaTracePanel` and the videomosaic electrodes screen are visually unchanged.
+      with one Back. *(21 unit cases + 3 e2e; browser: 180 → 45 → 5.4 → 0.65 s, Home, Back → 0.65 s.)*
+- [x] A click (release < 5 px from press) changes nothing and adds no history entry.
+- [x] The slider, both step buttons and `WINDOW_S` are gone from `MeaTrace.tsx`.
+- [x] The panel opens at the **start** of the recording — no jump to the first spike. *(e2e asserts
+      the readout begins `0.00–`.)*
+- [x] The five recordings under `p003658-19cc31` get envelopes **without being re-imported**, and
+      the job reports progress rather than blocking. *(Run for real, 2026-08-15: all five ready,
+      23.8–33.3 MB each.)*
+- [x] A newly imported recording has its envelope before the screen is first opened.
+- [x] The "did not decode" warning still appears immediately on a railed pad, on the page, at
+      **every** zoom level. *(Driven on 000691: present at 300 s, 60 s, 9 s and 0.63 s, as a
+      `role="status"` with no buttons inside.)*
+- [x] The spike ticks still draw at full strength under the close-up when the waveform is dimmed.
+- [x] Every control is reachable and operable by keyboard, and each new range is announced.
+- [x] `MeaTracePanel` and the videomosaic electrodes screen are visually unchanged. *(Comment-only
+      edit; every new `TraceChart` prop optional. ⚠️ One knowing exception, recorded in that file's
+      header: the spike-density switch is not gated behind a prop and can reach it.)*
 
 ## Verify
 
@@ -333,12 +339,53 @@ Nothing — this lands on `master` and that is all.
   not touched, and no verified anchor is at risk.
 - **Nothing in the engine**, so nothing to re-run.
 
-## Open
+## Open — both closed during the build
 
-- [ ] **Does the taller panel actually fit?** His answer was "let it be taller", judged in preview
-      rather than guessed. If it overflows the right rail at his working size, come back and ask
-      before folding the facts row — do not fold it unilaterally.
-- [ ] **`docs/MAXWELL.md` §6 overstates the decode failure.** It reads as a general fact; measured,
-      **23 of 26 Network recordings decode cleanly (0 % flat channels)** and only 000690/691/692
-      rail. The file header comments in `MeaTrace.tsx` inherit the same overstatement. Correct both
-      in this build — but verify the measurement first rather than trusting the number in this plan.
+- [x] **Does the taller panel actually fit?** **Yes — measured, not guessed.** At 1900×1000,
+      1500×800, 1280×720 and 1100×650 the nav row is fully inside the viewport, the rail is not
+      clipped (`scrollHeight === clientHeight`) and the document does not scroll. His "let it be
+      taller" holds and the facts row does **not** need folding. R47.1 intact.
+- [x] **`docs/MAXWELL.md` §6 overstates the decode failure.** Confirmed and corrected (`0100e25`) —
+      and the plan's own figure was wrong too. Measured exactly, per channel, over the whole of each
+      of his five: 000690/691/692 rail at 96.5 / 100 / 93.9 %, while **000688 (1.1 %) and 000689
+      (4.4 %) decode cleanly**. Corrected in `MAXWELL.md`, `core/mearecording.py`'s header,
+      `api/schemas.py`'s contract note and `MeaTracePanel.tsx`'s header.
+
+## What the review found — six real defects, all fixed before close-out
+
+Four guards ran. `dataset-knowledge-guard` was clean. The rest:
+
+| # | Found by | Defect |
+|---|---|---|
+| 1 | api-contract | A **corrupt envelope cache raised a 500.** `load_envelope` caught three exception types; a file truncated mid-write makes numpy raise `zipfile.BadZipFile`, a plain `Exception`. Now catches `Exception`, verified against truncated/garbage/empty/missing/directory. |
+| 2 | api-contract | **"Read it now" never noticed the job finished** — the POST returns on submit, so the button looked done while the read had barely started, and a minute later the panel still said "not read yet". Now polls and refetches. |
+| 3 | api-contract | `resolution` unset on the `RawUndecodable` arm — reported `samples` for an envelope request. |
+| 4 | api-contract | `MeaEnvelopeStatus.started` claimed more than it did. Reworded. |
+| 5 | frontend | **The strip repainted on every parent render**, including every pointermove of a drag on the *other* chart — the exact defect `TraceChart` records fixing for its own default, reintroduced one level up. |
+| 6 | frontend | **A boundary keypress pushed a duplicate view.** `vs.push` always returns a new stack, so the no-op guard never fired; ArrowLeft on the opening view lit up Back and fetched the identical window. |
+
+The e2e suite separately caught **two more** in already-committed code: a duplicate
+`data-testid="mea-trace-chart"` (two mounts, strict-mode failure — two *pre-existing* assertions
+were already red), and the strip announcing **"0 spikes"** for a pad that fired 1,166 times.
+
+And the API tests caught the last one: the decode warning said *"N% of this recording"* while
+quoting a **window's** figure on the live path. `health_scope` now travels with the payload and the
+sentence names what it measured.
+
+## Not built, and why
+
+- **No e2e for the envelope-cache path or the "Read it now" button.** The committed fixture is 3.0 s
+  at 20 kHz — always inside `LIVE_READ_MAX_SAMPLES`, so the cache is never consulted and the 409
+  never fires. Covered in `tests/api/` instead, where the recording can be made big enough.
+- **No test for the `RawUndecodable` arm.** The synthetic fixture's raw stream reads back as zeros
+  rather than raising; a real undecodable stream needs a real MaxWell file.
+- **The `MeaTracePanel` double-fetch bug is still there**, untouched and deliberately so — it has no
+  coverage, so a fix is unverifiable today. Worth an issue.
+
+## To ask him, now he can use it
+
+1. **Does any of this earn a numbered BEHAVIOUR ruling?** No ruling covers the MEA screen at all,
+   and three candidates already sit unasked (`worklog.md:59-62`). The two new testable patterns here
+   are (a) Home being a *push* so it is undoable with one Back, and (b) drag-to-zoom with a 5 px
+   click threshold that pushes no history. ⛔ Ask with the tool; never mint one unilaterally.
+2. **The close-up opens showing the whole recording** — the one choice made *for* him.
