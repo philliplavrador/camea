@@ -607,6 +607,22 @@ async function openFirstRecording(page: Page, name: string): Promise<string> {
   return id;
 }
 
+/**
+ * Select the first routed pad, by keyboard — the same gesture the "clicking a pad reads it" test
+ * uses, and deliberately not a canvas click: a canvas is the easiest thing in the app to leave
+ * keyboard-dead.
+ *
+ * ⚠️ The `[role="application"]` locator is scoped INSIDE the chip map on purpose. Since 004 the
+ * close-up chart is a second `role="application"` on the same screen, and an unscoped one would be
+ * ambiguous.
+ */
+async function pickFirstPad(page: Page): Promise<void> {
+  await page.getByTestId(TID.meaChipMap).locator('[role="application"]').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByTestId(TID.meaTraceFacts)).toBeVisible({ timeout: SHORT });
+  await expect(page.getByTestId(TID.meaTracePos)).toBeVisible({ timeout: SHORT });
+}
+
 test('picking a recording draws the chip, and the whole chip is in the picture', async ({
   page,
 }) => {
@@ -667,8 +683,15 @@ test('clicking a pad reads it — the electrode is NAMED, and the spikes are dra
     // ⭐ It NAMES the electrode — MaxWell's own id, exact, because the file states it.
     await expect(facts).toContainText('ELECTRODE', { ignoreCase: true });
     await expect(facts).toContainText('CHANNEL', { ignoreCase: true });
-    await expect(page.getByTestId(TID.meaTraceChart)).toBeVisible();
-    await expect(page.getByTestId(TID.meaTraceScrub)).toBeVisible();
+    // ⚠️ Scoped to the close-up deliberately. `mea-trace-chart` IS unique again (the strip carries
+    // `mea-trace-overview-chart`), so a bare locator would pass — but this asserts MORE than the old
+    // line did, not less, and it stays correct if a third chart ever appears on this screen.
+    await expect(page.getByTestId(TID.meaTraceDetail).getByTestId(TID.meaTraceChart)).toBeVisible();
+    // ⛔ **THE SLIDER IS GONE** (004). What sits where the scrubber was is the whole recording on a
+    // strip, and a Back button with nowhere to go yet — disabled, never hidden.
+    await expect(page.getByTestId(TID.meaTraceOverview)).toBeVisible();
+    await expect(page.getByTestId(TID.meaTraceBack)).toBeVisible();
+    await expect(page.getByTestId(TID.meaTraceBack)).toBeDisabled();
   } finally {
     await deleteProject(page, id);
   }
@@ -704,8 +727,9 @@ test('🔴 with no decoder the waveform SAYS SO — and the spike ticks are draw
     // must not be one wrapping this warning.
     await expect(flat.getByRole('button')).toHaveCount(0);
 
-    // The chart is still there, with the ticks on it.
-    await expect(page.getByTestId(TID.meaTraceChart)).toBeVisible();
+    // The chart is still there, with the ticks on it. (Scoped to the close-up for the same reason
+    // as above — 004 mounts `TraceChart`, and its hard-coded testid, twice on this screen.)
+    await expect(page.getByTestId(TID.meaTraceDetail).getByTestId(TID.meaTraceChart)).toBeVisible();
   } finally {
     await deleteProject(page, id);
   }
@@ -775,6 +799,283 @@ test('one recording at a time — opening one replaces the shelf, and Back retur
     await expect(page.getByTestId(TID.meaShelf)).toBeVisible({ timeout: SHORT });
     await expect(page.getByTestId(TID.meaRecording)).toHaveCount(MEA_FIXTURE.count);
     await expect(page.getByTestId(TID.meaChipMap)).toHaveCount(0);
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+// =================================================================================================
+// 6 · the whole recording, and dragging a stretch to zoom into it (plan 004)
+// =================================================================================================
+//
+// ⭐ **HIS WORDS, 2026-08-15:** *"I don't like the slider bar. What I want is the MEA trace … more
+// like the matplotlib … so I have the whole trace, and then I can make a rectangle around the area
+// I want to zoom in, then I can go back."* So the slider went, and what replaced it is two pictures
+// — a strip holding the whole recording, and the close-up under it — with matplotlib's own
+// home/back/forward between them.
+//
+// ⛔ **THE FIXTURE NEVER SHOWS `mea-trace-needs-envelope`, AND THAT IS CORRECT.** The synthetic
+// recording is 60,000 samples at 20 kHz = 3.0 s, so the *whole* recording is well inside the route's
+// live-read budget (`LIVE_READ_MAX_SAMPLES = 200_000`) and is folded to min/max columns straight off
+// the file. The precomputed envelope is what his 300 s recordings need, and there is nothing on a
+// 19 kB fixture that could honestly exercise it. The testid is registered and asserted ABSENT here;
+// the cache path itself belongs to `tests/api/`, where the file can be made big enough to mean it.
+//
+// ⚠️ **THE READOUT IS THE INSTRUMENT.** Every assertion below reads `mea-trace-pos`, which states the
+// range the SERVER ACTUALLY SERVED. Comparing the readout before and after a gesture is the only way
+// to see a zoom from outside a canvas — and it is also the thing he reads, so a test that passes on
+// it is a test of what he can see.
+
+/** The close-up's readout: `0.00–3.00 s of 3 s · 3.00 s wide · 42 spikes in view`. */
+async function posText(page: Page): Promise<string> {
+  return ((await page.getByTestId(TID.meaTracePos).textContent()) ?? '').trim();
+}
+
+/** The `N s wide` out of a readout. Throws rather than returning NaN — a silently-NaN comparison
+ *  passes every `<` it is put in, which is the one way this whole section could pass while broken. */
+function widthOf(readout: string): number {
+  const m = readout.match(/·\s*([\d.]+)\s*s wide/);
+  if (!m) throw new Error(`no width in the readout: ${JSON.stringify(readout)}`);
+  return Number(m[1]);
+}
+
+/** The `of N s` — the recording's own duration, as the panel states it. */
+function durationOf(readout: string): number {
+  const m = readout.match(/\bof\s+([\d.]+)\s*s\b/);
+  if (!m) throw new Error(`no duration in the readout: ${JSON.stringify(readout)}`);
+  return Number(m[1]);
+}
+
+/**
+ * `TraceChart`'s gutters, in CSS px (`TRACE_PAD` in `web/src/core/trace/TraceChart.tsx`). They are
+ * copied rather than imported because importing the component would drag React and a CSS module
+ * into the test runner. ⚠️ A press inside the left gutter is NOT a time and the brush ignores it
+ * outright, so a drag aimed at the raw element box would silently do nothing.
+ */
+const PAD_L = 46;
+const PAD_R = 8;
+
+/**
+ * Drag sideways across one of the two pictures, from `fromFrac` to `toFrac` of its PLOT area.
+ * Real pointer events, moved in steps — the brush watches pointermove, and a single jump is not a
+ * gesture a hand ever makes.
+ */
+async function dragAcross(
+  page: Page,
+  testid: string,
+  fromFrac: number,
+  toFrac: number,
+): Promise<void> {
+  const el = page.getByTestId(testid);
+  await el.scrollIntoViewIfNeeded();
+  const box = await el.boundingBox();
+  if (!box) throw new Error(`${testid} has no box to drag across`);
+  const plotX = box.x + PAD_L;
+  const plotW = box.width - PAD_L - PAD_R;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(plotX + plotW * fromFrac, y);
+  await page.mouse.down();
+  await page.mouse.move(plotX + plotW * (fromFrac + (toFrac - fromFrac) / 2), y, { steps: 5 });
+  await page.mouse.move(plotX + plotW * toFrac, y, { steps: 5 });
+  await page.mouse.up();
+}
+
+/** Wait until the readout is no longer `from` — the view he asked for has been fetched and drawn.
+ *  ⚠️ The close-up refetches on a 90 ms settle, so nothing here may assert synchronously. */
+async function posChangedFrom(page: Page, from: string): Promise<string> {
+  await expect
+    .poll(() => posText(page), { timeout: SHORT, message: 'the view should have changed' })
+    .not.toBe(from);
+  return posText(page);
+}
+
+test('the strip shows the WHOLE recording, and that is where he opens', async ({ page }) => {
+  // ⭐ *"I have the whole trace"* — the first thing on the panel is the whole session, not a keyhole
+  // into it, and the close-up starts showing all of it too. His answer on the opening view was
+  // **open at the start**: no jump to the first spike.
+  const id = await openFirstRecording(page, 'whole recording');
+  try {
+    await pickFirstPad(page);
+
+    const strip = page.getByTestId(TID.meaTraceOverview);
+    await expect(strip).toBeVisible();
+    await expect(strip.getByTestId(TID.meaTraceOverviewChart)).toBeVisible();
+    await expect(page.getByTestId(TID.meaTraceDetail)).toBeVisible();
+    await expect(page.getByTestId(TID.meaTraceNav)).toBeVisible();
+
+    // ⛔ It is showing the recording, not an apology for not having read it — see the section note.
+    await expect(page.getByTestId(TID.meaTraceNeedsEnvelope)).toHaveCount(0);
+    await expect(page.getByTestId(TID.meaTraceError)).toHaveCount(0);
+
+    const pos = await posText(page);
+    // ⭐ The view IS the whole recording: its width is the recording's own duration. Half a second
+    // of slack because the readout prints the duration to whole seconds (`toFixed(0)`).
+    expect(Math.abs(widthOf(pos) - durationOf(pos))).toBeLessThanOrEqual(0.5);
+    // ...and it starts at the beginning. ⛔ The auto-jump to the first spike was deleted.
+    expect(pos).toMatch(/^0\.00[–-]/);
+
+    // Nowhere to go back to yet, and the button says so by being disabled rather than absent.
+    await expect(page.getByTestId(TID.meaTraceBack)).toBeDisabled();
+    await expect(page.getByTestId(TID.meaTraceForward)).toBeDisabled();
+    await expect(page.getByTestId(TID.meaTraceHome)).toBeEnabled();
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('dragging a stretch of the close-up zooms into it', async ({ page }) => {
+  // ⭐ *"I can make a rectangle around the area I want to zoom in"* — the gesture IS the feature.
+  const id = await openFirstRecording(page, 'drag to zoom');
+  try {
+    await pickFirstPad(page);
+    const before = await posText(page);
+
+    await dragAcross(page, TID.meaTraceDetail, 0.2, 0.7);
+
+    const after = await posChangedFrom(page, before);
+    // 🔴 Strictly narrower — the whole point. A drag that widened, or that snapped to something
+    // fixed, would still "change" the readout, so the comparison is on the width itself.
+    expect(widthOf(after)).toBeLessThan(widthOf(before));
+    // ⛔ And the recording did not change under him: the denominator is the same.
+    expect(durationOf(after)).toBe(durationOf(before));
+    // The strip stays on the WHOLE recording — it is a place-finder, not a second close-up.
+    // ⛔ And it does NOT claim a spike count. It is given no spikes because it draws none, so the
+    // chart's default label would announce "0 spikes" for a pad that fired thousands of times —
+    // laundering *unreadable* into *silent* on the one screen built to refuse exactly that.
+    const stripLabel = page
+      .getByTestId(TID.meaTraceOverview)
+      .getByTestId(TID.meaTraceOverviewChart);
+    await expect(stripLabel).toHaveAttribute(
+      'aria-label',
+      new RegExp(`whole recording, 0 to ${durationOf(before).toFixed(0)} seconds`, 'i'),
+    );
+    await expect(stripLabel).not.toHaveAttribute('aria-label', /\bspikes\b/);
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('Back returns exactly where he was, and only then does Forward light up', async ({ page }) => {
+  // ⭐ *"then I can go back"*. matplotlib's history, ported — `back`/`forward` clamp and never wrap,
+  // and the buttons are DISABLED rather than hidden so the panel does not jump under the pointer.
+  const id = await openFirstRecording(page, 'back and forward');
+  try {
+    await pickFirstPad(page);
+    const back = page.getByTestId(TID.meaTraceBack);
+    const forward = page.getByTestId(TID.meaTraceForward);
+    const whole = await posText(page);
+
+    await dragAcross(page, TID.meaTraceDetail, 0.15, 0.6);
+    const zoomed = await posChangedFrom(page, whole);
+    await expect(back).toBeEnabled();
+    await expect(forward).toBeDisabled();
+
+    await back.click();
+    // 🔴 EXACTLY where he was — the same string, not merely a wider view.
+    await expect
+      .poll(() => posText(page), { timeout: SHORT })
+      .toBe(whole);
+    await expect(forward).toBeEnabled();
+    await expect(back).toBeDisabled();
+
+    // ...and Forward is the other half of the same promise.
+    await forward.click();
+    await expect
+      .poll(() => posText(page), { timeout: SHORT })
+      .toBe(zoomed);
+    await expect(forward).toBeDisabled();
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('a keyboard-only zoom says what it did', async ({ page }) => {
+  // ⚠️ **THIS APP HAS SHIPPED A KEYBOARD-DEAD CANVAS ONCE.** The close-up takes focus and `+`/`-`
+  // zoom (R12.6 / R13.7 — the house meanings, not a third vocabulary), and because a canvas tells a
+  // screen reader nothing, each new range is announced in a visually hidden `role="status"`.
+  //
+  // ⚠️ The announcement is made when the DATA LANDS, not on the keystroke: the spike count is not
+  // known until the server answers, and announcing early said "0 spikes in view" every time — false
+  // in exactly the place a sighted user reads it straight off the picture. So this waits.
+  const id = await openFirstRecording(page, 'keyboard zoom');
+  try {
+    await pickFirstPad(page);
+    const said = page.getByTestId(TID.meaTraceSaid);
+    await expect(said).toHaveAttribute('role', 'status');
+    const before = ((await said.textContent()) ?? '').trim();
+
+    await page.getByTestId(TID.meaTraceDetail).focus();
+    await expect(page.getByTestId(TID.meaTraceDetail)).toBeFocused();
+    await page.keyboard.press('+');
+
+    await expect
+      .poll(() => said.textContent().then((t) => (t ?? '').trim()), {
+        timeout: SHORT,
+        message: 'the new range should be announced once its data lands',
+      })
+      .not.toBe(before);
+    const now = ((await said.textContent()) ?? '').trim();
+    expect(now).not.toBe('');
+    expect(now).toContain('spikes in view');
+    // It announces the view he is actually on — the same range the readout states.
+    expect(now).toBe(await posText(page));
+    // ...and `+` meant zoom IN.
+    expect(widthOf(now)).toBeLessThan(widthOf(before));
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('a plain click is not a zoom, and leaves no history behind it', async ({ page }) => {
+  // 🔴 matplotlib's threshold and matplotlib's reason: a release within 5 px of the press is a
+  // click, refused outright. Without it every stray click would bury the place he was in a pile of
+  // identical history entries — and the Back button would stop meaning anything.
+  const id = await openFirstRecording(page, 'click is not a zoom');
+  try {
+    await pickFirstPad(page);
+    const before = await posText(page);
+
+    const el = page.getByTestId(TID.meaTraceDetail);
+    await el.scrollIntoViewIfNeeded();
+    const box = await el.boundingBox();
+    if (!box) throw new Error('the close-up has no box to click');
+    // Mid-plot, well clear of the left number gutter — a press THERE is ignored for a different
+    // reason, and would pass this test without proving anything.
+    await page.mouse.click(box.x + PAD_L + (box.width - PAD_L - PAD_R) / 2, box.y + box.height / 2);
+
+    // Longer than the close-up's 90 ms settle: if a fetch had been queued it would have landed.
+    await page.waitForTimeout(500);
+    expect(await posText(page)).toBe(before);
+    // ⛔ And nothing was PUSHED — a history entry that merely looked identical would still light
+    // Back up, and this is the assertion that can tell those two apart.
+    await expect(page.getByTestId(TID.meaTraceBack)).toBeDisabled();
+    await expect(page.getByTestId(TID.meaTraceForward)).toBeDisabled();
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
+test('Home is itself undoable — one Back and he has his stretch again', async ({ page }) => {
+  // 🔴 **THE ONE THAT LOOKS LIKE A BUG AND IS NOT.** `home` PUSHES the first view rather than
+  // rewinding to it (matplotlib's `_Stack.home`), so a mis-aimed "Whole recording" never costs him
+  // the stretch he spent time finding. It is the single most important property of the view stack.
+  const id = await openFirstRecording(page, 'home is undoable');
+  try {
+    await pickFirstPad(page);
+    const whole = await posText(page);
+
+    await dragAcross(page, TID.meaTraceDetail, 0.25, 0.75);
+    const zoomed = await posChangedFrom(page, whole);
+
+    await page.getByTestId(TID.meaTraceHome).click();
+    await expect
+      .poll(() => posText(page), { timeout: SHORT })
+      .toBe(whole);
+
+    await page.getByTestId(TID.meaTraceBack).click();
+    await expect
+      .poll(() => posText(page), { timeout: SHORT, message: 'Home must be undoable with one Back' })
+      .toBe(zoomed);
   } finally {
     await deleteProject(page, id);
   }

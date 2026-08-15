@@ -140,8 +140,33 @@ export const TID = {
   meaChipLegendSilent: 'mea-chip-legend-silent', // ⭐ the hollow ring, and what it MEANS
   meaTraceIdle: 'mea-trace-idle', //        "click a pad on the chip"
   meaTraceFacts: 'mea-trace-facts', //      electrode · channel · position · spikes
-  meaTraceChart: 'mea-trace-chart', //      shared with the video pipeline (core/trace)
-  meaTraceScrub: 'mea-trace-scrub',
+  meaTraceChart: 'mea-trace-chart', //      the CLOSE-UP's canvas; shared with the video pipeline
+  //                                        (core/trace), which is why it keeps the plain name.
+  meaTraceOverviewChart: 'mea-trace-overview-chart', // the STRIP's canvas.
+  //                                        ⚠️ It has its own id because `MeaTrace` mounts
+  //                                        `TraceChart` twice and one id across both made every bare
+  //                                        `mea-trace-chart` locator a strict-mode failure — it broke
+  //                                        two assertions here before anyone noticed. `TraceChart`
+  //                                        takes an optional `testId`; `MeaTracePanel` passes none
+  //                                        and is unaffected.
+  // ── the whole recording, and dragging a stretch to zoom into it (004) ───────
+  // ⛔ `mea-trace-scrub` is GONE with the 1 s window and its slider. His ruling, 2026-08-15: *"I
+  //    don't like the slider bar."* The strip below is NOT a scrubber and must not grow a handle.
+  meaTraceOverview: 'mea-trace-overview', // the strip: the WHOLE recording, with a box round the
+  //                                        stretch the close-up is showing. Draggable, x only.
+  meaTraceDetail: 'mea-trace-detail', //    the close-up. tabIndex=0, role=application — it takes
+  //                                        the keyboard (+/- zoom, arrows, Backspace, Home).
+  meaTraceNav: 'mea-trace-nav', //          the row where the slider used to be
+  meaTraceHome: 'mea-trace-home', //        "Whole recording" — ⭐ itself undoable with one Back
+  meaTraceBack: 'mea-trace-back', //        "← Back"; DISABLED, never hidden, at the top of history
+  meaTraceForward: 'mea-trace-forward', //  "Forward →"; disabled until a Back has been taken
+  meaTracePos: 'mea-trace-pos', //          the readout: "0.00–3.00 s of 3 s · 3.00 s wide · N spikes
+  //                                        in view" — the range the SERVER SERVED, not the one asked
+  meaTraceSaid: 'mea-trace-said', //        visually hidden role=status: a keyboard zoom is announced
+  meaTraceNeedsEnvelope: 'mea-trace-needs-envelope', // ⭐ a fact + an offer, not an error: the
+  //                                        one-off whole-recording read has not been done yet.
+  //                                        ⚠️ The e2e fixture never reaches it — 3.0 s at 20 kHz is
+  //                                        60k samples, well under the route's live-read budget.
   meaTraceFlat: 'mea-trace-flat', //        🔴 LIVE WARNING: the waveform did not decode
   meaTraceUndecodable: 'mea-trace-undecodable', // 🔴 …or could not be read at all
   meaTraceNoSpikes: 'mea-trace-no-spikes', // ⭐ a fact, NOT a warning — no neuron was near it

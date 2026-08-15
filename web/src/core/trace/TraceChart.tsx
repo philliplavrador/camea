@@ -70,6 +70,21 @@ export interface TraceChartProps {
   bandMinPx?: number;
   /** Drawn instead of the waveform when there is nothing to draw — e.g. "still reading". */
   placeholder?: string;
+  /**
+   * ⚠️ **Override when a screen mounts this more than once.** The testid used to be hard-coded, which
+   * was fine while every screen had exactly one chart; `MeaTrace` now mounts two, and a duplicate
+   * testid makes every bare `getByTestId('mea-trace-chart')` a strict-mode failure — it broke two
+   * existing assertions in `analyze-mea.spec.ts` before anyone noticed. Defaults to the original, so
+   * `MeaTracePanel` is untouched.
+   */
+  testId?: string;
+  /**
+   * ⚠️ **Say what was actually drawn.** The default label states the spike count, which is a lie on a
+   * chart that was given no spikes because its caller draws none — and on this screen, "0 spikes"
+   * announced to a screen reader is exactly the laundering of *unreadable* into *silent* that the
+   * whole panel exists to refuse. A caller that withholds data must describe its own picture.
+   */
+  ariaLabel?: string;
 }
 
 export function TraceChart({
@@ -85,6 +100,8 @@ export function TraceChart({
   band = null,
   bandMinPx = 0,
   placeholder = '',
+  testId = 'mea-trace-chart',
+  ariaLabel = '',
 }: TraceChartProps): React.JSX.Element {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
@@ -322,9 +339,12 @@ export function TraceChart({
       ref={ref}
       className={styles.canvas}
       style={{ height }}
-      data-testid="mea-trace-chart"
+      data-testid={testId}
       role="img"
-      aria-label={`Voltage trace from ${t0.toFixed(2)} to ${t1.toFixed(2)} seconds, ${spikes.length} spikes`}
+      aria-label={
+        ariaLabel ||
+        `Voltage trace from ${t0.toFixed(2)} to ${t1.toFixed(2)} seconds, ${spikes.length} spikes`
+      }
     />
   );
 }

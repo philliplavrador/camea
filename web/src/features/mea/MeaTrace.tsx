@@ -410,6 +410,17 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
                 spikes={[]}
                 suspect={whole.health?.flat ?? false}
                 height={56}
+                // ⚠️ Its own testid: two charts on one screen sharing one makes every bare
+                // `getByTestId('mea-trace-chart')` a strict-mode failure.
+                testId="mea-trace-overview-chart"
+                // ⚠️ And its own label. The default states the spike count, and this chart is
+                // given none because it draws none — so the default would announce "0 spikes" for
+                // a pad that fired thousands of times. On this screen of all screens, that is the
+                // laundering of *unreadable* into *silent* the whole panel exists to refuse.
+                ariaLabel={
+                  `The whole recording, 0 to ${whole.t1_s.toFixed(0)} seconds. ` +
+                  `The stretch shown below is ${view.t0.toFixed(2)} to ${view.t1.toFixed(2)} seconds.`
+                }
                 band={{ t0: view.t0, t1: view.t1 }}
                 // ⚠️ Zoomed deep into a 300 s recording the box is a fraction of a pixel wide. A
                 // "you are here" marker you cannot see is the same as not having one.
