@@ -9,6 +9,8 @@ hard-coded it. So the synthetic chip below is a 7-wide, 4-tall array on a 12.5 �
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -283,6 +285,353 @@ def test_trace_health_passes_a_real_looking_window(tmp_path):
         h = r.trace_health(0)
         assert h.flat is False
         assert h.fill_fraction < 0.2
+
+
+# ── one read instead of two: `trace_window` ─────────────────────────────────────────────────────
+#
+# ⭐ Plan 004's free fix. Every caller that presents a trace honestly needs the waveform AND its
+# health, and `trace()` + `trace_health()` each decompress the window independently. `trace_window`
+# pays once — so the ONE thing these tests have to hold it to is that it did not change the answer.
+
+
+def test_trace_window_is_exactly_trace_and_trace_health_from_a_single_read(tmp_path):
+    """🔴 **THE WHOLE POINT OF IT, AND THE ONLY WAY IT CAN GO WRONG.** It is an optimisation, so a
+    drift between it and the pair it replaces would be invisible on screen and wrong in the data."""
+    d = tmp_path / "Network" / "000123"
+    d.mkdir(parents=True)
+    rng = np.random.default_rng(3)
+    raw = (RAIL + rng.integers(-40, 40, size=(4, 4000))).astype(np.uint16)
+    raw[1, 1500:1508] = 3          # a spike, so the extremes are not all noise
+    p = _write(d / mr.MEA_FILENAME, raw=raw)
+
+    with mr.MeaRecording(p) as r:
+        for ch in (0, 1, 2, 3):
+            for t0, t1 in ((0.0, 1.0), (0.5, 2.25), (3.9, 99.0), (0.0, None)):
+                uv, health = r.trace_window(ch, t0, t1)
+                assert uv.tolist() == r.trace(ch, t0, t1).tolist(), (ch, t0, t1)
+                assert health == r.trace_health(ch, t0, t1), (ch, t0, t1)
+
+
+def test_trace_window_on_an_empty_or_inverted_window_is_empty_and_zeroed(rec):
+    """⚠️ Not an error — an empty window is what a caller gets for asking past the end, and the
+    route turns it into a refusal itself. The health must be zeroed rather than invented."""
+    with mr.MeaRecording(rec) as r:
+        for t0, t1 in ((2.0, 1.0), (5.0, 6.0), (1.0, 1.0)):
+            uv, health = r.trace_window(0, t0, t1)
+            assert uv.size == 0, (t0, t1)
+            assert health == mr.TraceHealth(0, 0, 0.0, 0), (t0, t1)
+            assert health == r.trace_health(0, t0, t1), (t0, t1)
+
+
+def test_health_of_needs_no_file_and_agrees_with_the_reader(rec):
+    """`health_of` is the same arithmetic with the counts already in hand — that is what lets the
+    envelope builder measure a whole recording without a second pass."""
+    counts = np.array([7, 7, 7, 9], dtype=np.uint16)
+    h = mr.health_of(counts)
+    assert (h.n_samples, h.fill_value, h.distinct_values) == (4, 7, 2)
+    assert h.fill_fraction == pytest.approx(0.75)
+    assert mr.health_of(np.empty(0, dtype=np.uint16)) == mr.TraceHealth(0, 0, 0.0, 0)
+    with mr.MeaRecording(rec) as r:
+        assert mr.health_of(np.full(4000, RAIL, dtype=np.uint16)) == r.trace_health(0)
+
+
+# ── the honest thinning: `minmax_columns` ───────────────────────────────────────────────────────
+
+
+def test_minmax_columns_leaves_a_window_narrower_than_the_canvas_untouched():
+    """Fewer values than columns means there is nothing to reduce — and reducing anyway would put
+    a fabricated shape on screen where the real samples fit."""
+    v = np.arange(5, dtype=np.float64)
+    for n in (5, 6, 500):
+        lo, hi = mr.minmax_columns(v, n)
+        assert lo.tolist() == v.tolist()
+        assert hi.tolist() == v.tolist()
+    lo, hi = mr.minmax_columns(np.empty(0, dtype=np.float64), 8)
+    assert lo.size == hi.size == 0
+
+
+def test_minmax_columns_is_amplitude_conservative():
+    """🔴 **A SPIKE MAY NEVER BE THINNED AWAY.** Sub-sampling a 20 kHz stream lands on a 5-16 sample
+    spike roughly never and draws a calm line over a burst. Each column keeps the true extent of its
+    own slice, so the tallest thing in the window is still the tallest thing on screen."""
+    rng = np.random.default_rng(17)
+    v = rng.standard_normal(1000)
+    v[437] = 50.0                      # one sample, far above everything
+    v[811] = -50.0
+
+    lo, hi = mr.minmax_columns(v, 16)
+    assert lo.size == hi.size == 16
+    cut = np.linspace(0, v.size, 17, dtype=np.int64)
+    for j in range(16):
+        seg = v[cut[j]:cut[j + 1]]
+        assert lo[j] == seg.min()
+        assert hi[j] == seg.max()
+    assert hi.max() == 50.0 and lo.min() == -50.0
+    assert np.all(lo <= hi)
+
+
+# ── the whole recording at a glance: the min/max envelope ───────────────────────────────────────
+#
+# ⭐ Plan 004. The `Analyze MEA` panel draws the WHOLE recording, and MaxWell chunks the raw stream
+# across every channel at once — so one channel's full length costs almost what all of them cost.
+# The answer is a single pass, cached. These hold it to the two promises that make such a cache
+# honest: it **brackets** every real sample (nothing can hide between the columns), and it carries
+# its **own** whole-recording health rather than borrowing whatever window happened to be open.
+
+
+def _mixed(n_ch: int = 4, n: int = 4000, seed: int = 5) -> np.ndarray:
+    """A raw block with a different character on every channel, so no one shape can stand in for
+    another: a dead rail, real noise with two spikes, a mostly-railed channel, and a square wave."""
+    rng = np.random.default_rng(seed)
+    raw = np.full((n_ch, n), RAIL, dtype=np.uint16)
+    raw[1] = (RAIL + rng.integers(-60, 60, size=n)).astype(np.uint16)
+    raw[1, 1234] = 3                                   # one sample, right at the bottom
+    raw[1, 2500:2506] = 1200                           # a short burst, right at the top
+    raw[2, : n // 4] = (RAIL + rng.integers(-60, 60, size=n // 4)).astype(np.uint16)
+    raw[3, ::2] = RAIL + 7                             # two values only
+    return raw
+
+
+def _mixed_recording(tmp_path, **kw):
+    d = tmp_path / "Network" / "000123"
+    d.mkdir(parents=True, exist_ok=True)
+    return _write(d / mr.MEA_FILENAME, raw=_mixed(**kw))
+
+
+def test_the_envelope_brackets_every_real_sample(tmp_path):
+    """🔴 **THE HONESTY GUARANTEE.** A spike must never be able to fall outside the extent that gets
+    drawn. Each column's `lo`/`hi` is the true min and max of the samples under it, so every sample
+    of the recording lies inside the picture — whatever the eye can resolve at that width.
+
+    ⚠️ The bucket edges are recomputed here from `n_samples` and `n_buckets` alone. That is not a
+    copy of the implementation: an even split is the only one consistent with the linear time axis
+    the payload promises (`t = bucket / n_buckets * duration_s`)."""
+    raw = _mixed()
+    p = _mixed_recording(tmp_path)
+    n_buckets = 37                                     # deliberately not a divisor of 4000
+
+    with mr.MeaRecording(p) as r:
+        env = r.build_envelope(n_buckets)
+        n = r.info().n_samples
+
+    assert env.n_buckets == n_buckets
+    edges = np.linspace(0, n, n_buckets + 1, dtype=np.int64)
+    for ch in (0, 1, 2, 3):
+        row = env.row_of(ch)
+        assert row is not None
+        for j in range(n_buckets):
+            seg = raw[row, edges[j]:edges[j + 1]]
+            assert seg.size
+            assert env.lo[row, j] <= seg.min(), (ch, j)
+            assert env.hi[row, j] >= seg.max(), (ch, j)
+            assert np.all((seg >= env.lo[row, j]) & (seg <= env.hi[row, j])), (ch, j)
+
+    # ⭐ And stated once more without any edges at all: the extremes of the whole recording survive.
+    for ch in (0, 1, 2, 3):
+        row = env.row_of(ch)
+        assert env.lo[row].min() == raw[row].min()
+        assert env.hi[row].max() == raw[row].max()
+    assert env.lo[env.row_of(1)].min() == 3, "the one-sample trough is still drawn"
+    assert env.hi[env.row_of(1)].max() == 1200, "and so is the burst"
+
+
+def test_the_envelopes_health_is_a_full_reads_health_channel_for_channel(tmp_path):
+    """🔴 **IT MAY NOT BORROW A WINDOW'S NUMBER.** A railed stretch is indistinguishable from a
+    genuinely quiet electrode, and the rail fraction *changes with window length* — so the cache
+    measures the whole recording itself, and must get exactly what a full read would have got.
+
+    ⚠️ `fill_fraction` is stored as float32 to halve the cache, so it is compared at that precision
+    and no coarser. `flat` — the verdict the screen actually shows — must be identical."""
+    p = _mixed_recording(tmp_path)
+    with mr.MeaRecording(p) as r:
+        env = r.build_envelope(37)
+        for ch in (0, 1, 2, 3):
+            cached, full = env.health_of(ch), r.trace_health(ch)
+            assert cached is not None
+            assert cached.n_samples == full.n_samples == r.info().n_samples
+            assert cached.fill_value == full.fill_value, ch
+            assert cached.distinct_values == full.distinct_values, ch
+            assert np.float32(cached.fill_fraction) == np.float32(full.fill_fraction), ch
+            assert cached.flat == full.flat, ch
+
+    # The fixture is worth something only if the four channels disagree about all this.
+    assert env.health_of(0).flat is True and env.health_of(1).flat is False
+    assert env.health_of(0).fill_fraction == 1.0
+    assert env.health_of(3).distinct_values == 2
+    assert env.health_of(9999) is None, "a channel that was never routed has no health"
+
+
+def test_the_envelope_round_trips_through_disk(tmp_path):
+    """Everything the panel draws from has to survive the save — the columns, the channel ids, and
+    the three numbers that turn stored counts back into microvolts and seconds."""
+    p = _mixed_recording(tmp_path)
+    with mr.MeaRecording(p) as r:
+        env = r.build_envelope(64)
+
+    dest = tmp_path / "cache" / mr.ENVELOPE_FILENAME
+    mr.save_envelope(dest, env)
+    assert dest.is_file()
+    back = mr.load_envelope(dest)
+
+    assert back is not None
+    assert back.version == env.version == mr.ENVELOPE_VERSION
+    assert np.array_equal(back.lo, env.lo)
+    assert np.array_equal(back.hi, env.hi)
+    assert back.lo.dtype == env.lo.dtype, "stored unscaled, in the file's own dtype"
+    assert np.array_equal(back.channels, env.channels)
+    assert back.n_samples == env.n_samples == 4000
+    assert back.sampling_hz == env.sampling_hz == FS
+    assert back.lsb_uv == env.lsb_uv
+    assert back.n_buckets == env.n_buckets == 64
+    assert back.duration_s == pytest.approx(4.0)
+    assert np.array_equal(back.fill_value, env.fill_value)
+    assert np.array_equal(back.fill_fraction, env.fill_fraction)
+    assert np.array_equal(back.distinct_values, env.distinct_values)
+    for ch in (0, 1, 2, 3):
+        assert back.health_of(ch) == env.health_of(ch)
+
+
+def test_a_missing_or_foreign_or_stale_cache_is_a_MISS_not_an_ERROR(tmp_path):
+    """⛔ **A CACHE MISS IS NEVER SOMETHING HE HAS TO READ ABOUT.** The answer is a rebuild, so
+    every unusable file has to come back as `None` — including one written by an older Camea, which
+    must be rebuilt rather than reinterpreted."""
+    p = _mixed_recording(tmp_path)
+    with mr.MeaRecording(p) as r:
+        env = r.build_envelope(16)
+
+    assert mr.load_envelope(tmp_path / "never-written.npz") is None
+
+    foreign = tmp_path / "foreign.npz"
+    foreign.write_bytes(b"this is not an npz at all, just some bytes")
+    assert mr.load_envelope(foreign) is None
+
+    stale = tmp_path / "stale.npz"
+    mr.save_envelope(stale, dataclasses.replace(env, version=mr.ENVELOPE_VERSION + 1))
+    assert mr.load_envelope(stale) is None, "a bumped version REBUILDS; it is never reinterpreted"
+
+    fresh = tmp_path / "fresh.npz"
+    mr.save_envelope(fresh, env)
+    assert mr.load_envelope(fresh) is not None, "...and a current one still loads"
+
+
+def test_a_TRUNCATED_cache_is_a_MISS_not_an_ERROR(tmp_path):
+    """⭐ **REGRESSION, 2026-08-15.** A half-written `.npz` does not raise anything in
+    `(OSError, KeyError, ValueError)`: numpy hands the file to `zipfile`, which raises
+    `zipfile.BadZipFile` — a plain `Exception`. Caught narrowly, that escaped as a **500** from
+    `GET /recordings/envelopes` and from the trace route, on a screen whose whole design is to say
+    *"not read yet"* honestly instead.
+
+    ⚠️ `save_envelope` writes `.part` and renames, so Camea itself will not leave one of these —
+    but a full disk, a killed process or a half-copied project folder will. ⛔ Do not narrow the
+    `except` again; this is the test that says so."""
+    p = _mixed_recording(tmp_path)
+    with mr.MeaRecording(p) as r:
+        env = r.build_envelope(16)
+    good = tmp_path / "good.npz"
+    mr.save_envelope(good, env)
+    whole = good.read_bytes()
+
+    for cut in (4, 22, len(whole) // 4, len(whole) // 2, len(whole) - 1):
+        half = tmp_path / f"half{cut}.npz"
+        half.write_bytes(whole[:cut])
+        assert mr.load_envelope(half) is None, cut
+
+    # ...and one that merely *looks* like a zip, which is the other way numpy reaches `zipfile`.
+    looks_like = tmp_path / "looks-like.npz"
+    looks_like.write_bytes(b"PK\x03\x04" + b"nothing else about this is a zip file")
+    assert mr.load_envelope(looks_like) is None
+
+
+def test_the_envelope_window_clamps_to_its_own_buckets_and_honours_max_points(tmp_path):
+    """⚠️ **THE RETURNED TIMES ARE THE BUCKETS ACTUALLY COVERED, NOT WHAT WAS ASKED FOR.** The
+    cache cannot honestly report a finer edge than a bucket, so a caller labels its axis from these
+    — which is only safe if they are always inside the recording."""
+    p = _mixed_recording(tmp_path)
+    with mr.MeaRecording(p) as r:
+        env = r.build_envelope(64)
+    dur = env.duration_s
+
+    for t0, t1, cap in ((-500.0, 9999.0, 20), (0.0, dur, 7), (1.0, 1.5, 4), (99.0, 199.0, 20)):
+        got = env.window(0, t0, t1, cap)
+        assert got is not None, (t0, t1)
+        lo, hi, w0, w1 = got
+        assert lo.size == hi.size, (t0, t1)
+        assert lo.size <= cap, (t0, t1)
+        assert lo.size >= 1, (t0, t1)
+        assert np.all(lo <= hi), (t0, t1)
+        assert 0.0 <= w0 < w1 <= dur, (t0, t1, w0, w1)
+
+    # A cap wider than the cache is not padded — it returns what it has.
+    lo, hi, w0, w1 = env.window(0, 0.0, dur, 10_000)
+    assert lo.size == hi.size == env.n_buckets == 64
+    assert (w0, w1) == (0.0, pytest.approx(dur))
+
+    # ⛔ And a channel that was never routed is `None`, not an empty picture of nothing.
+    assert env.window(9999, 0.0, dur, 20) is None
+
+
+def test_the_envelope_window_comes_back_in_microvolts(tmp_path):
+    """Stored as raw counts and scaled on the way out — so the cache is half the size and exactly
+    reversible. `lsb_uv` is 1.0 on this fixture, so a scale that was dropped would still show; the
+    check that catches it is against the real samples."""
+    raw = _mixed()
+    p = _mixed_recording(tmp_path)
+    with mr.MeaRecording(p) as r:
+        env = r.build_envelope(64)
+        lsb = r.info().lsb_uv
+
+    lo, hi, _w0, _w1 = env.window(1, 0.0, env.duration_s, 10_000)
+    row = env.row_of(1)
+    assert lo.min() == pytest.approx(raw[row].min() * lsb)
+    assert hi.max() == pytest.approx(raw[row].max() * lsb)
+
+
+def test_a_recording_with_no_continuous_trace_is_refused_by_name(tmp_path):
+    """⛔ **A FACT ABOUT THE ASSAY, NOT A FAILURE.** An ActivityScan writes no continuous stream at
+    all, so there is nothing to reduce — and the refusal has to say that rather than read as a
+    broken file. (`start_envelope` turns it into "nothing to do", which is why the words matter.)"""
+    d = tmp_path / "ActivityScan" / "000687"
+    d.mkdir(parents=True)
+    p = _write(d / mr.MEA_FILENAME, n_samples=0, spikes=())
+    with mr.MeaRecording(p) as r:
+        assert r.info().n_samples == 0
+        with pytest.raises(mr.MeaError, match="no continuous trace"):
+            r.build_envelope(64)
+
+
+def test_an_envelope_of_no_buckets_is_refused(rec):
+    with mr.MeaRecording(rec) as r:
+        with pytest.raises(ValueError, match="at least 1"):
+            r.build_envelope(0)
+
+
+def test_the_envelope_never_claims_more_buckets_than_the_recording_has_samples(tmp_path):
+    """⚠️ Asking for more columns than there are samples would leave empty ones, and an empty
+    column has no honest min or max. The count is capped at what the file can fill."""
+    d = tmp_path / "Network" / "000123"
+    d.mkdir(parents=True)
+    p = _write(d / mr.MEA_FILENAME, n_samples=50, spikes=())
+    with mr.MeaRecording(p) as r:
+        env = r.build_envelope(8192)
+    assert env.n_buckets == 50
+    assert env.lo.shape == env.hi.shape == (4, 50)
+
+
+def test_the_builder_reports_progress_and_the_same_answer_whatever_the_block_size(tmp_path):
+    """⚠️ It reads in blocks so a 6-billion-sample file does not have to fit in memory, and the
+    block size is a memory budget — it must not be able to change the picture."""
+    p = _mixed_recording(tmp_path)
+    seen: list[float] = []
+    with mr.MeaRecording(p) as r:
+        one = r.build_envelope(37, progress=seen.append)
+        many = r.build_envelope(37, max_block_values=500)
+
+    assert np.array_equal(one.lo, many.lo)
+    assert np.array_equal(one.hi, many.hi)
+    assert np.array_equal(one.fill_value, many.fill_value)
+    assert np.array_equal(one.distinct_values, many.distinct_values)
+    assert seen and seen == sorted(seen)
+    assert seen[-1] == pytest.approx(1.0), "it finishes at 100 %, so a progress bar can land"
 
 
 # ── the lamp episodes ───────────────────────────────────────────────────────────────────────────

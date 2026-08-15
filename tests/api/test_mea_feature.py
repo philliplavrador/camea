@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import err, store_dir, store_entries
+from .conftest import err, run_job, store_dir, store_entries
 
 pytest.importorskip("h5py")
 
@@ -933,3 +933,299 @@ def test_a_file_whose_CHIP_LAYOUT_cannot_be_derived_is_refused_not_a_500(client,
         assert "one array row" in err(r)["message"], route
         assert "not a MaxLab recording" not in err(r)["message"], route
         assert "chip layout" in err(r)["message"], route
+
+
+# =================================================================================================
+# Plan 004 — the WHOLE recording in one picture: `max_points`, and the cache behind it
+# =================================================================================================
+#
+# ⭐ **HIS RULING, 2026-08-15: *"make it so it can go beyond the 30 sec limit"*, and the answer is a
+# SMALLER payload, not a bigger one.** `MAX_TRACE_SECONDS` stays at 30 and keeps governing
+# raw-sample requests; a caller that says how many columns it can draw gets a min/max envelope
+# instead, at any width. So there are now two contracts on one route, and the first of them must not
+# have moved: every existing test above calls it without `max_points` and is untouched, on purpose.
+#
+# ⛔ **AND NOTHING HERE WRITES 30 DOWN ON THE CLIENT'S BEHALF.** `max_window_s` is on the payload;
+# these tests read the constant off the route rather than repeating the number (I1 in miniature).
+
+
+def _trace(client, aid: str, rid: str, **params) -> dict:
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace", params=params)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _envelope_rows(client, aid: str) -> list[dict]:
+    r = client.get(f"/api/mea/{aid}/recordings/envelopes")
+    assert r.status_code == 200, r.text
+    return r.json()["recordings"]
+
+
+def _envelopes_settled(client, aid: str, tries: int = 500) -> list[dict]:
+    """The envelope list once no build is running. ⚠️ Polls rather than sleeps, same reason as
+    `_settled` — and it is needed at all because **import starts one build per recording**, so a
+    test that wants to observe the un-built state has to wait for those to stop first."""
+    import time
+
+    rows: list[dict] = []
+    for _ in range(tries):
+        rows = _envelope_rows(client, aid)
+        if not any(x["job_id"] for x in rows):
+            return rows
+        time.sleep(0.02)
+    raise AssertionError(f"envelope builds never settled: {[x['job_id'] for x in rows]}")
+
+
+def _drop_envelopes(folder: Path) -> int:
+    """Delete every cached envelope in a project. -> how many went.
+
+    ⭐ **SAFE, AND THAT IS THE POINT OF THE FORMAT.** It is a cache, not data: nothing he authored
+    is in it and the only cost of losing one is a rebuild. It is also the only way a test can see
+    the `ready: false` state at all, because the import already built them."""
+    from camea.core.mearecording import ENVELOPE_FILENAME
+
+    gone = list(Path(folder).rglob(ENVELOPE_FILENAME))
+    for p in gone:
+        p.unlink()
+    return len(gone)
+
+
+@pytest.fixture()
+def slow_clock(measynth, monkeypatch):
+    """The synthetic recorder, clocked at 1 kHz instead of 20 kHz. -> the module.
+
+    ⚠️ Purely so a recording **longer than `MAX_TRACE_SECONDS`** costs kilobytes: proving the 30 s
+    clamp needs a recording longer than 30 s, and 30 s at 20 kHz is 600k JSON numbers in one
+    response. ⛔ It is also a second guard on I1 — nothing may quietly assume MaxWell's rate."""
+    monkeypatch.setattr(measynth, "FS_HZ", 1000.0)
+    return measynth
+
+
+def _long_recording(client, mod, tmp_path, *, seconds: float, name: str) -> tuple[str, str, Path]:
+    """A project holding one recording `seconds` long. -> `(analysis_id, recording_id, folder)`."""
+    p = mod.write_recording(tmp_path / name / "Network" / "000010" / "data.raw.h5",
+                            n_samples=int(round(seconds * mod.FS_HZ)))
+    a = _create(client, name, paths=[p.as_posix()])
+    aid = a["analysis_id"]
+    return aid, _settled(client, aid)[0]["id"], Path(a["folder"])
+
+
+# ---- the old contract, unmoved ------------------------------------------------------------------
+def test_the_trace_route_without_max_points_is_exactly_what_it_always_was(client, slow_clock,
+                                                                         tmp_path):
+    """🔴 **THE HALF THAT MAY NOT MOVE.** Raw samples, `resolution: "samples"`, and a window wider
+    than the cap **silently clamped** rather than refused — the videomosaic sibling still does the
+    same thing and every caller written before today relies on it.
+
+    ⚠️ The clamp is silent by design, which is exactly why the client must label its axis from the
+    returned `t0_s`/`t1_s` and never from what it asked for. This asserts the returned pair."""
+    from camea.features.mea.routes import MAX_TRACE_SECONDS
+
+    aid, rid, _folder = _long_recording(client, slow_clock, tmp_path,
+                                        seconds=45.0, name="unclamped")
+    body = _trace(client, aid, rid, channel=0, t0=0.0, t1=9999.0)
+
+    assert body["resolution"] == "samples"
+    assert body["min_uv"] == [] and body["max_uv"] == []
+    assert body["duration_s"] == pytest.approx(45.0)
+    assert body["t0_s"] == 0.0
+    assert body["t1_s"] == pytest.approx(MAX_TRACE_SECONDS), "⛔ silently clamped, not refused"
+    assert body["t1_s"] < body["duration_s"], "the fixture must outlast the cap or this proves nothing"
+    assert len(body["trace_uv"]) == int(round(MAX_TRACE_SECONDS * body["sampling_hz"]))
+    assert body["health"] is not None
+
+
+def test_max_window_s_is_on_the_payload_so_the_client_never_writes_30_down(client, session):
+    """⛔ **I1 IN MINIATURE.** A transport limit of this build, not a fact about anyone's recording —
+    and a number the frontend must read rather than repeat. It is on the payload at both
+    resolutions, and on the "never recorded" answer too, because the client reads it once."""
+    from camea.features.mea.routes import MAX_TRACE_SECONDS
+
+    aid, rid = _opened(client, session)
+    for params in ({"channel": 0}, {"channel": 0, "max_points": 200}, {"channel": 9999}):
+        body = _trace(client, aid, rid, **params)
+        assert body["max_window_s"] == pytest.approx(MAX_TRACE_SECONDS), params
+
+
+# ---- the new contract: a reduced picture, at any width -------------------------------------------
+def test_max_points_returns_an_envelope_and_the_30_s_ceiling_stops_applying(client, slow_clock,
+                                                                           tmp_path):
+    """⭐ **THE HEADLINE.** *"make it so it can go beyond the 30 sec limit."* A 45 s window comes
+    back whole — as `min_uv`/`max_uv` columns rather than 45,000 samples — and `t1_s` is the end of
+    the recording, not `t0 + 30`."""
+    from camea.features.mea.routes import MAX_TRACE_SECONDS
+
+    aid, rid, _folder = _long_recording(client, slow_clock, tmp_path, seconds=45.0, name="whole")
+    body = _trace(client, aid, rid, channel=0, t0=0.0, t1=9999.0, max_points=600)
+
+    assert body["resolution"] == "envelope"
+    assert body["trace_uv"] == [], "⛔ never both — `resolution` says which arrived"
+    assert body["min_uv"] and body["max_uv"]
+    assert len(body["min_uv"]) == len(body["max_uv"]) <= 600
+    assert all(lo <= hi for lo, hi in zip(body["min_uv"], body["max_uv"], strict=True))
+    assert body["t0_s"] == 0.0
+    assert body["t1_s"] == pytest.approx(45.0)
+    assert body["t1_s"] > MAX_TRACE_SECONDS, "⭐ the cap did NOT apply"
+    assert body["health"] is not None, "R3.8 — the warning survives every zoom level"
+    assert body["spikes"] is not None
+
+
+def test_a_narrow_window_with_max_points_still_says_envelope(client, session):
+    """⚠️ `resolution` is what the caller asked for, not what the server happened to read. A window
+    short enough to read live is still reduced and still labelled `envelope`, so a chart never has
+    to guess which pair of arrays to draw from."""
+    aid, rid = _opened(client, session)
+    body = _trace(client, aid, rid, channel=0, t0=0.0, t1=0.05, max_points=4096)
+    assert body["resolution"] == "envelope"
+    assert body["trace_uv"] == []
+    assert len(body["min_uv"]) == len(body["max_uv"])
+    assert body["min_uv"], "a real window returns real columns"
+
+
+def test_max_points_must_be_positive(client, session):
+    """⛔ Zero columns is not a picture. Refused by the route's own declaration (`gt=0`), so it
+    never reaches the reducer as a division by nothing."""
+    aid, rid = _opened(client, session)
+    for bad in (0, -1, -600):
+        r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace",
+                       params={"channel": 0, "max_points": bad})
+        assert r.status_code == 422, (bad, r.text)
+        assert err(r)["code"] == "bad_request", bad
+
+
+def test_an_unrouted_channel_is_a_FACT_at_either_resolution(client, session):
+    """⭐ The plan 003 answer, held at the new resolution too: *"never recorded"* is the ordinary
+    answer on a MaxWell and must stay a 200 with `recorded: false` — ⛔ never a 404, and never an
+    empty envelope that would draw as a flat line at zero."""
+    aid, rid = _opened(client, session)
+    for params in ({}, {"max_points": 500}):
+        r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace",
+                       params={"channel": 9999, **params})
+        assert r.status_code == 200, (params, r.text)
+        body = r.json()
+        assert body["recorded"] is False, params
+        assert body["electrode"] is None, params
+        assert body["trace_uv"] == [] and body["min_uv"] == [] and body["max_uv"] == [], params
+        assert body["spikes"] == [], params
+
+
+# ---- the cache: what makes a whole 300 s recording affordable ------------------------------------
+def test_a_window_too_wide_to_read_live_comes_from_the_cache(client, slow_clock, tmp_path):
+    """⭐ **WHY THE PRECOMPUTE EXISTS AT ALL.** MaxWell chunks the raw stream across every channel,
+    so reading one channel end to end costs 12-23 s on his files — not something a click can pay
+    for. Past `LIVE_READ_MAX_SAMPLES` the answer comes from the cached envelope instead.
+
+    ⚠️ And when there is no cache the route **says so by name** rather than blocking for half a
+    minute: a 409 that names what it needs, so the screen can offer to build it."""
+    from camea.features.mea.routes import LIVE_READ_MAX_SAMPLES
+
+    # ⛔ Derived from the route's own budget, never written down: long enough that the whole
+    # recording cannot be read live, and not one sample longer.
+    seconds = (LIVE_READ_MAX_SAMPLES * 1.25) / slow_clock.FS_HZ
+    aid, rid, folder = _long_recording(client, slow_clock, tmp_path, seconds=seconds, name="wide")
+    _envelopes_settled(client, aid)
+    assert _drop_envelopes(folder) == 1
+
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/trace",
+                   params={"channel": 0, "t0": 0.0, "t1": 9999.0, "max_points": 500})
+    assert r.status_code == 409, r.text
+    assert err(r)["code"] == "refused"
+    assert err(r)["detail"]["needs"] == "envelope", "it names WHAT is missing, not just that it is"
+
+    # ⭐ Build it — and the same request now answers, from the cache, in one small response.
+    started = client.post(f"/api/mea/{aid}/recordings/envelopes").json()["started"]
+    assert len(started) == 1
+    run_job(client, started[0])
+
+    body = _trace(client, aid, rid, channel=0, t0=0.0, t1=9999.0, max_points=500)
+    assert body["resolution"] == "envelope"
+    assert body["trace_uv"] == []
+    assert 0 < len(body["min_uv"]) == len(body["max_uv"]) <= 500
+    assert all(lo <= hi for lo, hi in zip(body["min_uv"], body["max_uv"], strict=True))
+    # ⚠️ The buckets actually covered — the client labels its axis from THESE, because a cache
+    # cannot honestly report a finer edge than one of its own columns.
+    assert body["t0_s"] >= 0.0
+    assert body["t1_s"] == pytest.approx(body["duration_s"], abs=body["duration_s"] / 100)
+    assert body["health"] is not None, "🔴 R3.8 — the 'did not decode' warning survives out here too"
+
+    # ⚠️ And it is the cache's OWN whole-recording health, so it does not move with the window.
+    narrow = _trace(client, aid, rid, channel=0, t0=0.0, t1=1.0, max_points=500)
+    assert narrow["resolution"] == "envelope"
+    assert narrow["health"]["n_samples"] < body["health"]["n_samples"]
+
+
+# ---- the shelf of envelopes, and the backfill he asked for by name -------------------------------
+def test_the_envelope_list_is_one_row_per_recording_and_says_which_are_ready(client, session):
+    """⭐ **AND A NEWLY IMPORTED RECORDING ALREADY HAS ONE** — his answer on when the one-off read
+    should run was *"when you import"*, so by the time he reaches the screen every pad is instant.
+
+    ⚠️ `ready: false` is an ORDINARY state and never means a recording is broken — it means only
+    the narrow windows the app can read live are available, which is still a working trace panel.
+    The only way to observe it after an import is to take the cache away, which is safe."""
+    a = _create(client, "envelopes", paths=session)
+    aid = a["analysis_id"]
+    _settled(client, aid)
+    rows = _envelopes_settled(client, aid)
+    shelf = _shelf(client, aid)
+
+    assert [x["recording_id"] for x in rows] == [s["id"] for s in shelf]
+    assert [x["label"] for x in rows] == [s["label"] for s in shelf] == ["Network/000001",
+                                                                        "Network/000002"]
+    assert all(x["ready"] for x in rows), "⭐ built at import — nothing to wait for on the screen"
+
+    assert _drop_envelopes(Path(a["folder"])) == len(rows)
+    after = _envelope_rows(client, aid)
+    assert [x["recording_id"] for x in after] == [s["id"] for s in shelf]
+    assert [x["ready"] for x in after] == [False, False]
+    assert all(x["job_id"] == "" and x["pct"] == 0.0 for x in after), "nothing is running"
+
+
+def test_the_backfill_starts_a_job_per_unbuilt_recording_and_nothing_when_they_are_all_built(
+        client, session):
+    """⭐ **HE ASKED FOR THIS BY NAME**: *"go ahead and run the loader on the MEAs I have already
+    imported."* A project that predates the feature catches up from here — as background jobs with
+    progress, never a blocking request — and calling it twice costs nothing."""
+    a = _create(client, "backfill", paths=session)
+    aid = a["analysis_id"]
+    _settled(client, aid)
+    _envelopes_settled(client, aid)
+    assert _drop_envelopes(Path(a["folder"])) == 2
+
+    r = client.post(f"/api/mea/{aid}/recordings/envelopes")
+    assert r.status_code == 200, r.text
+    started = r.json()["started"]
+    assert len(started) == 2
+    for jid in started:
+        res = run_job(client, jid)["result"]
+        assert res["kind"] == "mea_envelope"
+        assert res["built"] is True
+        assert res["n_buckets"] > 0
+        assert res["analysis_id"] == aid
+
+    assert all(x["ready"] for x in _envelope_rows(client, aid))
+
+    again = client.post(f"/api/mea/{aid}/recordings/envelopes")
+    assert again.status_code == 200, again.text
+    assert again.json()["started"] == [], "⭐ everything is built, so it starts nothing"
+    assert all(x["ready"] for x in again.json()["recordings"])
+
+
+def test_the_envelope_routes_refuse_a_project_of_another_task(client, survey_video):
+    """The feature string is the gate here too — ⛔ including on the POST, which starts work."""
+    vm = client.post("/api/videomosaic/projects",
+                     json={"name": "optical", "video_path": survey_video}).json()
+    aid = vm["analysis_id"]
+    for call in (client.get, client.post):
+        r = call(f"/api/mea/{aid}/recordings/envelopes")
+        assert r.status_code == 409, r.text
+        assert "not an Analyze MEA project" in err(r)["message"]
+
+
+def test_the_envelope_list_of_an_empty_project_is_an_empty_list(client):
+    """The empty shelf, one screen further on. Nothing to read, nothing to build, no error."""
+    a = _create(client, "nothing yet")
+    r = client.get(f"/api/mea/{a['analysis_id']}/recordings/envelopes")
+    assert r.status_code == 200, r.text
+    assert r.json()["recordings"] == []
+    assert client.post(f"/api/mea/{a['analysis_id']}/recordings/envelopes"
+                       ).json()["started"] == []
