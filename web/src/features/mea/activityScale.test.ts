@@ -1,9 +1,9 @@
 // The activity colour scale — the one place a rate becomes a colour.
 //
-// ⛔ **These tests pin the PROPERTIES, not the current mapping.** The scale itself is HELD pending
-// `docs/MAXWELL.md` (see `activityScale.ts`), so a test that asserted "0.5 spikes/s is exactly this
-// colour" would have to be rewritten the moment he answers, and would be protecting nothing. What
-// must survive any answer is asserted below: a pad that heard nothing is never a position on the
+// ⛔ **These tests pin the PROPERTIES, not the current mapping.** The scale is the settled rank
+// ramp (his call, re-confirmed 2026-08-15 — see `activityScale.ts`), but a test that asserted
+// "0.5 spikes/s is exactly this colour" would still be pinning a taste, not a rule. What must
+// survive any revisit is asserted below: a pad that heard nothing is never a position on the
 // ramp, the mapping is a pure function of the rate, and the scale comes from the recording.
 
 import { describe, expect, it } from 'vitest';

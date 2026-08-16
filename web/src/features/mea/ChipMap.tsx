@@ -96,8 +96,8 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
 
   // ── the pads, joined to their tallies and coloured ──────────────────────────────────────────
   // ⭐ The scale is built from THIS recording's rates, every time (I1). `activityScale` is the one
-  // place that decides how a rate becomes a colour, and it is HELD pending `docs/MAXWELL.md` —
-  // see its header. Nothing in this file knows the mapping.
+  // place that decides how a rate becomes a colour — the rank ramp, settled (re-confirmed
+  // 2026-08-15; see its header). Nothing in this file knows the mapping.
   const scale = useMemo(
     () => activityScale((activity.pads ?? []).map((p) => p.rate_hz)),
     [activity],
@@ -465,7 +465,7 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
 
 /**
  * The legend. ⭐ **In real units** — spikes per second — with the caveat that equal colour steps
- * are not equal rate steps, because the provisional scale spreads the colours out.
+ * are not equal rate steps, because the rank scale spreads the colours out.
  *
  * ⭐ And the ring is in the legend beside the colours, saying what it means in his terms.
  */

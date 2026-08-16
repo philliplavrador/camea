@@ -12,6 +12,10 @@
 // and 4 chips**, and he was then re-asked with the result. He kept the rank ramp, and declined
 // a histogram beside the chip.
 //
+// ⭐ **RE-CONFIRMED 2026-08-15, WITH THE TOOL: keep the rank ramp exactly as it is.** The hedges
+// that called this mapping "provisional" or "held pending MAXWELL.md" are gone with that answer —
+// nothing about the ramp is pending. If it is ever revisited, that is a NEW question for him.
+//
 // ⚠️ **This is still the only file that knows how a rate becomes a colour, and it must stay that
 // way.** `ChipMap` asks `position()` for a number between 0 and 1, or `null`, and draws that. If
 // the scale is ever revisited, this is again the only edit.
@@ -146,8 +150,7 @@ const LEGEND_STOPS = 5;
  *
  * ⛔ **THE WHOLE SCALE IS DERIVED FROM `rates`, EVERY TIME.** Nothing is remembered between
  * recordings and nothing is declared in advance — open a different file and you get a different
- * scale, because the two chips were not equally busy. See the header for why that matters and
- * for what is still pending.
+ * scale, because the two chips were not equally busy. See the header for why that matters.
  *
  * @param rates spikes-per-second for every **routed** pad, including the ones that heard nothing.
  */
@@ -159,7 +162,7 @@ export function activityScale(rates: readonly number[]): ActivityScale {
   const n = live.length;
   const maxRateHz = n > 0 ? live[n - 1]! : 0;
 
-  // ── PROVISIONAL: "spread them out". Each live pad's position is its place in the order, so the
+  // ── THE RANK RAMP — settled (see the header). Each live pad's position is its place in the order, so the
   // picture uses the full ramp whatever the recording. Ties share a colour (the midpoint of their
   // block), which keeps the mapping a pure function of the rate — two pads with the same rate must
   // never come out different colours just because of their order in the array.

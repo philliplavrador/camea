@@ -647,9 +647,9 @@ test('the legend names the colours in real units, and says what a ring means', a
   try {
     const legend = page.getByTestId(TID.meaChipLegend);
     await expect(legend).toBeVisible();
-    // ⭐ Real units. ⛔ The scale itself is HELD pending `docs/MAXWELL.md`, so this asserts the
-    // legend is in spikes/s and ordered — never a particular colour for a particular rate, which
-    // would have to be rewritten the moment he answers and would be protecting nothing.
+    // ⭐ Real units. The ramp is the settled rank scale (re-confirmed 2026-08-15), and this still
+    // asserts only that the legend is in spikes/s and ordered — a particular colour for a
+    // particular rate would pin a taste, not a rule.
     await expect(legend).toContainText('spikes/s');
     await expect(legend).toContainText('quiet');
     await expect(legend).toContainText('busy');
