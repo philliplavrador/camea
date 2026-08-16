@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// REGIONS — ⭐ **THE LAST STEP, AND THE POINT OF THE WHOLE PIPELINE.** The survey mosaic is built
-// and its electrodes are numbered; now each *fixed-field* calcium recording — a video of ONE parked
-// field — is placed on that mosaic, so the electrodes underneath it can be NAMED. That electrode
-// list is the scientific answer: it is what pairs a calcium trace with the MEA channels that were
-// recording the same cells.
+// REGIONS — ⭐ **THE POINT OF THE WHOLE PIPELINE.** The survey mosaic is built and its electrodes
+// are numbered; now each *fixed-field* calcium recording — a video of ONE parked field — is placed
+// on that mosaic, so the electrodes underneath it can be NAMED. That electrode list is the
+// scientific answer: it is what pairs a calcium trace with the MEA channels that were recording
+// the same cells. (Since 2026-08-15 one step follows: Orientation, where the chip's seating is
+// settled against these located regions — `onNext` is its door.)
 //
 // ⛔ THE SERVER OWNS THE DOCUMENT (same rule as the build and the electrode map, the opposite of the
 // snapshot mosaic). `locate` and `snap` are 202 jobs that SAVE `doc["regions"]` themselves; this
@@ -102,6 +103,12 @@ export interface RegionsStepProps {
   onDocChanged?: (doc: VideoMosaicDocument) => void;
   /** Optional seed from the already-loaded document, so the list paints before the fetch lands. */
   regions?: RegionRecord[];
+  /**
+   * The way on to the Orientation step. The PARENT passes it only while the document actually has
+   * a located region — the same gate the pipeline nav reads — so this button can never open a
+   * step the nav would refuse.
+   */
+  onNext?: () => void;
 }
 
 // ── the step ──────────────────────────────────────────────────────────────────────────────────
@@ -113,6 +120,7 @@ export function RegionsStep({
   payload,
   onDocChanged,
   regions: seed,
+  onNext,
 }: RegionsStepProps) {
   const [served, setServed] = useState<RegionsPayload | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -758,6 +766,16 @@ export function RegionsStep({
                   </div>
                   {job.message && <div className={vm.msg}>{job.message}</div>}
                 </Panel>
+              </div>
+            )}
+
+            {/* The way on comes first once the document has earned it (R47): settling the chip's
+                seating is what the located recordings are FOR, and it has its own step now. */}
+            {onNext && (
+              <div className={vm.railActions}>
+                <Button variant="primary" onClick={onNext} data-testid="vm-to-orientation">
+                  Settle the chip
+                </Button>
               </div>
             )}
 

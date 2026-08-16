@@ -1,0 +1,200 @@
+/*
+ * ORIENTATION — the four seatings as pictures, and the honest test beside them.
+ *
+ * Tokens only, no hex. The state colours mean what they mean everywhere else (BEHAVIOUR §4):
+ * --accent is the thing under judgement (the previewed card, like the sweep cursor), --anchored is
+ * a human signature (the settled seating), --unverified is a machine proposal awaiting a human
+ * (the test's winner) — the same amber the old panel used for its best row.
+ */
+
+/* ⭐ R47 — the step IS the frame (picture + rail), so it takes the height it is given. */
+.step {
+  height: 100%;
+  min-height: 0;
+}
+
+/* The stage overlay: screen space, above the picture, inert. */
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ── the candidate cards — 2×2, each a small picture of one seating ────────── */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.card:hover {
+  border-color: var(--border-strong);
+}
+
+/* The previewed card — the one the big picture is showing right now. */
+.cardOn,
+.cardOn:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.thumb {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--bg);
+}
+
+.thumbImg,
+.thumbLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.thumbLayer {
+  pointer-events: none;
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cardName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* The quiet badges. Settled is a human signature; the test's winner is still only a proposal. */
+.chip {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chipSettled {
+  background: color-mix(in srgb, var(--anchored) 18%, transparent);
+  color: var(--anchored);
+}
+
+.chipWinner {
+  background: color-mix(in srgb, var(--unverified) 16%, transparent);
+  color: var(--unverified);
+}
+
+/* Per-region covered counts — geometry, quiet, one line per recording. */
+.cardFacts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cardFact {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+}
+
+/* ── the test panel (the old orientation panel's ink, kept) ────────────────── */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.settled {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.sub {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+p.sub {
+  margin: 0;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table th {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.table td {
+  color: var(--text-dim);
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.num {
+  color: var(--data);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The proposal row. The "outstanding work" amber, not the green of something certified. */
+.best td {
+  background: color-mix(in srgb, var(--unverified) 12%, transparent);
+  color: var(--text);
+}
+
+/* ── the per-recording breakdown ───────────────────────────────────────────── */
+.breakdown {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.region {
+  width: 100%;
+}
+
+.regionName {
+  margin: 0 0 2px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+}

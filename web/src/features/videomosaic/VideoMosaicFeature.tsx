@@ -45,10 +45,10 @@ import { OutputsDrawer } from '../outputs/OutputsDrawer';
 import { CoverageChoice } from '../electrodes/CoverageChoice';
 import { useCoverageHelp } from '../electrodes/device';
 import { ElectrodePanel, type ElectrodeSelection } from '../electrodes/ElectrodePanel';
-import { MeaOrientationPanel } from '../electrodes/MeaOrientationPanel';
 import { MeaTracePanel } from '../electrodes/MeaTracePanel';
 import { buildElectrodeIndex, electrodeAt, lookupElectrode } from '../electrodes/lookup';
 import { fmtDuration, fmtFps } from './format';
+import { OrientationStep } from './OrientationStep';
 import { PipelineNav, PIPELINE_STEPS, type PipelineStepId } from './PipelineNav';
 import { PreviewViewer } from './PreviewViewer';
 import { RegionsStep } from './RegionsStep';
@@ -149,7 +149,11 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
   // answer — so `reachable` is derived from the DOCUMENT, never from where the user has clicked.
   const toast = useToast();
   const mapped = Boolean(doc?.electrodes?.built_at);
-  const reachable = 1 + (doc?.source ? 1 : 0) + (view ? 1 : 0) + (mapped ? 1 : 0);
+  // Orientation unlocks once a recording is LOCATED (off the document — the locate job saves
+  // `doc.regions` server-side): with nothing placed there is nothing for a seating to sit under.
+  const hasRegion = (doc?.regions ?? []).length > 0;
+  const reachable =
+    1 + (doc?.source ? 1 : 0) + (view ? 1 : 0) + (mapped ? 1 : 0) + (hasRegion ? 1 : 0);
   const [step, setStep] = useState<PipelineStepId | null>(null);
   // Opening a project lands on the furthest step that is ready: the work is where you left it,
   // and a finished pipeline opens on its answer rather than on its first screen.
@@ -766,16 +770,8 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
                   />
                 )}
 
-                {emap && mea?.attached && (
-                  <MeaOrientationPanel
-                    analysisId={analysisId}
-                    orientation={mea.orientation ?? { flip_x: false, flip_y: false, confirmed: false, source: '' }}
-                    hasRegion={(doc?.regions ?? []).length > 0}
-                    onConfirmed={() => {
-                      void getMea(analysisId).then(setMea);
-                    }}
-                  />
-                )}
+                {/* ⛔ The chip-seating question left this rail (his ruling 2026-08-15): it is the
+                    Orientation step now, after Regions, where the four candidates are PICTURES. */}
 
                 {/* ⭐ THE QUESTION COMES FIRST (R45.8). It has its own panel rather than a bare
                     button in the action row, because the two options need room to say what they
@@ -818,6 +814,21 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
           canvas={view.canvas}
           payload={emap}
           onDocChanged={(d: VideoMosaicDocument) => setDoc(d)}
+          // The way on — only offered once the DOCUMENT has a region, the same gate the nav reads.
+          onNext={hasRegion ? () => setStep('orientation') : undefined}
+        />
+      )}
+
+      {/* ── 5 · ORIENTATION — which way round the chip sits (his ruling 2026-08-15) ────────── */}
+      {current === 'orientation' && view && (
+        <OrientationStep
+          analysisId={analysisId}
+          builtAt={view.builtAt}
+          canvas={view.canvas}
+          payload={emap}
+          regions={doc.regions ?? []}
+          mea={mea}
+          onMeaChanged={setMea}
         />
       )}
 

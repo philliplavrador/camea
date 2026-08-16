@@ -16,9 +16,10 @@
 
 import styles from './PipelineNav.module.css';
 
-/** The pipeline, in order. `regions` is the last step Camea does today — the MEA-side pairing
- *  that consumes its output is deliberately not here yet. */
-export const PIPELINE_STEPS = ['survey', 'mosaic', 'electrodes', 'regions'] as const;
+/** The pipeline, in order. `orientation` is the last step Camea does today (his ruling
+ *  2026-08-15: the chip-seating question moved off Electrodes into its own step after Regions) —
+ *  the MEA-side pairing that consumes its output is deliberately not here yet. */
+export const PIPELINE_STEPS = ['survey', 'mosaic', 'electrodes', 'regions', 'orientation'] as const;
 export type PipelineStepId = (typeof PIPELINE_STEPS)[number];
 
 const LABELS: Record<PipelineStepId, string> = {
@@ -26,6 +27,7 @@ const LABELS: Record<PipelineStepId, string> = {
   mosaic: 'Mosaic',
   electrodes: 'Electrodes',
   regions: 'Regions',
+  orientation: 'Orientation',
 };
 
 // ⭐ R47 — WHAT THE STEP IS FOR, in three words. R3 strips explanations off every screen, and it is
@@ -41,6 +43,7 @@ const ACTIONS: Record<PipelineStepId, string> = {
   mosaic: 'build the picture',
   electrodes: 'number the pads',
   regions: 'place your recordings',
+  orientation: 'settle the chip',
 };
 
 export interface PipelineNavProps {
