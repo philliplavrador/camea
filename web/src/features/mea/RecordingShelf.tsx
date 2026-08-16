@@ -23,6 +23,7 @@ import { addRecordings, listRecordings, removeRecording, renameRecording } from 
 import type { MeaShelfEntry } from '../../api';
 import { useToast } from '../../app';
 import { Button, LiveWarning } from '../../design';
+import { formatBytes, formatSeconds } from './format';
 import { ImportRecordings } from './ImportRecordings';
 import { SHELF_SORTS, orderShelf, shelfAssays } from './shelfOrder';
 import type { ShelfSort } from './shelfOrder';
@@ -240,6 +241,17 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
   }
 
   const list = rows ?? [];
+  // ⭐ The one-line summary — facts about the WHOLE shelf, whatever the filter below is showing,
+  // because "how much is on this shelf" must not change when he narrows the view of it. Only the
+  // non-zero parts are said; a row that lost its file contributes nothing (I1 — no zeros).
+  const totalS = list.reduce((n, r) => n + (r.duration_s ?? 0), 0);
+  const totalB = list.reduce((n, r) => n + (r.bytes || 0), 0);
+  const nCopying = list.filter((r) => r.copy_state === 'copying').length;
+  const summaryParts = [
+    totalS > 0 ? formatSeconds(totalS) : null,
+    totalB > 0 ? formatBytes(totalB) : null,
+    nCopying > 0 ? `${nCopying} still copying` : null,
+  ].filter(Boolean);
   const assays = shelfAssays(list);
   // A filter value whose assay left the shelf (its last row was removed) falls back to All —
   // silently, because a select holding a value its menu no longer offers is a stuck control.
@@ -270,9 +282,14 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
         </div>
       ) : (
         <div className={styles.head}>
-          <h2 className={styles.heading}>
-            {list.length} recording{list.length === 1 ? '' : 's'}
-          </h2>
+          <div className={styles.headline} data-testid="mea-shelf-summary">
+            <h2 className={styles.heading}>
+              {list.length} recording{list.length === 1 ? '' : 's'}
+            </h2>
+            {summaryParts.length > 0 && (
+              <span className={styles.summary}>· {summaryParts.join(' · ')}</span>
+            )}
+          </div>
           {addButton}
         </div>
       )}
@@ -493,17 +510,4 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
       )}
     </div>
   );
-}
-
-function formatSeconds(s: number): string {
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)} s`;
-  const m = Math.floor(s / 60);
-  return `${m}m ${Math.round(s - m * 60)}s`;
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} kB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }

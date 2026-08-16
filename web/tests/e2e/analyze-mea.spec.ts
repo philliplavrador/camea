@@ -1088,6 +1088,27 @@ test('clicking a busiest-pads row selects that pad, with the same announcement a
   }
 });
 
+test('the shelf carries a one-line summary — count, total length, total size', async ({ page }) => {
+  await toFilesStep(page, 'shelf summary');
+  await lookIn(page, MEA_FIXTURE.dir);
+  await page.getByTestId(TID.meaTickAll).check();
+  await page.getByTestId(TID.npCreate).click();
+  await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
+  const id = page.url().split('/').pop()!;
+  try {
+    const summary = page.getByTestId(TID.meaShelfSummary);
+    await expect(summary).toBeVisible({ timeout: FIRST_PAINT });
+    await expect(summary).toContainText(`${MEA_FIXTURE.count} recordings`);
+    // The totals, in the shelf's own grammar: a duration and a size, joined with ·. (The copying
+    // part is only there while a copy runs, which a 19 kB fixture finishes too fast to pin.)
+    await expect(summary).toContainText(/\d[\d.]*\s?s\b/);
+    await expect(summary).toContainText(/\d[\d.]*\s?(B|kB|MB|GB)\b/);
+    await expect(summary).toContainText('·');
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
 test('the shelf sorts and filters as a view — "As added" is the default, renaming keeps working', async ({
   page,
 }) => {

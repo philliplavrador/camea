@@ -31,6 +31,7 @@ import { browseRecordings, pickOpenFilePaths } from '../../api';
 import type { MeaRecordingCandidate } from '../../api';
 import { FolderPicker } from '../../core/picker/FolderPicker';
 import { Button, LiveWarning } from '../../design';
+import { formatBytes, formatSeconds } from './format';
 import styles from './ImportRecordings.module.css';
 
 /** A row he picked through the native dialog: an exact file, whose facts we have not read. */
@@ -275,17 +276,4 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
       )}
     </div>
   );
-}
-
-function formatSeconds(s: number): string {
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)} s`;
-  const m = Math.floor(s / 60);
-  return `${m}m ${Math.round(s - m * 60)}s`;
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} kB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }

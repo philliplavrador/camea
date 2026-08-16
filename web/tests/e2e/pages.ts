@@ -99,6 +99,8 @@ export const TID = {
   //                                        showed him — `mea-add-dialog`.
   // ── the shelf (002) ─────────────────────────────────────────────────────────
   meaShelf: 'mea-shelf',
+  meaShelfSummary: 'mea-shelf-summary', //  one line: N recordings · total length · total size ·
+  //                                        M still copying — only the non-zero parts
   meaShelfTools: 'mea-shelf-tools', //      sort + type filter; a client-side VIEW, shown from 2 rows
   meaShelfSort: 'mea-shelf-sort', //        default 'as-added' — the document's own order
   meaShelfFilter: 'mea-shelf-filter', //    by assay; appears only when the shelf holds two types

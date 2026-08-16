@@ -20,6 +20,7 @@ import { meaChipActivity, meaChipLayout } from '../../api';
 import type { MeaChipActivity, MeaChipLayout } from '../../api';
 import { Button, LiveWarning } from '../../design';
 import { ChipMap } from './ChipMap';
+import { formatSeconds } from './format';
 import { MeaTrace } from './MeaTrace';
 import styles from './OpenRecording.module.css';
 
@@ -100,10 +101,4 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
       )}
     </section>
   );
-}
-
-function formatSeconds(s: number): string {
-  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)} s`;
-  const m = Math.floor(s / 60);
-  return `${m}m ${Math.round(s - m * 60)}s`;
 }

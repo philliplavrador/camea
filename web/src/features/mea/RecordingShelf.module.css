@@ -25,6 +25,21 @@
   color: var(--text-dim);
 }
 
+/* The heading and its totals share one line at the top of the shelf. */
+.headline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.summary {
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* 001's empty state, unchanged in shape: a dashed well with one line and one button. The shape of
    the screen is the promise — a screen that grows a control later reads as a different screen. */
 .empty {
