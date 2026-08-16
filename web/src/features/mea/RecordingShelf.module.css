@@ -193,6 +193,27 @@
   color: var(--warn);
 }
 
+/* The ready-to-view column: whether the one-off end-to-end read is done. Quiet — it is a fact
+   about what the trace panel can show, never a warning; `MeaTrace` owns the sentence. */
+.ready {
+  font-size: var(--fs-readout);
+  color: var(--good);
+  white-space: nowrap;
+}
+
+.reading {
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two rows, one file on disk. A fact about the shelf, said small — nothing is wrong. */
+.dup {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+}
+
 /* ── the two dialogs: add, and the one confirm this screen has ───────────────────────────────── */
 
 /* 🔴 **JUST BELOW `--z-toast`, AND THAT IS THE WHOLE POINT.** Found by hand, 2026-08-14: with a

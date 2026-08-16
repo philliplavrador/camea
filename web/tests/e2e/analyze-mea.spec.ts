@@ -1188,6 +1188,104 @@ test('the shelf sorts and filters as a view — "As added" is the default, renam
   }
 });
 
+test('each row says whether the end-to-end read is done, offers it, and names a same-file twin', async ({
+  page,
+}) => {
+  // ⚠️ Stubbed: the envelope states this exercises (one ready, one not, a POST that finishes)
+  // need controlled ids, so both the shelf GET and the envelopes routes are served here. The
+  // wording mirrors MeaTrace's — same one-off read, same sentence.
+  const row = (over: Record<string, unknown>) => ({
+    id: 'rec',
+    label: '',
+    run_id: '000690',
+    assay: 'Network',
+    source_path: 'D:/his/Network/000690/data.raw.h5',
+    stored_path: 'recordings/rec/data.raw.h5',
+    copy_state: 'stored',
+    copy_pct: 0,
+    copy_error: '',
+    added: '2026-08-14T00:00:00Z',
+    bytes: 100,
+    missing: false,
+    source_present: true,
+    duration_s: 300,
+    n_channels: 726,
+    n_samples: 10,
+    n_spikes: 22_367,
+    ...over,
+  });
+  await page.route('**/api/mea/*/recordings', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        analysis_id: 'x',
+        recordings: [
+          row({ id: 'rec_a', label: 'Network/000690' }),
+          // ⭐ The SAME source file, added twice — the duplicate note's case.
+          row({ id: 'rec_b', label: 'the same run again' }),
+        ],
+      }),
+    });
+  });
+  let posted = false;
+  await page.route('**/api/mea/*/recordings/envelopes', async (route) => {
+    if (route.request().method() === 'POST') posted = true;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        analysis_id: 'x',
+        recordings: [
+          { recording_id: 'rec_a', label: 'Network/000690', ready: true, job_id: '', pct: 0 },
+          // Not read yet — until the backfill POST lands, after which it reports ready.
+          { recording_id: 'rec_b', label: 'the same run again', ready: posted, job_id: '', pct: 0 },
+        ],
+        started: posted ? ['job_x'] : [],
+      }),
+    });
+  });
+
+  await toFilesStep(page, 'ready column');
+  await page.getByTestId(TID.npCreate).click();
+  await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
+  const id = page.url().split('/').pop()!;
+  try {
+    const readyRow = rowFor(page, 'Network/000690');
+    const unreadRow = rowFor(page, 'the same run again');
+    await expect(page.getByTestId(TID.meaRecording)).toHaveCount(2, { timeout: FIRST_PAINT });
+
+    // One is done and says so quietly; the other offers the read, in MeaTrace's own words.
+    await expect(readyRow.getByTestId(TID.meaRecordingReady)).toHaveText('Whole recording ready', {
+      timeout: SHORT,
+    });
+    const readNow = unreadRow.getByTestId(TID.meaReadNow);
+    await expect(readNow).toBeVisible();
+    await expect(readNow).toHaveText('Read it now');
+
+    // ⭐ Both rows carry the same-file note, each naming the OTHER row. (The quotes around the
+    // name are typographic, so the assertions match on the words.)
+    await expect(readyRow.getByTestId(TID.meaRecordingDuplicate)).toContainText(
+      /same file as .the same run again./,
+    );
+    await expect(unreadRow.getByTestId(TID.meaRecordingDuplicate)).toContainText(
+      /same file as .Network\/000690./,
+    );
+
+    // Clicking fires the EXISTING backfill POST (no new endpoint), and the row lands on ready.
+    await readNow.click();
+    await expect(unreadRow.getByTestId(TID.meaRecordingReady)).toHaveText(
+      'Whole recording ready',
+      { timeout: SHORT },
+    );
+    expect(posted, 'the click must reach POST …/recordings/envelopes').toBe(true);
+  } finally {
+    await page.unrouteAll();
+    await deleteProject(page, id);
+  }
+});
+
 test('the spread chart counts pads per legend band, and a click highlights the band', async ({
   page,
 }) => {

@@ -110,6 +110,10 @@ export const TID = {
   meaRecordingFacts: 'mea-recording-facts', // duration · channels · spikes · size, READ OFF THE
   //                                        FILE every time. Absent on a row that lost its file.
   meaRecordingCopy: 'mea-recording-copy', // where Camea is reading it from, in plain words
+  meaRecordingReady: 'mea-recording-ready', // the one-off end-to-end read is done (data-ready=
+  //                                        'true') or running ('reading'); absent while unread
+  meaReadNow: 'mea-recording-read-now', //  fires the EXISTING backfill POST; MeaTrace's wording
+  meaRecordingDuplicate: 'mea-recording-duplicate', // "same file as '<name>'" — source_path twins
   meaRecordingMissing: 'mea-recording-missing', // 🔴 the live warning: not where you left it
   meaRemove: 'mea-remove-recording',
   meaRemoveConfirm: 'mea-remove-confirm', // ⭐ the ONE confirm on this screen — appears only when

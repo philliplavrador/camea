@@ -19,8 +19,15 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { addRecordings, listRecordings, removeRecording, renameRecording } from '../../api';
-import type { MeaShelfEntry } from '../../api';
+import {
+  addRecordings,
+  listRecordings,
+  meaEnvelopes,
+  removeRecording,
+  renameRecording,
+  startMeaEnvelopes,
+} from '../../api';
+import type { MeaEnvelopeRow, MeaEnvelopeStatus, MeaShelfEntry } from '../../api';
 import { useToast } from '../../app';
 import { Button, LiveWarning } from '../../design';
 import { formatBytes, formatSeconds } from './format';
@@ -32,6 +39,18 @@ import styles from './RecordingShelf.module.css';
 /** How often to re-read the shelf while a copy is running. Off entirely when nothing is copying —
  *  a screen that polls forever is a screen that keeps a laptop's fan on for no reason. */
 const COPY_POLL_MS = 700;
+
+/** How often to re-read the envelope status while a one-off read runs — `MeaTrace`'s cadence. */
+const ENVELOPE_POLL_MS = 2000;
+
+/**
+ * ⭐ **`MeaTrace`'s sentence, verbatim** — two surfaces describing the same one-off read must not
+ * describe it in two vocabularies. It sits behind the button's `title`; the button itself says
+ * `Read it now`, which is also that panel's wording.
+ */
+const NOT_READ_YET =
+  'Camea has not read this recording end to end yet, so it cannot show you the whole of it at ' +
+  'once. It is a one-off job of about a minute per recording.';
 
 /**
  * The four words a row can say about where Camea is reading it from.
@@ -79,6 +98,19 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
   // minted row ids. The default is the document's own order, exactly what the shelf always was.
   const [sort, setSort] = useState<ShelfSort>('as-added');
   const [assay, setAssay] = useState('');
+  /**
+   * ⭐ **THE READY-TO-VIEW COLUMN** — whether each recording's one-off end-to-end read is done
+   * (the read that lets the trace panel show a whole recording at once). By recording id, from
+   * `GET …/recordings/envelopes` — a route this shelf never called before; no new endpoint and
+   * no write. `null` = not known (the GET failed or has not landed): the column simply does not
+   * render, quietly — the shelf's own read failing is the loud one.
+   */
+  const [envelopes, setEnvelopes] = useState<Map<string, MeaEnvelopeRow> | null>(null);
+
+  const applyEnvelopes = useCallback((s: MeaEnvelopeStatus): void => {
+    if (!alive.current) return;
+    setEnvelopes(new Map((s.recordings ?? []).map((r) => [r.recording_id, r])));
+  }, []);
   /** Which row's name to put focus back on when an edit closes. ⭐ The input and the name-button are
    *  different elements, so React unmounts the focused one and focus would otherwise fall to
    *  `<body>` — i.e. a keyboard user who renames a row has to Tab from the top of the page again. */
@@ -127,6 +159,41 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
     return () => clearInterval(t);
   }, [copying, refresh]);
 
+  // The envelope status, once on arrival…
+  useEffect(() => {
+    void meaEnvelopes(analysisId)
+      .then(applyEnvelopes)
+      .catch(() => {
+        // Quiet — see the state's comment. Nothing here is his data going missing.
+      });
+  }, [analysisId, applyEnvelopes]);
+
+  // …and re-read ONLY while a one-off read is running, the same shape as the copy poll above.
+  // It stops by itself when the last job ends — including the refused case (an ActivityScan
+  // stores no continuous trace): the job goes, `ready` stays false, and the button returns
+  // rather than a spinner that never lands. The same stop rule `MeaTrace` uses.
+  const envRunning = envelopes != null && [...envelopes.values()].some((r) => r.job_id);
+  useEffect(() => {
+    if (!envRunning) return;
+    const t = setInterval(() => {
+      void meaEnvelopes(analysisId)
+        .then(applyEnvelopes)
+        .catch(() => {});
+    }, ENVELOPE_POLL_MS);
+    return () => clearInterval(t);
+  }, [envRunning, analysisId, applyEnvelopes]);
+
+  /** ⭐ The EXISTING backfill POST — it reads every recording still lacking the one-off pass
+   *  (this row among them) and reports a job already running rather than starting a duplicate.
+   *  No new endpoint, no write to any file of his. The poll above takes it from here. */
+  async function readNow(): Promise<void> {
+    try {
+      applyEnvelopes(await startMeaEnvelopes(analysisId));
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : String(e), { tone: 'danger' });
+    }
+  }
+
   async function doAdd(): Promise<void> {
     if (busy || picked.length === 0) return;
     setBusy(true);
@@ -135,6 +202,11 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
       setRows(shelf.recordings ?? []);
       setAdding(false);
       setPicked([]);
+      // New recordings start their one-off read at import — pick up the fresh jobs so the new
+      // rows say "Reading…" rather than sitting blank until something else asks.
+      void meaEnvelopes(analysisId)
+        .then(applyEnvelopes)
+        .catch(() => {});
     } catch (e) {
       // ⛔ The refusal NAMES the file, and it is the backend's sentence verbatim — this screen does
       // not paraphrase a reason it did not work out.
@@ -241,6 +313,14 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
   }
 
   const list = rows ?? [];
+  // ⭐ **A ROW ADDED TWICE FROM THE SAME FILE SAYS SO** — the id is minted precisely because "he
+  // may add the same file twice, and a path is not an identity" (the schema's words), so two rows
+  // can silently be one recording. The note names the other row so he can tell which is which.
+  const dupNames = new Map<string, string>();
+  for (const r of list) {
+    const twin = list.find((o) => o.id !== r.id && o.source_path === r.source_path);
+    if (twin) dupNames.set(r.id, twin.label || twin.run_id || twin.id);
+  }
   // ⭐ The one-line summary — facts about the WHOLE shelf, whatever the filter below is showing,
   // because "how much is on this shelf" must not change when he narrows the view of it. Only the
   // non-zero parts are said; a row that lost its file contributes nothing (I1 — no zeros).
@@ -344,6 +424,7 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
       <ul className={styles.rows}>
         {shown.map((r) => {
           const words = copyWords(r);
+          const env = envelopes?.get(r.id) ?? null;
           return (
             <li
               key={r.id}
@@ -407,9 +488,47 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
                       .join(' · ')}
                   </span>
                 )}
+                {dupNames.has(r.id) && (
+                  <span className={styles.dup} data-testid="mea-recording-duplicate">
+                    same file as &lsquo;{dupNames.get(r.id)}&rsquo;
+                  </span>
+                )}
               </div>
 
               <div className={styles.rowSide}>
+                {/* ⭐ The ready-to-view column. A row whose file is gone has nothing to read, so
+                    it shows nothing here — its live warning is the whole story. */}
+                {!r.missing &&
+                  env &&
+                  (env.ready ? (
+                    <span
+                      className={styles.ready}
+                      data-ready="true"
+                      data-testid="mea-recording-ready"
+                      title="Camea has read this recording end to end, so the whole of it can be shown at once."
+                    >
+                      Whole recording ready
+                    </span>
+                  ) : env.job_id ? (
+                    <span
+                      className={styles.reading}
+                      data-ready="reading"
+                      data-testid="mea-recording-ready"
+                    >
+                      Reading… {Math.round(env.pct)}%
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      title={NOT_READ_YET}
+                      onClick={() => void readNow()}
+                      data-testid="mea-recording-read-now"
+                    >
+                      Read it now
+                    </Button>
+                  ))}
                 <span
                   className={styles.copy}
                   data-tone={words.tone}
