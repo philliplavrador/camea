@@ -279,10 +279,16 @@ export function RegionsStep({
 
   // ── the keyboard ────────────────────────────────────────────────────────────────────────────
   // `S` snaps, exactly as it does in the sweep. ⭐ R47 adds the compare keys: HOLD `Space` to swap
-  // the two pictures, `[` / `]` to nudge the overlay. Bound while this step is mounted, and never
-  // while he is typing in the path, the name or a rename box.
+  // the two pictures, `[` / `]` to nudge the overlay. ↑/↓ walk the recordings list and Delete asks
+  // the row's own question. Bound while this step is mounted, and never while he is typing in the
+  // path, the name or a rename box.
   const snapRef = useRef(snap);
   snapRef.current = snap;
+  // ↑/↓ and Delete need the list, the selection and `remove`, which are declared further down —
+  // the real handlers land in these refs every render (they are read at key time, never at mount),
+  // so the one keyboard effect below never has to re-arm.
+  const navRef = useRef<(dir: 1 | -1) => void>(() => {});
+  const deleteKeyRef = useRef<() => void>(() => {});
   useEffect(() => {
     const typing = (e: KeyboardEvent): boolean => {
       const el = e.target as HTMLElement | null;
@@ -311,6 +317,16 @@ export function RegionsStep({
       if (e.key === ']') {
         e.preventDefault();
         setFade((v) => Math.min(100, v + FADE_STEP));
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        navRef.current(e.key === 'ArrowDown' ? 1 : -1);
+        return;
+      }
+      if (e.key === 'Delete') {
+        e.preventDefault();
+        deleteKeyRef.current();
       }
     };
     const onKeyUp = (e: KeyboardEvent): void => {
@@ -395,6 +411,25 @@ export function RegionsStep({
     },
     [analysisId, refresh],
   );
+
+  // ⭐ ↑/↓ walk the list — no wrap, and a first press with nothing selected takes the first row.
+  // Delete asks EXACTLY the question the row's button does: the same confirm, the same refusal
+  // while a job runs. (These land in the refs the keyboard effect reads — see up there.)
+  navRef.current = (dir) => {
+    if (list.length === 0) return;
+    const i = list.findIndex((r) => r.id === selectedId);
+    const next = i < 0 ? 0 : Math.min(list.length - 1, Math.max(0, i + dir));
+    if (next !== i) select(list[next]);
+  };
+  deleteKeyRef.current = () => {
+    if (selected && !running) void remove(selected);
+  };
+
+  // The rail is the scroller (R47.1): however the selection moved, its row stays visible in it.
+  const selRowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    selRowRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [selectedId]);
 
   // ── dragging the selected rectangle (screen px in, mosaic px out) ────────────────────────────
   const dragRef = useRef<{
@@ -675,7 +710,8 @@ export function RegionsStep({
               title="Recordings"
               help={
                 'One row per located recording. Click a row to put it under judgement on the ' +
-                'mosaic; click its name to rename it.\n' +
+                'mosaic; click its name to rename it. The ↑ and ↓ keys walk the list, and Delete ' +
+                'removes the selected recording (it asks first, exactly like its button).\n' +
                 '\n' +
                 'NCC is how well its still matches the mosaic where it was put (1.000 is ' +
                 'identical); margin is that score minus the best rival place anywhere on the ' +
@@ -702,6 +738,7 @@ export function RegionsStep({
                       )}
                       data-testid="region-row"
                       data-region-id={r.id}
+                      ref={isSel ? selRowRef : undefined}
                       data-selected={isSel || undefined}
                       data-status={r.status}
                       onClick={() => select(r)}

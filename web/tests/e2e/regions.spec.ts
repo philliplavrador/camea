@@ -232,6 +232,8 @@ interface Stub {
   locates: Record<string, unknown>[];
   snaps: Record<string, unknown>[];
   patches: Record<string, unknown>[];
+  /** Region ids DELETEd — the keyboard's Delete must travel the same wire as the button's. */
+  deletes: string[];
 }
 
 interface OpenOpts {
@@ -259,6 +261,7 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
     locates: [],
     snaps: [],
     patches: [],
+    deletes: [],
   };
   const doc = craftedDoc(opts.doc);
   const vm = ROUTES.videomosaic;
@@ -292,6 +295,21 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
       outputs: { regions: 'pipeline-regions.json', csv: 'pipeline-regions.csv' },
     }),
   );
+
+  // forget a region — the ONE wire, whether the row's button or the Delete key asked
+  await page.route(new RegExp(`${vm}/${ID}/regions/[^/]+$`), async (route, req) => {
+    if (req.method() !== 'DELETE') return route.fallback();
+    const rid = req.url().split('/').pop() ?? '';
+    stub.deletes.push(rid);
+    stub.regions = stub.regions.filter((g) => g.id !== rid);
+    await json(route, {
+      analysis_id: ID,
+      regions: stub.regions,
+      built_from: BUILT_AT,
+      stale: stub.stale,
+      outputs: {},
+    });
+  });
 
   // locate + snap: 202 → the job below. Both are `locate_region`; one lease, one job.
   await page.route(new RegExp(`${ROUTES.regions}/locate$`), async (route, req) => {
@@ -942,6 +960,66 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await rowOf(page, 'r-2').click();
     await page.waitForTimeout(150); // long enough for a wrong re-frame to have painted
     await expect(zoom).toHaveText(framedAt);
+  });
+
+  test('arrow keys walk the list — no wrap — and Delete asks the row’s own question', async ({
+    page,
+  }) => {
+    const stub = await openRegions(page, {
+      regions: [
+        craftedRegion({ id: 'r-1', name: 'field A' }),
+        craftedRegion({ id: 'r-2', name: 'field B', x: 450, y: 340 }),
+      ],
+    });
+
+    // 1 · r-1 came auto-selected; ↓ moves to r-2 — a real selection change, so the camera frames
+    await expect(rowOf(page, 'r-1')).toHaveAttribute('data-selected', 'true');
+    await page.keyboard.press('ArrowDown');
+    await expect(rowOf(page, 'r-2')).toHaveAttribute('data-selected', 'true');
+    await expect(byId(page, TID.vmViewer)).not.toHaveAttribute('data-fit', 'true');
+
+    // 2 · no wrap at either end
+    await page.keyboard.press('ArrowDown');
+    await expect(rowOf(page, 'r-2')).toHaveAttribute('data-selected', 'true');
+    await page.keyboard.press('ArrowUp');
+    await expect(rowOf(page, 'r-1')).toHaveAttribute('data-selected', 'true');
+    await page.keyboard.press('ArrowUp');
+    await expect(rowOf(page, 'r-1')).toHaveAttribute('data-selected', 'true');
+
+    // 3 · a box that has focus keeps its own arrows — the list must not move underneath typing
+    await byId(page, TID.regionsPath).click();
+    await page.keyboard.press('ArrowDown');
+    await expect(rowOf(page, 'r-1')).toHaveAttribute('data-selected', 'true');
+    await byId(page, TID.regionsPath).blur();
+
+    // 4 · Delete asks the SAME question the row's button does — dismissing keeps everything
+    let asked = '';
+    page.once('dialog', (d) => {
+      asked = d.message();
+      void d.dismiss();
+    });
+    await page.keyboard.press('Delete');
+    await expect.poll(() => asked, { timeout: SHORT }).toContain('Delete "field A"');
+    expect(asked).toContain('cannot be undone');
+    await expect(rowOf(page, 'r-1')).toBeVisible();
+    expect(stub.deletes).toHaveLength(0);
+
+    // 5 · …and accepting removes it through the same wire as the button
+    page.once('dialog', (d) => void d.accept());
+    await page.keyboard.press('Delete');
+    await expect(rowOf(page, 'r-1')).toHaveCount(0, { timeout: SHORT });
+    await expect(byId(page, TID.regionRow)).toHaveCount(1);
+    expect(stub.deletes).toEqual(['r-1']);
+
+    // 6 · a long list: the rail (the one scroller, R47.1) keeps the walked-to row visible
+    stub.regions = Array.from({ length: 12 }, (_, i) =>
+      craftedRegion({ id: `q-${i + 1}`, name: `field ${i + 1}` }),
+    );
+    await page.reload();
+    await expect(byId(page, TID.regionsList)).toBeVisible({ timeout: 15_000 });
+    for (let i = 0; i < 11; i++) await page.keyboard.press('ArrowDown');
+    await expect(rowOf(page, 'q-12')).toHaveAttribute('data-selected', 'true');
+    await expect(rowOf(page, 'q-12')).toBeInViewport();
   });
 
   test('R47.5: Files is ONE door, opened by asking — and Escape closes it (R44 intact)', async ({
