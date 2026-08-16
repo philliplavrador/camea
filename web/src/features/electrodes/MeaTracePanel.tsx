@@ -108,6 +108,8 @@ export function MeaTracePanel({
   const [data, setData] = useState<ElectrodeTracePayload | null>(null);
   const [stack, setStack] = useState<vs.ViewStack>(vs.EMPTY_STACK);
   const [error, setError] = useState<string | null>(null);
+  /** True while the close-up on screen is a PREVIOUS stretch — its fetch is still out. */
+  const [pending, setPending] = useState(false);
   const [needsEnvelope, setNeedsEnvelope] = useState(false);
   const [building, setBuilding] = useState(false);
   // Bumped when the backfill finishes, purely to re-run the arrival fetch — without it the panel
@@ -138,6 +140,7 @@ export function MeaTracePanel({
       setWhole(null);
       setData(null);
       setStack(vs.EMPTY_STACK);
+      setPending(false);
       return;
     }
     let cancelled = false;
@@ -146,6 +149,7 @@ export function MeaTracePanel({
     setWhole(null);
     setData(null);
     setStack(vs.EMPTY_STACK);
+    setPending(false);
     void getElectrodeTrace(analysisId, electrode, { runId: active, t0: 0, maxPoints: COLUMNS })
       .then((d) => {
         if (cancelled) return;
@@ -211,10 +215,14 @@ export function MeaTracePanel({
     // The opening view IS the whole recording, which we already hold. Do not re-fetch it.
     if (view.t0 === whole.t0_s && view.t1 === whole.t1_s) {
       setData(whole);
+      setPending(false);
       return;
     }
     let cancelled = false;
     const mine = ++ticket.current;
+    // ⭐ The previous chart stays up while this fetch is out — dimmed and badged "previous",
+    // never blanked and never left claiming to be current. (Same rule as MeaTrace, 2026-08-16.)
+    setPending(true);
     const timer = setTimeout(() => {
       void getElectrodeTrace(analysisId, electrode, {
         runId: active,
@@ -225,10 +233,16 @@ export function MeaTracePanel({
         .then((d) => {
           if (cancelled || mine !== ticket.current) return;
           setData(d);
+          setError(null); // an earlier failed stretch is no longer the current state
+          setPending(false);
         })
         .catch((e: unknown) => {
           if (cancelled || mine !== ticket.current) return;
           setError(e instanceof Error ? e.message : String(e));
+          // ⛔ Blank, never stale charts under a warning — a picture of the stretch he left,
+          // drawn under the failure line, reads as the stretch that failed.
+          setData(null);
+          setPending(false);
         });
     }, SETTLE_MS);
     return () => {
@@ -560,7 +574,7 @@ export function MeaTracePanel({
             {/* ── the close-up ────────────────────────────────────────────────────────────── */}
             <div
               ref={boxRef}
-              className={styles.detail}
+              className={pending ? `${styles.detail} ${styles.stale}` : styles.detail}
               data-testid="mea-trace-detail"
               tabIndex={0}
               role="application"
@@ -584,6 +598,12 @@ export function MeaTracePanel({
                 suspect={flat || undecodable}
                 band={bandFromDrag}
               />
+              {/* One word, on the dimmed picture: what is on screen is the stretch he just left. */}
+              {pending && (
+                <span className={styles.staleBadge} data-testid="mea-trace-stale">
+                  previous
+                </span>
+              )}
             </div>
 
             {/* ⚠️ The readout states the range the server ACTUALLY SERVED — the same range the

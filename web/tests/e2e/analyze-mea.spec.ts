@@ -1210,6 +1210,63 @@ test('the time under the pointer is read out — quietly, and with no voltage nu
   }
 });
 
+test('while a new stretch loads the old chart says it is the previous one', async ({ page }) => {
+  // ⭐ 2026-08-16. The close-up is dimmed and badged "previous" while its fetch is out — an honest
+  // cue instead of a picture silently claiming to be the stretch he asked for.
+  const id = await openFirstRecording(page, 'previous cue');
+  try {
+    await pickFirstPad(page);
+    // Slow the close-up fetch down enough to see the cue. Registered AFTER the arrival fetch, so
+    // only navigation pays for it.
+    await page.route('**/recordings/*/trace*', async (route) => {
+      await new Promise((r) => setTimeout(r, 700));
+      await route.continue();
+    });
+
+    await dragAcross(page, TID.meaTraceDetail, 0.2, 0.6);
+    const badge = page.getByTestId(TID.meaTraceStale);
+    await expect(badge).toBeVisible({ timeout: SHORT });
+    await expect(badge).toHaveText('previous');
+    // The previous chart STAYS on screen under the badge — dimmed, not blanked.
+    await expect(page.getByTestId(TID.meaTraceChart)).toBeVisible();
+
+    // ...and the cue goes when the new stretch lands.
+    await expect(badge).toHaveCount(0, { timeout: SHORT });
+  } finally {
+    await page.unrouteAll();
+    await deleteProject(page, id);
+  }
+});
+
+test('a fetch error blanks the charts — no stale picture under the warning', async ({ page }) => {
+  // ⛔ A chart of the stretch he just LEFT, drawn under "Could not read the recording", reads as
+  // the stretch that failed. On an error the charts go and the warning stands alone.
+  const id = await openFirstRecording(page, 'error blanks');
+  try {
+    await pickFirstPad(page);
+    await expect(page.getByTestId(TID.meaTraceDetail)).toBeVisible();
+    await page.route('**/recordings/*/trace*', (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'io_error', message: 'synthetic read failure' } }),
+      }),
+    );
+
+    await dragAcross(page, TID.meaTraceDetail, 0.2, 0.6);
+    await expect(page.getByTestId(TID.meaTraceError)).toContainText('synthetic read failure', {
+      timeout: SHORT,
+    });
+    // The exact wording the panel always used, on the page — and NOTHING drawn under it.
+    await expect(page.getByTestId(TID.meaTraceError)).toContainText('Could not read the recording');
+    await expect(page.getByTestId(TID.meaTraceDetail)).toHaveCount(0);
+    await expect(page.getByTestId(TID.meaTraceOverview)).toHaveCount(0);
+  } finally {
+    await page.unrouteAll();
+    await deleteProject(page, id);
+  }
+});
+
 // =================================================================================================
 // 7 · the chip-map quality-of-life bundle (2026-08-15)
 // =================================================================================================

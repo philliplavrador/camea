@@ -203,6 +203,8 @@ export const TID = {
   //                                        one-off whole-recording read has not been done yet.
   //                                        ⚠️ The e2e fixture never reaches it — 3.0 s at 20 kHz is
   //                                        60k samples, well under the route's live-read budget.
+  meaTraceStale: 'mea-trace-stale', //      "previous", on the dimmed close-up while a new stretch
+  //                                        loads — the chart on screen is the stretch he just left
   meaTraceFlat: 'mea-trace-flat', //        🔴 LIVE WARNING: the waveform did not decode
   meaTraceUndecodable: 'mea-trace-undecodable', // 🔴 …or could not be read at all
   meaTraceNoSpikes: 'mea-trace-no-spikes', // ⭐ a fact, NOT a warning — no neuron was near it

@@ -103,6 +103,8 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
   const [data, setData] = useState<MeaChannelTrace | null>(null);
   const [stack, setStack] = useState<vs.ViewStack>(vs.EMPTY_STACK);
   const [error, setError] = useState<string | null>(null);
+  /** True while the close-up on screen is a PREVIOUS stretch — its fetch is still out. */
+  const [pending, setPending] = useState(false);
   const [needsEnvelope, setNeedsEnvelope] = useState(false);
   const [building, setBuilding] = useState(false);
   // Bumped when a backfill finishes, purely to re-run the arrival fetch. Without it the panel keeps
@@ -129,6 +131,7 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
       setWhole(null);
       setData(null);
       setStack(vs.EMPTY_STACK);
+      setPending(false);
       return;
     }
     let cancelled = false;
@@ -137,6 +140,7 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
     setWhole(null);
     setData(null);
     setStack(vs.EMPTY_STACK);
+    setPending(false);
     void meaChannelTrace(analysisId, recordingId, channel, { t0: 0, maxPoints: COLUMNS })
       .then((d) => {
         if (cancelled) return;
@@ -203,10 +207,15 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
     // The opening view IS the whole recording, which we already hold. Do not re-fetch it.
     if (view.t0 === whole.t0_s && view.t1 === whole.t1_s) {
       setData(whole);
+      setPending(false);
       return;
     }
     let cancelled = false;
     const mine = ++ticket.current;
+    // ⭐ **THE PREVIOUS CHART STAYS UP, AND SAYS SO** (2026-08-16). While this fetch is out the
+    // picture on screen is the stretch he just left — it is dimmed and badged rather than blanked,
+    // because a blink on every zoom is worse than an honest "previous".
+    setPending(true);
     const timer = setTimeout(() => {
       void meaChannelTrace(analysisId, recordingId, channel, {
         t0: view.t0,
@@ -216,10 +225,16 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
         .then((d) => {
           if (cancelled || mine !== ticket.current) return;
           setData(d);
+          setError(null); // an earlier failed stretch is no longer the current state
+          setPending(false);
         })
         .catch((e: unknown) => {
           if (cancelled || mine !== ticket.current) return;
           setError(e instanceof Error ? e.message : String(e));
+          // ⛔ **BLANK, NEVER STALE CHARTS UNDER A WARNING.** A picture of the stretch he left,
+          // drawn under "could not read the recording", reads as the stretch that failed.
+          setData(null);
+          setPending(false);
         });
     }, SETTLE_MS);
     return () => {
@@ -593,7 +608,7 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
             {/* ── the close-up ────────────────────────────────────────────────────────────── */}
             <div
               ref={boxRef}
-              className={styles.detail}
+              className={pending ? `${styles.detail} ${styles.stale}` : styles.detail}
               data-testid="mea-trace-detail"
               tabIndex={0}
               role="application"
@@ -616,6 +631,12 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
                 suspect={flat || undecodable}
                 band={bandFromDrag}
               />
+              {/* One word, on the dimmed picture: what is on screen is the stretch he just left. */}
+              {pending && (
+                <span className={styles.staleBadge} data-testid="mea-trace-stale">
+                  previous
+                </span>
+              )}
             </div>
 
             {/* ⚠️ The readout states the range the server ACTUALLY SERVED, not the one that was
