@@ -29,6 +29,23 @@
   font-weight: 600;
 }
 
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* The live zoom, Fit = 100%. Same grammar as the mosaic viewer's `vm-zoom-level`. */
+.zoomLevel {
+  min-width: 44px;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  font-variant-numeric: tabular-nums;
+}
+
 .stage {
   position: relative;
   flex: 1 1 auto;

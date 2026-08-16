@@ -1071,12 +1071,18 @@ test('clicking a busiest-pads row selects that pad, with the same announcement a
     const first = list.getByTestId(TID.meaChipBusiestPad).first();
     await expect(first).toHaveAttribute('data-channel', '0');
 
+    // Nothing selected yet: the frame control is DISABLED (never hidden), and the zoom readout
+    // states Fit as 100% (R7.6 — these say what they do, no `?`).
+    await expect(page.getByTestId(TID.meaChipFrameSelected)).toBeDisabled();
+    await expect(page.getByTestId(TID.meaChipZoomLevel)).toHaveText(/%$/);
+
     await first.click();
     // The row shows selected, the live region announces it, and the trace panel starts reading it —
     // exactly what a canvas click produces. One selection mechanism, two doors.
     await expect(first).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByTestId(TID.meaChipSaid)).toContainText('Electrode', { timeout: SHORT });
     await expect(page.getByTestId(TID.meaTraceFacts)).toBeVisible({ timeout: SHORT });
+    await expect(page.getByTestId(TID.meaChipFrameSelected)).toBeEnabled();
   } finally {
     await deleteProject(page, id);
   }

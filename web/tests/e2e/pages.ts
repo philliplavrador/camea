@@ -135,6 +135,9 @@ export const TID = {
   meaChipCanvas: 'mea-chip-canvas', //      ⭐ ONE canvas, never a DOM node per pad
   meaChipExtent: 'mea-chip-extent', //      "220 × 120 pads on the chip · 726 wired up"
   meaChipFit: 'mea-chip-fit',
+  meaChipFrameSelected: 'mea-chip-frame-selected', // centre the selected pad; DISABLED, never
+  //                                        hidden, with nothing selected (R7.6: no `?` needed)
+  meaChipZoomLevel: 'mea-chip-zoom-level', // the live zoom %, Fit = 100% (vm-zoom-level's grammar)
   meaChipHover: 'mea-chip-hover', //        hover names the electrode without a click
   meaChipSaid: 'mea-chip-said', //          the visually hidden live region announcing the selection
   meaChipLegend: 'mea-chip-legend', //      the ramp, in real spikes/s

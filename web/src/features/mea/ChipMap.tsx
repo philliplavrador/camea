@@ -430,6 +430,10 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
     }
   }, [pads, view, box, chip, selectedPad]);
 
+  // The live zoom, relative to Fit = 100% — the same readout grammar as the mosaic viewer's
+  // `vm-zoom-level`. Fit is the natural unit here: there is no "1:1" for µm on a screen.
+  const zoomPct = view && fitScale > 0 ? Math.round((view.scale / fitScale) * 100) : null;
+
   const hoverLabel = hover
     ? `Electrode ${hover.pad.electrode} · channel ${hover.pad.channel} · ` +
       (hover.pad.nSpikes === 0
@@ -445,9 +449,26 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
           {layout.chip_extent === 'recorded' ? ' recorded' : ' on the chip'} ·{' '}
           <b>{(layout.pads?.length ?? 0).toLocaleString()}</b> wired up for this recording
         </span>
-        <Button size="sm" variant="ghost" onClick={fit} data-testid="mea-chip-fit">
-          Fit
-        </Button>
+        {/* Fit-like controls say what they do — R7.6: no `?` on any of these. */}
+        <div className={styles.tools}>
+          <Button
+            size="sm"
+            variant="ghost"
+            // ⭐ Disabled, never hidden, with nothing selected — the toolbar must not jump.
+            disabled={!selectedPad}
+            onClick={() => selectedPad && flyTo(selectedPad)}
+            title="Centre the view on the selected pad"
+            data-testid="mea-chip-frame-selected"
+          >
+            Frame selected
+          </Button>
+          <span className={styles.zoomLevel} data-testid="mea-chip-zoom-level">
+            {zoomPct != null ? `${zoomPct}%` : '—'}
+          </span>
+          <Button size="sm" variant="ghost" onClick={fit} data-testid="mea-chip-fit">
+            Fit
+          </Button>
+        </div>
       </div>
 
       <div
