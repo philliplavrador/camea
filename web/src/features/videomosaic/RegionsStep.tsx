@@ -78,6 +78,9 @@ const f2 = (v: number): string => v.toFixed(2);
 const f3 = (v: number): string => v.toFixed(3);
 const f4 = (v: number): string => v.toFixed(4);
 
+/** The file's own name, whatever separators its path used. */
+const basenameOf = (p: string): string => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
+
 // ── props ─────────────────────────────────────────────────────────────────────────────────────
 
 export interface RegionsStepProps {
@@ -810,6 +813,19 @@ export function RegionsStep({
                           Delete
                         </Button>
                       </div>
+
+                      {/* ⭐ WHICH FILE the label stands for. The name above is editable, so two
+                          recordings renamed alike are told apart by the one thing that cannot
+                          collide: the video's own file name. Quiet, and the full path on hover. */}
+                      {r.source?.name && (
+                        <span
+                          className={styles.file}
+                          data-testid="region-file"
+                          title={r.source.path || r.source.name}
+                        >
+                          {basenameOf(r.source.name)}
+                        </span>
+                      )}
 
                       <span className={styles.rowFacts}>
                         <span className={styles.fact}>

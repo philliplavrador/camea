@@ -112,7 +112,7 @@ const craftedSummary = () => ({
 interface Region {
   id: string;
   name: string;
-  source: null;
+  source: { path: string; name: string } | null;
   still: string | null;
   x: number;
   y: number;
@@ -173,13 +173,17 @@ interface RegionOpts {
   electrodes?: boolean;
   x?: number;
   y?: number;
+  /** The video FILE behind the row — the label is editable, this is not. */
+  sourceName?: string;
 }
 
 function craftedRegion(o: RegionOpts = {}): Region {
   return {
     id: o.id ?? 'r-1',
     name: o.name ?? 'field A',
-    source: null,
+    source: o.sourceName
+      ? { path: `C:/recordings/session-1/${o.sourceName}`, name: o.sourceName }
+      : null,
     still: o.still === undefined ? STILL : o.still,
     x: o.x ?? 180,
     y: o.y ?? 140,
@@ -1020,6 +1024,27 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     for (let i = 0; i < 11; i++) await page.keyboard.press('ArrowDown');
     await expect(rowOf(page, 'q-12')).toHaveAttribute('data-selected', 'true');
     await expect(rowOf(page, 'q-12')).toBeInViewport();
+  });
+
+  test('each row names its file — two recordings renamed alike stay tellable-apart', async ({
+    page,
+  }) => {
+    await openRegions(page, {
+      regions: [
+        // ⭐ the collision the file name exists to survive: BOTH rows renamed "activity"
+        craftedRegion({ id: 'r-1', name: 'activity', sourceName: 'fieldA.avi' }),
+        craftedRegion({ id: 'r-2', name: 'activity', sourceName: 'fieldB.avi', x: 450, y: 340 }),
+        // an old record with no source block says nothing rather than inventing a name
+        craftedRegion({ id: 'r-3', name: 'field C' }),
+      ],
+    });
+
+    const fileOf = (id: string) => rowOf(page, id).getByTestId(TID.regionFile);
+    await expect(fileOf('r-1')).toHaveText('fieldA.avi');
+    await expect(fileOf('r-2')).toHaveText('fieldB.avi');
+    // the full path waits on hover, so a truncated print is still recoverable
+    await expect(fileOf('r-1')).toHaveAttribute('title', 'C:/recordings/session-1/fieldA.avi');
+    await expect(fileOf('r-3')).toHaveCount(0);
   });
 
   test('R47.5: Files is ONE door, opened by asking — and Escape closes it (R44 intact)', async ({

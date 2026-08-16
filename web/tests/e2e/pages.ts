@@ -434,6 +434,7 @@ export const TID = {
   regionsFieldsToggle: 'regions-fields-toggle', // show every rectangle, or only the selected one
   regionRow: 'region-row', //                data-region-id; data-status
   regionName: 'region-name', //              click to rename
+  regionFile: 'region-file', //              the source video's file name — labels are editable, this is not
   regionNameInput: 'region-name-input',
   regionStatus: 'region-status', //          unconfirmed | confirmed (R46.6)
   regionConfirm: 'region-confirm', //        ⭐ the human's signature — nothing promotes itself
