@@ -1312,6 +1312,48 @@ export function RegionsStep({
 
 // ── The readout — numbers and labels, explanations behind `?`s (R3) ───────────────────────────
 
+/** One attempt of the locating search, as the server recorded it (R46.5's `tried` table). */
+interface TriedRow {
+  still_kind: string;
+  scale: number | null;
+  ncc: number | null;
+  margin: number | null;
+  refused: string | null;
+}
+
+/** The served rows, narrowed — the contract types them as a free dict. Order is kept: the table
+ *  is shown exactly as served, never re-ranked client-side. */
+const triedRows = (r: RegionRecord): TriedRow[] =>
+  (r.tried ?? []).map((t) => ({
+    still_kind: typeof t.still_kind === 'string' ? t.still_kind : '—',
+    scale: typeof t.scale === 'number' ? t.scale : null,
+    ncc: typeof t.ncc === 'number' ? t.ncc : null,
+    margin: typeof t.margin === 'number' ? t.margin : null,
+    refused: typeof t.refused === 'string' && t.refused !== '' ? t.refused : null,
+  }));
+
+/**
+ * Which attempt won: the record's own `still_kind`, and among its rows the server's rank —
+ * margin first, NCC only to break a tie (R46.5: two stills' NCCs are not comparable; how far a
+ * winner stands above its own runner-up is).
+ */
+const triedWinner = (rows: TriedRow[], kind: string): number => {
+  let best = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.still_kind !== kind || row.refused != null) continue;
+    if (best < 0) {
+      best = i;
+      continue;
+    }
+    const b = rows[best];
+    const bm = b.margin ?? -1;
+    const rm = row.margin ?? -1;
+    if (rm > bm || (rm === bm && (row.ncc ?? -1) > (b.ncc ?? -1))) best = i;
+  }
+  return best;
+};
+
 function Fact({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
   return (
     <div className={styles.dFact}>
@@ -1370,6 +1412,9 @@ function RegionDetail({
   const angle = zoom?.angle_delta_deg ?? null;
   const uncertain = !r.confident || r.margin_thin;
   const confirmed = r.status === 'confirmed';
+  // R46.5 — the whole tried table, in the served order, with the winner named.
+  const tried = triedRows(r);
+  const winner = triedWinner(tried, r.still_kind);
 
   return (
     <div data-testid="region-panel">
@@ -1683,6 +1728,71 @@ function RegionDetail({
                   </Fact>
                 )}
               </dl>
+
+              {/* ⭐ R46.5 — EVERY ATTEMPT IT TRIED, so a poor result can be diagnosed instead of
+                  merely disbelieved. One row per picture × size, IN THE ORDER SERVED, the winner
+                  named; a refused attempt keeps the server's sentence, verbatim. The table
+                  scrolls inside the rail, never the page (R47.1). */}
+              {tried.length > 0 && (
+                <div className={styles.tried} data-testid="region-tried">
+                  <span className={styles.triedLabel}>
+                    Every attempt
+                    <Help
+                      body={
+                        'Each summary picture built from the recording, matched at each size ' +
+                        'that was tried. Attempts are ranked by margin, not by score — two ' +
+                        'pictures’ scores are not comparable, but how far a winner stands above ' +
+                        'its own runner-up is. The marked row is the one the placement came ' +
+                        'from; a refused row says why in the server’s own words.'
+                      }
+                    />
+                  </span>
+                  <div className={styles.triedScroll}>
+                    <table className={styles.triedTable}>
+                      <thead>
+                        <tr>
+                          <th>still</th>
+                          <th>size</th>
+                          <th>ncc</th>
+                          <th>margin</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tried.map((t, i) => (
+                          <tr
+                            key={`${t.still_kind}-${t.scale ?? 'x'}-${i}`}
+                            data-testid="region-tried-row"
+                            data-still={t.still_kind}
+                            data-winner={i === winner || undefined}
+                          >
+                            <td className={styles.triedKind}>
+                              {t.still_kind}
+                              {i === winner && <span className={styles.triedWon}>won</span>}
+                            </td>
+                            <td className={styles.triedNum}>
+                              {t.scale != null ? `${f3(t.scale)}×` : '—'}
+                            </td>
+                            {t.refused != null ? (
+                              <td className={styles.triedRefused} colSpan={2}>
+                                {t.refused}
+                              </td>
+                            ) : (
+                              <>
+                                <td className={styles.triedNum}>
+                                  {t.ncc != null ? f3(t.ncc) : '—'}
+                                </td>
+                                <td className={styles.triedNum}>
+                                  {t.margin != null ? f3(t.margin) : '—'}
+                                </td>
+                              </>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </details>
           </div>
 

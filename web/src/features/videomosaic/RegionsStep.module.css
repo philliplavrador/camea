@@ -381,6 +381,75 @@
   margin-top: 10px;
 }
 
+/* ── R46.5 — every attempt the search tried, folded with the rest of the working ──────────── */
+
+.tried {
+  margin-top: 12px;
+}
+
+.triedLabel {
+  composes: dLabel;
+  margin-bottom: 6px;
+}
+
+/* R47.1 — a wide table scrolls INSIDE the rail; the page never grows a horizontal scrollbar. */
+.triedScroll {
+  overflow-x: auto;
+}
+
+.triedTable {
+  border-collapse: collapse;
+  font: 500 var(--fs-readout) / 1.5 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--data);
+}
+
+.triedTable th {
+  padding: 2px 14px 2px 0;
+  text-align: left;
+  color: var(--text-faint);
+  font: 600 var(--fs-micro) / 1.5 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+.triedTable td {
+  padding: 2px 14px 2px 0;
+  white-space: nowrap;
+}
+
+.triedTable tr[data-winner] td {
+  font-weight: 700;
+}
+
+.triedKind {
+  font-family: var(--font-sans);
+}
+
+.triedNum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The winner is the row the rectangle on show came from — the under-judgement blue, like it. */
+.triedWon {
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font: 600 var(--fs-label) / 1.5 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+/* A refusal is a sentence, kept verbatim — let it wrap rather than drag the table wide. */
+.triedRefused {
+  min-width: 180px;
+  white-space: normal;
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+}
+
 /* The runner-up ghosts, named in one quiet line (silent when there are none). */
 .rivalNote {
   margin: 8px 0 0;

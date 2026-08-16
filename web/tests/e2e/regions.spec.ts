@@ -132,7 +132,14 @@ interface Region {
   margin_thin: boolean;
   confident: boolean;
   candidates: { rank: number; x: number; y: number; ncc: number; npix: number; subpixel: boolean }[];
-  tried: unknown[];
+  /** R46.5 — every still × scale the search attempted, in the order it tried them. */
+  tried: {
+    still_kind: string;
+    scale: number;
+    ncc: number | null;
+    margin: number | null;
+    refused: string | null;
+  }[];
   electrodes: {
     count: number;
     detected: number;
@@ -183,6 +190,10 @@ interface RegionOpts {
   candidates?: Region['candidates'];
   /** R46.10 — this row was placed against an earlier build (the server derives it per row). */
   stale?: boolean;
+  /** R46.5 — the whole attempt table; defaulted to three stills, one refused. */
+  tried?: Region['tried'];
+  /** The zoom's own caveat sentence, when the measurement had one. */
+  zoomNote?: string;
 }
 
 function craftedRegion(o: RegionOpts = {}): Region {
@@ -204,14 +215,25 @@ function craftedRegion(o: RegionOpts = {}): Region {
       pitch_recording_px: 33.3,
       pitch_mosaic_px: 14,
       angle_delta_deg: o.angleDelta ?? 0.2,
-      note: '',
+      note: o.zoomNote ?? '',
     },
     ncc: 0.8142,
     margin: o.marginThin ? 0.012 : 0.134,
     margin_thin: o.marginThin ?? false,
     confident: o.confident ?? true,
     candidates: o.candidates ?? [],
-    tried: [],
+    // R46.5 — served in the order tried; the winner is the median row (the record's still_kind).
+    tried: o.tried ?? [
+      { still_kind: 'median', scale: 0.42, ncc: 0.8142, margin: 0.134, refused: null },
+      { still_kind: 'max', scale: 0.42, ncc: 0.7011, margin: 0.052, refused: null },
+      {
+        still_kind: 'std',
+        scale: 0.42,
+        ncc: null,
+        margin: null,
+        refused: 'nothing measurable in this picture',
+      },
+    ],
     electrodes: (o.electrodes ?? true) ? electrodeBlock() : null,
     status: o.status ?? 'unconfirmed',
     placed_by: 'machine',
@@ -1151,6 +1173,40 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(zoom).toBeVisible();
     await expect(byId(page, TID.regionStillKind)).toBeVisible();
     await expect(byId(page, TID.regionPlacedBy)).toBeVisible();
+  });
+
+  test('R46.5: the whole tried table is in the fold — order as served, the winner named, a refusal verbatim', async ({
+    page,
+  }) => {
+    await openRegions(page, { regions: [craftedRegion()] });
+    await byId(page, TID.regionEvidenceToggle).click();
+
+    // one row per attempt, exactly as served (never re-ranked client-side)
+    const rows = byId(page, TID.regionTriedRow);
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toHaveAttribute('data-still', 'median');
+    await expect(rows.nth(1)).toHaveAttribute('data-still', 'max');
+    await expect(rows.nth(2)).toHaveAttribute('data-still', 'std');
+
+    // the winner is the record's own still, marked on its row — and only on its row
+    await expect(rows.nth(0)).toHaveAttribute('data-winner', 'true');
+    await expect(rows.nth(0)).toContainText('won');
+    await expect(page.locator(`[data-testid="${TID.regionTriedRow}"][data-winner]`)).toHaveCount(1);
+
+    // scores in the repo's numeric style; the size each attempt ran at
+    await expect(rows.nth(0)).toContainText('0.420×');
+    await expect(rows.nth(0)).toContainText('0.814');
+    await expect(rows.nth(0)).toContainText('0.134');
+    await expect(rows.nth(1)).toContainText('0.701');
+
+    // ⛔ a refused attempt keeps the server's sentence, verbatim — that is what the table is FOR
+    await expect(rows.nth(2)).toContainText('nothing measurable in this picture');
+
+    // R47.1 — the table scrolls inside the rail; the page itself never grows a horizontal bar
+    const noPageScroll = await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    );
+    expect(noPageScroll).toBe(true);
   });
 
   test('R47.4: the pipeline bar says what each step is for', async ({ page }) => {

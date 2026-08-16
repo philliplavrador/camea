@@ -529,6 +529,8 @@ export const TID = {
   regionFadeValue: 'region-fade-value', //   what is DRAWN — swaps while Space is held (R47)
   regionEvidenceToggle: 'region-evidence-toggle', // ncc + margin on the rail; the rest folded (R47)
   regionStillKind: 'region-still-kind', //   which projection won: median | max | std (R46.5)
+  regionTried: 'region-tried', //            ⭐ R46.5 — the whole `tried` table, order as served
+  regionTriedRow: 'region-tried-row', //     one attempt; data-still, data-winner on the one that won
   regionZoom: 'region-zoom', //              the scale
   regionZoomSearched: 'region-zoom-searched', // ⚠️ shown when it was SEARCHED, not measured (R46.2)
   regionNcc: 'region-ncc',
