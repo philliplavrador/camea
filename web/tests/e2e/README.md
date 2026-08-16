@@ -111,10 +111,15 @@ refusal PUT first — R6.7).
 
 ### 4 · Place
 
-`place-cost`, `place-gpu`, `place-run`, `place-cancel`, `place-use-cache`, `place-skip`
-(destructive — R27), `place-progress-bar` (a gliding CSS width transition — R8.5), `place-eta`
-(ticks down, format `15m 01s` / `47 s` / `almost there…`, never negative — R8), `place-phase`,
-`place-log`, `place-worklist` + `place-worklist-item`, `place-advanced` (`<details>`; says "off the
+`place-cost`, `place-gpu`, `place-run`, `place-use-cache`, `place-skip`
+(destructive — R27), `place-progress` (⏱️ R48.2 — the `<Progress>` root; its parts follow from it:
+`place-progress-bar`, a gliding CSS width transition — R8.5; `place-progress-pct`;
+`place-progress-eta`, which ticks down in the format `15m 01s left` / `47 s left` /
+`almost there… left`, is **never empty** — R48.4 puts *"working out how long this will take…"*
+there instead — and never negative, R8; `place-progress-stop`, the Cancel; `place-progress-log`,
+the last 8 lines — R8.7). ⛔ There is no `place-phase`: the primitive gives the phase no testid of
+its own, so assert on `place-progress` for *"the build is alive"*.
+`place-worklist` + `place-worklist-item`, `place-advanced` (`<details>`; says "off the
 validated path"). Warning: `warn-pass1-no-confidence` (W9).
 
 ### 5 · Sweep (the stage)
@@ -163,7 +168,8 @@ both mount is `electrode-*` (singular); the video screen's own chrome is `vm-*`.
 
 - **Step** `electrodes-viewer` (root), `electrodes-canvas` (the READ-ONLY core viewer),
   `electrodes-map` (**Map electrodes _and_ Re-run — one testid, two mutually-exclusive states**),
-  `electrodes-progress` / `electrodes-phase` / `electrodes-cancel`, `electrodes-map-error`
+  `electrodes-progress` / `electrodes-mapping` (the `<Progress>` root — `-bar`/`-pct`/`-eta`/`-stop`
+  follow from it, R48.2), `electrodes-map-error`
   (**the refusal, verbatim** — see below).
 - **Readout** `electrode-panel`, `electrode-id` (text `col-row`; **attr** `data-kind=1|2`),
   `electrode-marker` (**attr** `data-electrode`), `electrode-ids-toggle` (`role=switch`, off by

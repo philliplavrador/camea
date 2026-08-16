@@ -44,8 +44,8 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { meaChannelTrace, meaEnvelopes, startMeaEnvelopes } from '../../api';
-import type { MeaChannelTrace } from '../../api';
+import { meaChannelTrace, meaEnvelopes, startMeaEnvelopes, useJob, useStopJob } from '../../api';
+import type { MeaChannelTrace, MeaEnvelopeStatus } from '../../api';
 import { ApiError } from '../../api/client';
 import { TRACE_PAD, TraceChart } from '../../core/trace/TraceChart';
 // ⭐ TraceNav + readout live in core/trace since 2026-08-15 — the videomosaic voltage panel is
@@ -55,7 +55,13 @@ import { readout } from '../../core/trace/readout';
 import { nextSpike, prevSpike } from '../../core/trace/spikeStep';
 import { inPlot, plotRect, timeAtX, useTimeBrush } from '../../core/trace/useTimeBrush';
 import * as vs from '../../core/trace/viewStack';
-import { Button, LiveWarning, Panel } from '../../design';
+import {
+  NOT_READ_YET,
+  READING_LABEL,
+  READ_NOT_POSSIBLE,
+  READ_STOPPED,
+} from '../../core/trace/wholeRecording';
+import { Button, LiveWarning, Panel, Progress, useDelayedFlag } from '../../design';
 import { SILENT_MEANING, formatRate } from './activityScale';
 import styles from './MeaTrace.module.css';
 
@@ -73,6 +79,11 @@ const MIN_SPAN_SAMPLES = 20;
 /** How long to sit still before fetching the view he has landed on. Long enough that walking back
  *  through history with the keyboard does not fire a request per keystroke. */
 const SETTLE_MS = 90;
+
+/** How often to ask whether the one-off end-to-end read has landed — the shelf's cadence. ⚠️ This
+ *  is NOT the bar's cadence: the bar follows the job itself through `useJob` (500 ms + a 1 Hz
+ *  countdown), and this only answers "is the envelope on disk yet". */
+const ENVELOPE_POLL_MS = 2000;
 
 // ⚠️ **MODULE CONSTANTS, NOT `[]` AT THE CALL SITE.** `TraceChart` keys its paint on prop identity,
 // so a fresh array literal in JSX repaints the canvas on every parent render — and `MeaTrace`
@@ -106,7 +117,18 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
   /** True while the close-up on screen is a PREVIOUS stretch — its fetch is still out. */
   const [pending, setPending] = useState(false);
   const [needsEnvelope, setNeedsEnvelope] = useState(false);
+  /** The POST that asks for the read is in flight. ⚠️ NOT "a read is running" — that is `envJobId`,
+   *  which the POST's own reply already carries, so the bar appears without waiting for a poll. */
   const [building, setBuilding] = useState(false);
+  /** The end-to-end read running for THIS recording, or '' — the job the bar follows (R48). */
+  const [envJobId, setEnvJobId] = useState('');
+  /** 🔴 R48.9 — what to say once the wait has ended and the recording still cannot be shown whole. */
+  const [readEnded, setReadEnded] = useState<string | null>(null);
+  /** A read for this recording has been seen running during this wait. Refs, not state: they steer
+   *  which sentence R48.9 owes him, and neither should render anything by changing. */
+  const sawJob = useRef(false);
+  /** The wait is ours to report on — he asked for it, or the panel found one already going. */
+  const watching = useRef(false);
   // Bumped when a backfill finishes, purely to re-run the arrival fetch. Without it the panel keeps
   // showing "not read yet" after the job it started has finished — see the effect below.
   const [reload, setReload] = useState(0);
@@ -122,6 +144,14 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
   const duration = whole?.duration_s ?? 0;
   const samplingHz = whole?.sampling_hz ?? 0;
   const minSpanS = samplingHz > 0 ? MIN_SPAN_SAMPLES / samplingHz : 0;
+
+  // ⏱️ **THE READ'S OWN NUMBERS (BEHAVIOUR R48).** `useJob` owns the ticking countdown and R8.2's
+  // re-anchor discipline; this panel only renders what it hands back. ⛔ Never re-time it here.
+  const readJob = useJob(envJobId || null);
+  const stopJob = useStopJob();
+  // R48.1 — a pad read is ~50 ms, so the *word* waits 400 ms. The empty chart below does not: it
+  // holds the panel's shape from the first frame, which is what R48.10 is actually about here.
+  const padWait = useDelayedFlag(channel != null && whole == null && !error && !needsEnvelope);
 
   // ── arrival: the whole recording, in one request ──────────────────────────────────────────
   // ⭐ Asked for with no `t1` and a `max_points`, which is the server's way of saying "all of it,
@@ -166,40 +196,96 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
     };
   }, [analysisId, recordingId, channel, reload]);
 
-  // ⚠️ **WAIT FOR THE BACKFILL AND THEN SHOW THE RECORDING.** Starting the job is not the feature;
-  // seeing the trace afterwards is. Without this the ~1 minute job finishes and the panel is still
-  // showing "Camea has not read this recording end to end yet", and the only way out is to click a
-  // different pad and come back — a button that appears to do nothing. (Caught in review.)
+  /**
+   * Fold one envelope-status reply into this panel. ⭐ **EVERY OUTCOME IS SAID (R48.9).** There are
+   * exactly three, and the one that used to be silent is the one that happens for real:
+   *
+   *   • ready → re-run the arrival fetch and show the recording;
+   *   • a job → follow it, and the bar carries pct / ETA / Stop;
+   *   • neither, once we were watching → **the wait is over and it did not work**, which an
+   *     ActivityScan reaches every time (no continuous trace ⇒ nothing to read ⇒ `ready` never
+   *     comes). This used to `setBuilding(false)` and leave the panel offering the same button.
+   */
+  const applyStatus = useCallback(
+    (s: MeaEnvelopeStatus) => {
+      const mine = (s.recordings ?? []).find((r) => r.recording_id === recordingId) ?? null;
+      const jid = mine?.job_id ?? '';
+      setEnvJobId(jid);
+      if (jid) {
+        sawJob.current = true;
+        watching.current = true;
+        setReadEnded(null);
+      }
+      if (mine?.ready) {
+        sawJob.current = false;
+        watching.current = false;
+        setBuilding(false);
+        setNeedsEnvelope(false);
+        setError(null);
+        setReadEnded(null);
+        setSaid('The whole recording is ready.');
+        setReload((n) => n + 1);
+        return;
+      }
+      if (!jid && watching.current) {
+        // 🔴 R48.9 — a countdown that reaches zero and vanishes with no sentence is WORSE than the
+        // bare "Reading…" it replaced. Which sentence depends on whether a job ever ran, which is
+        // the only thing the wire tells these two cases apart by.
+        setBuilding(false);
+        setReadEnded(sawJob.current ? READ_STOPPED : READ_NOT_POSSIBLE);
+        sawJob.current = false;
+        watching.current = false;
+      }
+    },
+    [recordingId],
+  );
+
+  // ⭐ **ONE LOOK THE MOMENT THE RECORDING CANNOT BE SHOWN WHOLE.** A read may already be running —
+  // every import starts one — and he must meet its bar rather than a button offering to start what
+  // is already going. ⛔ Not a poll: this fires once per refusal.
   useEffect(() => {
-    if (!building) return;
+    if (!needsEnvelope) {
+      setEnvJobId('');
+      setReadEnded(null);
+      sawJob.current = false;
+      watching.current = false;
+      return;
+    }
     let stop = false;
-    const tick = () => {
+    void meaEnvelopes(analysisId)
+      .then((s) => {
+        if (!stop) applyStatus(s);
+      })
+      .catch(() => {
+        // Quiet: not being able to ask about the read is not his data going missing, and the offer
+        // below still works.
+      });
+    return () => {
+      stop = true;
+    };
+  }, [analysisId, needsEnvelope, applyStatus]);
+
+  // ⚠️ **WAIT FOR THE READ AND THEN SHOW THE RECORDING.** Starting the job is not the feature;
+  // seeing the trace afterwards is. Without this the job finishes and the panel is still showing
+  // "Camea has not read this recording end to end yet", and the only way out is to click a
+  // different pad and come back — a button that appears to do nothing. (Caught in review.)
+  // ⛔ Armed only while there is something to wait FOR: a screen that polls forever keeps a
+  // laptop's fan on for no reason, and R48.9's ending is what takes the arm away.
+  useEffect(() => {
+    if (!needsEnvelope || !(building || envJobId)) return;
+    let stop = false;
+    const timer = setInterval(() => {
       void meaEnvelopes(analysisId)
         .then((s) => {
-          if (stop) return;
-          const rows = s.recordings ?? [];
-          const mine = rows.find((r) => r.recording_id === recordingId);
-          const running = rows.some((r) => r.job_id);
-          if (mine?.ready) {
-            setBuilding(false);
-            setNeedsEnvelope(false);
-            setError(null);
-            setSaid('The whole recording is ready.');
-            setReload((n) => n + 1);
-          } else if (!running) {
-            // Nothing is running and it still is not ready — the job failed or refused. Stop
-            // polling and leave the panel saying so rather than spinning for ever.
-            setBuilding(false);
-          }
+          if (!stop) applyStatus(s);
         })
-        .catch(() => setBuilding(false));
-    };
-    const timer = setInterval(tick, 2000);
+        .catch(() => {});
+    }, ENVELOPE_POLL_MS);
     return () => {
       stop = true;
       clearInterval(timer);
     };
-  }, [analysisId, building, recordingId]);
+  }, [analysisId, needsEnvelope, building, envJobId, applyStatus]);
 
   // ── the close-up follows the view he is standing on ───────────────────────────────────────
   useEffect(() => {
@@ -410,15 +496,25 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
 
   const buildEnvelopes = useCallback(() => {
     setBuilding(true);
-    setSaid('Reading the recording end to end. This takes about a minute.');
-    void startMeaEnvelopes(analysisId).catch((e: unknown) => {
-      setError(e instanceof Error ? e.message : String(e));
-      setBuilding(false);
-    });
-    // ⛔ No `finally` clearing `building` — the POST returns the moment the job is SUBMITTED, and
-    // clearing here is what made the button look finished while the read had barely started. The
-    // polling effect above owns the flag now, and it is what ends it.
-  }, [analysisId]);
+    setReadEnded(null);
+    watching.current = true;
+    // ⛔ No "this takes about a minute": one recording alone does, five queued behind each other do
+    // not, and the bar says which this is (R48).
+    setSaid('Reading the recording end to end.');
+    // ⭐ The POST's own reply already carries this recording's job id, so the bar is up on the next
+    // frame rather than up to one poll later. `building` therefore clears here — it means "the
+    // request is out", and what replaces it is the job, not a disabled button.
+    void startMeaEnvelopes(analysisId)
+      .then((s) => {
+        applyStatus(s);
+        setBuilding(false);
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setBuilding(false);
+        watching.current = false;
+      });
+  }, [analysisId, applyStatus]);
 
   // ── the time under the pointer ─────────────────────────────────────────────────────────────
   // ⭐ Measured against the range the picture is actually DRAWN from (`data`'s served range, the
@@ -484,13 +580,39 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
             missing and offer to do it, rather than showing a broken chart. */}
         {channel != null && needsEnvelope && (
           <div data-testid="mea-trace-needs-envelope">
-            <LiveWarning variant="warn">
-              Camea has not read this recording end to end yet, so it cannot show you the whole of
-              it at once. It is a one-off job of about a minute per recording.{' '}
-              <Button size="sm" variant="ghost" onClick={buildEnvelopes} disabled={building}>
-                {building ? 'Reading…' : 'Read it now'}
-              </Button>
-            </LiveWarning>
+            {envJobId ? (
+              // ⏱️ **THE SCREEN HE COMPLAINED ABOUT (R48).** This said the single word `Reading…`
+              // while the percentage was already on the wire, already fetched every 2 s, and thrown
+              // away. It follows the JOB now, so the countdown ticks between polls (R8.2) and the
+              // turnstile's own message — "waiting for 3 recordings in front of it to be read" —
+              // arrives with a real ETA rather than as silence.
+              <Progress
+                label={readJob.job?.said_as || READING_LABEL}
+                pct={readJob.pct}
+                etaText={readJob.etaText}
+                elapsedText={readJob.elapsedText}
+                phase={readJob.phase}
+                message={readJob.message}
+                // R48.7 — wired, never decorative. A Stop that races the end of the read is not an
+                // error to shout about (`useStopJob` swallows that 409), and anything else shows up
+                // on the next poll: the job either stops or it does not, and the bar keeps saying so.
+                onStop={() => void stopJob(envJobId).catch(() => {})}
+                data-testid="mea-trace-reading"
+              />
+            ) : (
+              <LiveWarning variant="warn">
+                {NOT_READ_YET}{' '}
+                <Button size="sm" variant="ghost" onClick={buildEnvelopes} disabled={building}>
+                  {building ? 'Reading…' : 'Read it now'}
+                </Button>
+              </LiveWarning>
+            )}
+            {/* 🔴 R48.9 — the wait ended and the recording still cannot be shown whole. SAY it. */}
+            {readEnded && (
+              <LiveWarning variant="warn">
+                <span data-testid="mea-trace-read-ended">{readEnded}</span>
+              </LiveWarning>
+            )}
           </div>
         )}
 
@@ -502,6 +624,29 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
             Channel <b>{channel}</b> was not wired up for this recording, so nothing was measured
             on it. Only some of the chip&rsquo;s pads can be recorded at once.
           </p>
+        )}
+
+        {/* ⭐ **R48.10 — A PAD CLICK MUST NOT EMPTY THE PANEL.** The arrival effect clears `whole`
+            and `data`, and the idle hint is gated on "nothing selected", so between the click and
+            the reply this panel had NOTHING in it at all — not even the box the chart is about to
+            fill. `TraceChart`'s `placeholder` was built for exactly this and neither consumer
+            passed it. ⛔ Not a `<Progress>`: a ~50 ms pad read is the sub-second interactive read
+            R48 explicitly says to answer with the picture. The empty axes go up on the first frame
+            so nothing jumps; the word waits out R48.1's grace. */}
+        {channel != null && !error && !needsEnvelope && whole == null && (
+          <div data-testid="mea-trace-loading">
+            <TraceChart
+              trace={NO_TRACE}
+              spikes={NO_SPIKES}
+              t0={0}
+              t1={0}
+              placeholder={padWait ? 'Reading this pad…' : ''}
+              // ⚠️ Its own testid: sharing `mea-trace-chart` would let a test asserting the chart
+              // is up pass against an empty frame.
+              testId="mea-trace-placeholder-chart"
+              ariaLabel="Reading this pad."
+            />
+          </div>
         )}
 
         {channel != null && whole?.recorded && data && view && (

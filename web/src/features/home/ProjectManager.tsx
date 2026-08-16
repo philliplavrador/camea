@@ -14,6 +14,7 @@
 // nothing here names a trial, a count or an exclusion.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   getDocument,
@@ -23,7 +24,7 @@ import {
 } from '../../api';
 import { useDocument } from '../../store/documentStore';
 import { useToast } from '../../app';
-import { Button, Card, Badge } from '../../design';
+import { Button, Card, Badge, Progress, useDelayedFlag } from '../../design';
 import { useProjects } from './useProjects';
 import { shortPath } from './pathText';
 import styles from './ProjectManager.module.css';
@@ -77,15 +78,35 @@ export function ProjectManager() {
   const { state, refresh, remove, rename } = useProjects();
   const toast = useToast();
 
+  /**
+   * ⏱️ R48 — what this screen is busy with, in his words and NAMING THE PROJECT. A rename showed the
+   * old name until the re-list landed and a delete showed nothing at all, which on a project holding
+   * gigabyte recording copies is tens of seconds of a card that looks untouched.
+   *
+   * R48.7/R48.9 — neither has anything to poll: a rename is two round trips and a delete is a
+   * `shutil.rmtree` with no callback. So `pct` stays null (the travelling sliver, never a filling
+   * bar) and `why` says out loud that there is no Stop, rather than rendering a dead button.
+   */
+  const [busy, setBusy] = useState<{ label: string; why: string } | null>(null);
+  // R48.1 — the 400 ms grace. Most renames beat it; no delete does.
+  const showBusy = useDelayedFlag(busy != null);
+  const loading = useDelayedFlag(state.status === 'loading');
+
   async function onRename(p: AnalysisSummary): Promise<void> {
     const next = window.prompt('Rename project', p.name);
     if (next == null) return;
     const name = next.trim();
     if (!name || name === p.name) return;
+    setBusy({
+      label: `Renaming "${p.name}" to "${name}"`,
+      why: 'a rename cannot be stopped once it starts',
+    });
     try {
       await rename(p.analysis_id, name);
     } catch (e) {
       toast.push(`Rename failed: ${e instanceof Error ? e.message : String(e)}`, { tone: 'danger' });
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -107,11 +128,17 @@ export function ProjectManager() {
       )
     )
       return;
+    setBusy({
+      label: `Deleting "${p.name}" and everything in it`,
+      why: 'a delete cannot be stopped once it starts',
+    });
     try {
       await remove(p.analysis_id);
       toast.push(`Deleted "${p.name}".`, { tone: 'default' });
     } catch (e) {
       toast.push(`Delete failed: ${e instanceof Error ? e.message : String(e)}`, { tone: 'danger' });
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -152,7 +179,30 @@ export function ProjectManager() {
 
       {state.status === 'ready' && state.migration && <MigrationNotice report={state.migration} />}
 
-      {state.status === 'loading' && <p className={styles.muted}>Loading projects…</p>}
+      {/* ⏱️ R48.7/R48.9 — no Stop, and the reason said out loud instead of a dead button. The label
+          NAMES the project, so a delete of a gigabyte shelf is not a silent card. */}
+      {busy && showBusy && (
+        <Progress
+          className={styles.busy}
+          data-testid="projects-busy"
+          label={busy.label}
+          pct={null}
+          unstoppableWhy={busy.why}
+        />
+      )}
+
+      {/* R48.10 — in flight is not "no projects": this appears only while the list is being read,
+          and `projects-empty` only once it has been. */}
+      {state.status === 'loading' && loading && (
+        <Progress
+          className={styles.busy}
+          data-testid="projects-loading"
+          label="Reading your projects"
+          pct={null}
+          // R48.7 — one request with nothing to poll. Say so; never a button that does nothing.
+          unstoppableWhy="reading the list cannot be stopped once it starts"
+        />
+      )}
       {state.status === 'error' && (
         <p className={styles.error} data-testid="projects-error">
           {state.message}

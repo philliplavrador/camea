@@ -41,8 +41,10 @@ region's electrode ids, a recording and a video, and it reports numbers.
 from __future__ import annotations
 
 import dataclasses
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -113,7 +115,9 @@ def population_rate(spike_times: np.ndarray, t0: float, t1: float,
     return counts.astype(np.float64)
 
 
-def video_activity(path: str | Path, bin_s: float = BIN_S) -> tuple[np.ndarray, float]:
+def video_activity(path: str | Path, bin_s: float = BIN_S, *,
+                   progress: Callable[[int, int], None] | None = None,
+                   report_every_s: float = 0.25) -> tuple[np.ndarray, float]:
     """Mean frame brightness of a recording, binned. -> ``(values, fps)``.
 
     Whole-field, not per neuron: segmenting cells is a different feature, and the population
@@ -121,6 +125,16 @@ def video_activity(path: str | Path, bin_s: float = BIN_S) -> tuple[np.ndarray, 
 
     ⚠️ Reads every frame — minutes for a 300 s recording. Callers run it in a job and cache it.
     cv2 is imported inside so this module stays importable by the route layer.
+
+    ``progress(frames_done, frames_total)`` is the whole reason this is bearable to wait through:
+    the DECODED FRAME is the countable unit (BEHAVIOUR R48.3) and the container's own frame count
+    is the denominator. ``frames_total`` is **0** when the container will not admit a length —
+    honest, and a caller must treat it as "no denominator" rather than divide by it.
+    ⭐ It is also the CANCEL seam: this loop has no other natural boundary, so a caller that wants
+    a Stop button raises out of the callback (R48.7).
+
+    ``report_every_s`` throttles the callback — measured decode is ~235 fps, and reporting every
+    frame would be hundreds of messages a second for a bar that moves 0.004 % each time.
     """
     import cv2  # noqa: PLC0415
 
@@ -128,7 +142,19 @@ def video_activity(path: str | Path, bin_s: float = BIN_S) -> tuple[np.ndarray, 
     if not cap.isOpened():
         raise FileNotFoundError(f"cannot open {path}")
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 1.0
+    # ⚠️ A CLAIM, not a fact — some containers report 0 or a count the stream does not honour, so
+    # this is only ever the ETA's denominator, never a loop bound. The loop still stops on `ok`.
+    n_claimed = max(0, int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0))
     means: list[float] = []
+    last_said = time.monotonic()
+
+    def say() -> None:
+        # ⚠️ 0 means "no denominator", and it must stay 0 — reporting `done` as the total would
+        # read as 100 % on every single frame. When the stream OUTRUNS the container's claim the
+        # count so far becomes the denominator instead: honest ("at least this far"), never > 1.
+        if progress is not None:
+            progress(len(means), max(n_claimed, len(means)) if n_claimed else 0)
+
     try:
         while True:
             ok, frame = cap.read()
@@ -136,8 +162,12 @@ def video_activity(path: str | Path, bin_s: float = BIN_S) -> tuple[np.ndarray, 
                 break
             g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
             means.append(float(g.mean()))
+            if progress is not None and time.monotonic() - last_said >= report_every_s:
+                last_said = time.monotonic()
+                say()
     finally:
         cap.release()
+    say()
     if not means:
         return np.zeros(0), fps
     m = np.asarray(means, dtype=np.float64)

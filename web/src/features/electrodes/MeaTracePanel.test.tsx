@@ -7,7 +7,11 @@
 //   • the three live warnings are on the page, and the did-not-decode one NAMES its scope
 //     (`health_scope`) — a percentage whose scope changes as he zooms must say which it is quoting.
 //   • envelope missing -> the quiet note + "Read it now", which starts the backfill and polls
-//     until the recording is ready, then shows it.
+//     until the recording is ready, then shows it — and while it runs, ⏱️ **a bar with the read's
+//     real percentage and a time on it** (BEHAVIOUR R48), not the bare word `Reading…`.
+//   • 🔴 R48.9 — a read that starts NOTHING says so. An ActivityScan stores no continuous trace, so
+//     `start_envelope` returns no job and `ready` never comes true; the poller used to stop dead
+//     and leave the same button sitting there.
 //
 // The pixels themselves are not asserted (jsdom has no canvas); the drag/keyboard mechanics live
 // in core/trace and carry their own suites (useTimeBrush.test.ts, viewStack.test.ts).
@@ -22,6 +26,26 @@ vi.mock('../../api', () => ({
   getElectrodeTrace: vi.fn(),
   getMeaEnvelopes: vi.fn(),
   startMeaEnvelopeRead: vi.fn(),
+  // ⏱️ R48 — the panel follows the read's JOB for its bar. Stubbed rather than exercised here: the
+  // countdown's arithmetic and R8.2's re-anchor rule are proven in `api/jobs.test.ts`, and the bar's
+  // ARIA in `design/primitives/Progress.test.tsx`. What this file proves is that the panel WIRES it.
+  useJob: () => ({
+    job: { said_as: 'reading the recording end to end' },
+    state: 'running',
+    phase: 'envelope',
+    phaseIndex: null,
+    nPhases: null,
+    pct: 40,
+    message: '40% of the recording read',
+    etaS: 31,
+    etaText: '31 s',
+    elapsedS: 20,
+    elapsedText: '20 s',
+    logTail: [],
+    error: null,
+    isTerminal: false,
+  }),
+  useStopJob: () => vi.fn(),
 }));
 
 import { getElectrodeTrace, getMeaEnvelopes, startMeaEnvelopeRead } from '../../api';
@@ -74,11 +98,13 @@ function payload(over: Partial<ElectrodeTracePayload> = {}): ElectrodeTracePaylo
   };
 }
 
-function status(ready: boolean): VideoMeaEnvelopeStatus {
+/** One envelope-status reply. ⚠️ `ready` and `jobId` are INDEPENDENT: "not ready and nothing
+ *  running" is a real state (an ActivityScan), and it is the one R48.9 was written about. */
+function status(ready: boolean, jobId = ''): VideoMeaEnvelopeStatus {
   return {
     analysis_id: 'A',
-    recordings: [{ run_id: RUN, label: `Network/${RUN}`, ready, job_id: ready ? '' : 'j1', pct: 0 }],
-    started: ready ? [] : ['j1'],
+    recordings: [{ run_id: RUN, label: `Network/${RUN}`, ready, job_id: jobId, pct: 40 }],
+    started: jobId ? [jobId] : [],
   };
 }
 
@@ -143,14 +169,16 @@ describe('MeaTracePanel — the ported whole-recording viewer', () => {
     expect(screen.queryByTestId('mea-trace-chart')).toBeNull();
   });
 
-  it('envelope missing -> "Read it now" starts the backfill, polls, and then shows the recording', async () => {
+  it('envelope missing -> "Read it now" starts the backfill, shows a BAR with a time on it, and then the recording', async () => {
     vi.useFakeTimers();
     vi.mocked(getElectrodeTrace)
       .mockRejectedValueOnce(
         new ApiError(409, { error: { code: 'refused', message: 'not read end to end yet' } }),
       )
       .mockResolvedValue(payload());
-    vi.mocked(startMeaEnvelopeRead).mockResolvedValue(status(false));
+    // The look on arrival finds nothing running; the POST is what starts it.
+    vi.mocked(getMeaEnvelopes).mockResolvedValueOnce(status(false));
+    vi.mocked(startMeaEnvelopeRead).mockResolvedValue(status(false, 'j1'));
     vi.mocked(getMeaEnvelopes).mockResolvedValue(status(true));
 
     render(<MeaTracePanel analysisId="A" electrode="3-7" recordings={[rec()]} />);
@@ -158,17 +186,26 @@ describe('MeaTracePanel — the ported whole-recording viewer', () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    // ⭐ A fact and an offer, not an error.
-    expect(screen.getByTestId('mea-trace-needs-envelope')).toBeInTheDocument();
+    // ⭐ A fact and an offer, not an error — and ⛔ it no longer promises a minute (R48).
+    const note = screen.getByTestId('mea-trace-needs-envelope');
+    expect(note).toBeInTheDocument();
+    expect(note.textContent).not.toContain('about a minute');
     fireEvent.click(screen.getByRole('button', { name: 'Read it now' }));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(startMeaEnvelopeRead).toHaveBeenCalledWith('A');
-    expect(screen.getByRole('button', { name: 'Reading…' })).toBeDisabled();
+
+    // ⏱️ **R48 — THE BAR, NOT THE WORD.** The POST's own reply carries the job id, so the read's
+    // percentage and its ticking countdown are on screen on the next frame rather than a poll later.
+    const bar = screen.getByTestId('mea-trace-reading');
+    expect(bar.textContent).toContain('40%');
+    expect(screen.getByTestId('mea-trace-reading-eta').textContent).toContain('31 s');
+    expect(screen.getByTestId('mea-trace-reading-stop')).toBeInTheDocument(); // R48.7 — and wired
+    expect(screen.queryByRole('button', { name: 'Reading…' })).toBeNull();
 
     // One poll later the run reads ready, the arrival fetch re-runs, and the picture appears —
-    // the button must never look finished while the read has barely started.
+    // the bar must never look finished while the read has barely started.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
     });
@@ -178,5 +215,30 @@ describe('MeaTracePanel — the ported whole-recording viewer', () => {
     });
     expect(screen.queryByTestId('mea-trace-needs-envelope')).toBeNull();
     expect(screen.getByTestId('mea-trace-overview-chart')).toBeInTheDocument();
+  });
+
+  it('🔴 R48.9 — a read that starts nothing SAYS so, instead of the poller stopping in silence', async () => {
+    vi.useFakeTimers();
+    vi.mocked(getElectrodeTrace).mockRejectedValue(
+      new ApiError(409, { error: { code: 'refused', message: 'not read end to end yet' } }),
+    );
+    // The ActivityScan case, exactly as the backend produces it: nothing started, nothing ready,
+    // and `ready` is never going to become true because there is no continuous trace to read.
+    vi.mocked(getMeaEnvelopes).mockResolvedValue(status(false));
+    vi.mocked(startMeaEnvelopeRead).mockResolvedValue(status(false));
+
+    render(<MeaTracePanel analysisId="A" electrode="3-7" recordings={[rec()]} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Read it now' }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    const ended = screen.getByTestId('mea-trace-read-ended');
+    expect(ended.textContent).toContain('no continuous trace');
+    // ⛔ And no bar counting down to nothing beside it.
+    expect(screen.queryByTestId('mea-trace-reading')).toBeNull();
   });
 });

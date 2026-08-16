@@ -98,12 +98,19 @@ class Progress:
 
     `eta_s` is whatever the job last said. It may be `None` (a silent phase) and **it may jump UP** —
     an honest revision beats a smooth lie. See the module docstring: do not smooth it here.
+
+    ⭐ **`pct=None` MEANS "THIS WORK HAS NO DENOMINATOR" (BEHAVIOUR R48.9), and it is not the same as
+    `pct=0.0`.** An unbounded directory walk cannot know how many entries it will find until it has
+    found them, so a bar that fills is a lie about a quantity nobody has. `None` puts the UI on the
+    travelling sliver, with the count-up in `message` carrying the liveness — *"14 datasets so far"*.
+    `0.0` means "measurably none of it is done yet", which is a different and much commoner thing.
+    Only the four cases in R48.9 may send `None`; everything else owes a real number.
     """
 
     phase: str = "queued"
     phase_index: int = 0
     n_phases: int = 1
-    pct: float = 0.0
+    pct: float | None = 0.0
     message: str = ""
     eta_s: float | None = None
 
@@ -163,10 +170,15 @@ class Job:
                 "kind": self.kind,
                 "state": self.state,
                 "exclusive": self.exclusive,
+                # ⭐ R48.6 — the bar names what is being waited for IN HIS WORDS, so the label has to
+                # reach the client. Never empty: `said_as` humanizes the kind when a submit site has
+                # not opted in. (`label` itself stays off the wire — a caller that wants to know
+                # whether one was set is asking the wrong question; it wants the sentence.)
+                "said_as": self.said_as,
                 "phase": p.phase,
                 "phase_index": int(p.phase_index),
                 "n_phases": int(p.n_phases),
-                "pct": round(float(p.pct), 1),
+                "pct": (None if p.pct is None else round(float(p.pct), 1)),
                 "message": p.message,
                 "started_at": self.started_at,
                 "elapsed_s": round(float(elapsed), 1),
@@ -176,6 +188,33 @@ class Job:
                 "log_tail": list(self.log_tail),
                 "result": self.result if self.state == "done" else None,
                 "error": self.error,
+                "cancellable": bool(self.cancellable and self.state in ("queued", "running")),
+            }
+
+    def to_brief(self) -> dict:
+        """The slim shape `GET /api/jobs/running` serves — everything the top strip (R48.8) needs
+        and **nothing it does not**.
+
+        ⚠️ **This exists because `GET /api/jobs` is far too expensive to poll globally.** That route
+        calls `to_json()` on every job in history (cap 32), and a *finished* videomosaic / electrode
+        / region job's `result` **embeds the entire document**, which is then re-validated through
+        the discriminated union on every single call. The strip polls continuously from every screen
+        in the app; it must not drag a document through Pydantic to draw a 30 px bar. So: running
+        jobs only, no `result`, no `log_tail`, no traceback.
+        """
+        with self._lock:
+            p = self.progress
+            elapsed = time.time() - self._t0 if self._t0 else 0.0
+            return {
+                "job_id": self.job_id,
+                "kind": self.kind,
+                "state": self.state,
+                "said_as": self.said_as,
+                "phase": p.phase,
+                "pct": (None if p.pct is None else round(float(p.pct), 1)),
+                "message": p.message,
+                "elapsed_s": round(float(elapsed), 1),
+                "eta_s": (None if p.eta_s is None else round(float(p.eta_s), 1)),
                 "cancellable": bool(self.cancellable and self.state in ("queued", "running")),
             }
 
@@ -245,13 +284,94 @@ def check_cancelled(cancel: Any, what: str = "job") -> None:
         raise Cancelled(f"{what} cancelled")
 
 
+#: ⏱️ Below this fraction of the work we refuse to estimate. Two samples into a 20,000-frame decode
+#: the rate is noise, and a first ETA of "4h 12m" that becomes "6m" a second later is worse than no
+#: ETA at all — he stops trusting the number and the number is the whole feature. 2 % matches what
+#: the snapshot solver already used (`solve.py`, `pct > 2.0`), which is the one estimator in this
+#: repo with real mileage on it.
+ETA_MIN_FRACTION = 0.02
+
+
+def eta_from_fraction(elapsed_s: float, frac: float,
+                      min_fraction: float = ETA_MIN_FRACTION) -> float | None:
+    """⏱️ **THE ONE ESTIMATOR (BEHAVIOUR R48.3).** Seconds remaining, or `None` if it is too early
+    to say. `frac` is the fraction of the WHOLE job that is done, in [0, 1].
+
+    Linear extrapolation of measured throughput: `remaining = elapsed · (1 − frac) / frac`. That is
+    it. There is no smoothing, no floor, no clamp to a previous value — R8.4 and R48.11 both say an
+    honest upward revision beats a smooth lie, so a job that slows down is *supposed* to report a
+    worse number than it did a second ago.
+
+    ⚠️ **`frac` MUST BE OVERALL, NOT PHASE-LOCAL (R48.5).** Handing this a phase's own 0→1 makes the
+    estimate restart at every phase boundary and count upward inside each one. If your job has
+    unequal phases, weight them against measured spans first — `features/videomosaic/pipeline._SPAN`
+    is the worked example — and pass the weighted overall fraction.
+
+    ⛔ **Do not call this on a timer to "keep the number fresh".** With `frac` pinned (a silent
+    phase) a growing `elapsed` makes the ETA count UP. That is R8b, it is still standing under R48b,
+    and it is why the ticking lives on the client. Call this only where `frac` actually advanced.
+
+    >>> eta_from_fraction(10.0, 0.25)      # a quarter done after 10 s -> 30 s left
+    30.0
+    >>> eta_from_fraction(10.0, 0.001) is None    # too early to say
+    True
+    >>> eta_from_fraction(10.0, 1.0)
+    0.0
+    """
+    try:
+        f = float(frac)
+        el = float(elapsed_s)
+    except (TypeError, ValueError):
+        return None
+    if not (f > 0.0) or f < float(min_fraction) or el < 0.0:
+        return None
+    if f >= 1.0:
+        return 0.0
+    return el * (1.0 - f) / f
+
+
+def eta_from_counts(elapsed_s: float, done: float, total: float,
+                    min_fraction: float = ETA_MIN_FRACTION) -> float | None:
+    """`eta_from_fraction` for the common shape: a loop with a counter and a length.
+
+    Use it wherever the loop already knows `i` and `n` — which, per the R48 survey, is nearly
+    everywhere: bytes copied/total, frames decoded/total, samples read/total, tiles rendered/placed,
+    links registered/queued, positions searched/total, files opened/found.
+    """
+    try:
+        t = float(total)
+    except (TypeError, ValueError):
+        return None
+    if t <= 0.0:
+        return None
+    return eta_from_fraction(elapsed_s, float(done) / t, min_fraction)
+
+
+def _opt_pct(v: Any) -> float | None:
+    """`pct` off an untyped bag, preserving the difference between `None` and `0.0` (R48.9).
+
+    ⚠️ The obvious `float(v or 0.0)` collapses them, and that is exactly the bug: a job that
+    deliberately says "this work has no denominator" would get a bar that fills from zero.
+    """
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def say(report: Callable[[Progress], None] | None, phase: str, idx: int, n: int,
-        pct: float, message: str = "", eta_s: float | None = None) -> None:
-    """Emit one `Progress`. Clamps `pct` to [0, 100] and tolerates `report=None`."""
+        pct: float | None, message: str = "", eta_s: float | None = None) -> None:
+    """Emit one `Progress`. Clamps `pct` to [0, 100] and tolerates `report=None`.
+
+    ⭐ `pct=None` passes through as `None` — "no denominator" (R48.9), not zero. See `Progress`.
+    """
     if report is None:
         return
     report(Progress(phase=phase, phase_index=int(idx), n_phases=int(n),
-                    pct=min(100.0, max(0.0, float(pct))), message=message, eta_s=eta_s))
+                    pct=(None if pct is None else min(100.0, max(0.0, float(pct)))),
+                    message=message, eta_s=eta_s))
 
 
 def phase_reporter(report: Callable[[Progress], None] | None,
@@ -267,7 +387,7 @@ def phase_reporter(report: Callable[[Progress], None] | None,
     """
     names = list(phases)
 
-    def emit(phase: str, pct: float, message: str = "", eta_s: float | None = None) -> None:
+    def emit(phase: str, pct: float | None, message: str = "", eta_s: float | None = None) -> None:
         idx = (names.index(phase) + 1) if phase in names else 0
         say(report, phase, idx, len(names), pct, message, eta_s)
 
@@ -299,7 +419,9 @@ def report_adapter(report: Callable[[Progress], None] | None) -> Callable[..., N
                 phase=str(kw.get("phase", "")),
                 phase_index=int(kw.get("phase_index", 0) or 0),
                 n_phases=int(kw.get("n_phases", 1) or 1),
-                pct=float(kw.get("pct", 0.0) or 0.0),
+                # ⭐ `None` survives as `None` (R48.9): `or 0.0` would turn a deliberate "no
+                # denominator" into a filling bar. A MISSING key still defaults to 0.0.
+                pct=_opt_pct(kw.get("pct", 0.0)),
                 message=str(kw.get("message", "") or ""),
                 eta_s=kw.get("eta_s"),
             ))
@@ -608,7 +730,7 @@ class JobRegistry:
                 phase=str(msg.get("phase", "")),
                 phase_index=int(msg.get("phase_index", 0) or 0),
                 n_phases=int(msg.get("n_phases", 1) or 1),
-                pct=float(msg.get("pct", 0.0) or 0.0),
+                pct=_opt_pct(msg.get("pct", 0.0)),
                 message=str(msg.get("message", "") or ""),
                 eta_s=msg.get("eta_s"),
             ))
@@ -687,6 +809,16 @@ class JobRegistry:
                 if j.state in ("queued", "running") and (kind is None or j.kind == kind):
                     return j
         return None
+
+    def live(self) -> list[Job]:
+        """Every queued/running job, oldest first — what the top strip reports (BEHAVIOUR R48.8).
+
+        Oldest first on purpose: the strip stacks them, and a job that appears while you are reading
+        the one above it must not shove that one down the screen.
+        """
+        with self._lock:
+            return [self._jobs[j] for j in self._order
+                    if j in self._jobs and self._jobs[j].state in ("queued", "running")]
 
     def holder(self, resource: str) -> Job | None:
         """The job currently holding the `resource` lease, if any.

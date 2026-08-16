@@ -12,7 +12,11 @@ import { SHORT } from './fixture';
  * "rulings not fully expressible on the fixture"). The FORMAT and no-negative clauses always hold.
  */
 test.describe('R8 — the Place ETA never freezes', { tag: '@slow' }, () => {
-  const ETA_FORMAT = /^(?:\d+m \d{2}s|\d+ s|almost there…?)$/i;
+  // ⏱️ The slot is `<Progress>`'s now (R48.2), so a real estimate reads "3m 20s left" — and while
+  // there is no estimate yet it is NOT empty (R48.4): it says so, with the elapsed clock beside it.
+  // Both are legitimate readings; only a blank one, or a negative time, is the bug.
+  const ETA_FORMAT = /^(?:\d+m \d{2}s|\d+ s|almost there…?) left$/i;
+  const ESTIMATING = /^working out how long this will take…/i;
 
   async function readEta(page: Page): Promise<string> {
     return (await byId(page, TID.placeEta).textContent())?.trim() ?? '';
@@ -48,7 +52,10 @@ test.describe('R8 — the Place ETA never freezes', { tag: '@slow' }, () => {
       const eta = byId(page, TID.placeEta);
       if ((await eta.count()) === 0) break; // build finished, ETA gone
       const txt = await readEta(page);
-      if (txt) {
+      // R48.4 — the slot is NEVER empty. It is either a formatted countdown or the "working out how
+      // long this will take…" sentence; both are read, neither may show a negative time.
+      expect(txt, 'the time slot must never be empty (R48.4)').not.toBe('');
+      if (txt && !ESTIMATING.test(txt)) {
         seen.push(txt);
         expect(txt, 'ETA must be well-formatted').toMatch(ETA_FORMAT);
         expect(txt, 'ETA must never render a negative time (reads as a hang)').not.toMatch(/-\d/);
@@ -76,7 +83,7 @@ test.describe('R8 — the Place ETA never freezes', { tag: '@slow' }, () => {
       const eta = byId(page, TID.placeEta);
       if ((await eta.count()) === 0) break;
       const txt = await readEta(page);
-      if (txt) {
+      if (txt && !ESTIMATING.test(txt)) {
         distinct.add(txt);
         if (txt !== last) {
           longestFrozenMs = Math.max(longestFrozenMs, Date.now() - lastChangeAt);
@@ -107,8 +114,10 @@ test.describe('R8 — the Place ETA never freezes', { tag: '@slow' }, () => {
     const wizard = new Wizard(page);
     await wizard.goto('place');
     await byId(page, TID.placeRun).click();
-    // Whatever the estimator does, the user must see the build is ALIVE: a phase label and a log tail.
-    await expect(byId(page, TID.placePhase)).toBeVisible({ timeout: SHORT });
+    // Whatever the estimator does, the user must see the build is ALIVE: the bar block (which carries
+    // the phase and the never-empty time slot — R48.4) and a log tail.
+    await expect(byId(page, TID.placeProgress)).toBeVisible({ timeout: SHORT });
+    await expect(byId(page, TID.placeEta)).not.toBeEmpty({ timeout: SHORT });
     await expect(byId(page, TID.placeLog)).toBeVisible({ timeout: SHORT });
   });
 });

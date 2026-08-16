@@ -29,7 +29,14 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { attachMea, getMeaFootprint, testMeaOrientation, useJob, videoOutputUrl } from '../../api';
+import {
+  attachMea,
+  getMeaFootprint,
+  testMeaOrientation,
+  useJob,
+  useStopJob,
+  videoOutputUrl,
+} from '../../api';
 import type {
   ElectrodeMapPayload,
   MeaAttachment,
@@ -37,9 +44,11 @@ import type {
   OrientationTestResult,
   RegionRecord,
 } from '../../api';
-import { Button, LiveWarning, Panel, cx } from '../../design';
+import { Button, LiveWarning, Panel, Progress, cx, useDelayedFlag } from '../../design';
 import { buildElectrodeIndex, electrodeAt, type ElectrodeIndex } from '../electrodes/lookup';
+import { phaseOf } from './format';
 import { PreviewViewer, type ViewFrame } from './PreviewViewer';
+import { useElapsedText } from './useElapsed';
 import { WorkFrame } from './WorkFrame';
 import styles from './OrientationStep.module.css';
 
@@ -128,6 +137,21 @@ export function OrientationStep({
   const [testError, setTestError] = useState<string | null>(null);
   const job = useJob(jobId);
   const running = jobId != null && !job.isTerminal;
+  const stopJob = useStopJob();
+
+  // ⏱️ **THE FOOTPRINT IS A WAIT, AND IT LOOKED LIKE A BROKEN STEP (R48.10).** The whole rail is
+  // empty until this lands — no cards, no test, no refusal — and the read is not free: it walks the
+  // recording folder and opens an HDF5 file. An in-flight fetch and "there is nothing here" are
+  // different states and must look different.
+  const footprintWait = footprint == null && refusal == null;
+  const footprintSlow = useDelayedFlag(footprintWait);
+  const footprintFor = useElapsedText(footprintWait);
+
+  // ⏱️ *"Use this seating"* re-runs the ENTIRE MEA scan before it saves (the attach route's
+  // `confirm` half), which was minutes behind a button whose only sign of life was the word
+  // "Saving…". It is a job now, so the same bar the strip draws is drawn here too, with a Stop.
+  const [applyJobId, setApplyJobId] = useState<string | null>(null);
+  const applyJob = useJob(applyJobId);
 
   const result =
     job.job?.result && job.job.result.kind === 'mea_orientation'
@@ -188,11 +212,24 @@ export function OrientationStep({
     }
   }, [analysisId]);
 
+  // 🔴 **R48.9 — A WAIT THAT ENDS MUST SAY IT ENDED, INCLUDING BADLY.** This test reads every frame
+  // of every located region: minutes of work whose only failure signal was the button quietly
+  // becoming pressable again, with no sentence anywhere. A run that fails or is stopped says so.
+  useEffect(() => {
+    if (!jobId || !job.isTerminal) return;
+    if (job.state === 'failed') {
+      setTestError(job.error?.message ?? 'The seating test failed.');
+    } else if (job.state === 'cancelled') {
+      setTestError('The seating test was stopped. Nothing was applied.');
+    }
+  }, [jobId, job.isTerminal, job.state, job.error]);
+
   const use = useCallback(
     async (s: MeaFootprintSeating) => {
       const key = keyOf(s.flip_x, s.flip_y);
       setApplying(key);
       setApplyError(null);
+      setApplyJobId(null);
       try {
         // ⭐ Confirmation is a HUMAN act. The job never sets this; this click is what turns a
         // candidate into the seating the pairing is built on. Provenance says which road he took.
@@ -201,23 +238,29 @@ export function OrientationStep({
           result.best != null &&
           result.best.flip_x === s.flip_x &&
           result.best.flip_y === s.flip_y;
-        const saved = await attachMea(analysisId, {
-          confirm: true,
-          orientation: {
-            flip_x: s.flip_x,
-            flip_y: s.flip_y,
-            confirmed: true,
-            source: isTestWinner
-              ? 'confirmed by you after the seating test'
-              : 'chosen by you by eye from the pictures',
+        const saved = await attachMea(
+          analysisId,
+          {
+            confirm: true,
+            orientation: {
+              flip_x: s.flip_x,
+              flip_y: s.flip_y,
+              confirmed: true,
+              source: isTestWinner
+                ? 'confirmed by you after the seating test'
+                : 'chosen by you by eye from the pictures',
+            },
           },
-        });
+          // ⏱️ R48 — the id arrives on the first poll, which is what buys the bar its Stop.
+          { onProgress: (j) => setApplyJobId(j.job_id) },
+        );
         onMeaChanged(saved);
         setPreviewKey(key); // the big picture shows what he just settled on
       } catch (e: unknown) {
         setApplyError(errMsg(e));
       } finally {
         setApplying(null);
+        setApplyJobId(null);
       }
     },
     [analysisId, onMeaChanged, result],
@@ -266,6 +309,21 @@ export function OrientationStep({
         }
         rail={
           <>
+            {/* ⏱️ R48.10 — WHILE IT IS BEING READ, SAY SO. An empty rail and a rail with nothing
+                to show are different states; this one used to render as the second. */}
+            {footprintWait && footprintSlow && (
+              <Progress
+                label="Reading where the recorded pads sit"
+                // R48.9 — a folder walk plus one HDF5 open: no denominator exists until it
+                // returns, so the sliver and the clock, never a bar creeping up a made-up scale.
+                pct={null}
+                etaText={null}
+                elapsedText={footprintFor}
+                unstoppableWhy="this read cannot be stopped once it starts"
+                data-testid="orientation-footprint-progress"
+              />
+            )}
+
             {/* 🔴 The refusal is the whole story when there is one: it says what to do first
                 (attach the recording / map the electrodes), in the server's own sentence. */}
             {refusal && !footprint && (
@@ -278,6 +336,23 @@ export function OrientationStep({
               <div data-testid="orientation-apply-error">
                 <LiveWarning variant="loud">{applyError}</LiveWarning>
               </div>
+            )}
+
+            {/* ⏱️ *"Use this seating"* re-runs the whole recording scan before it saves — minutes,
+                behind one word on a button until R48. The card's Button still says "Saving…"; this
+                is the part that says how far it has got and lets him stop it. */}
+            {applying != null && (
+              <Progress
+                label={applyJob.job?.said_as || 'saving the seating'}
+                pct={applyJob.pct}
+                etaText={applyJob.etaText}
+                elapsedText={applyJob.elapsedText}
+                phase={phaseOf(applyJob)}
+                message={applyJob.message}
+                onStop={applyJobId ? () => void stopJob(applyJobId) : undefined}
+                unstoppableWhy={applyJobId ? undefined : 'starting…'}
+                data-testid="orientation-apply-progress"
+              />
             )}
 
             {settled ? (
@@ -406,17 +481,40 @@ export function OrientationStep({
                 }
               >
                 <div className={styles.body}>
-                  {testError && <LiveWarning variant="loud">{testError}</LiveWarning>}
+                  {/* R48.9 — a failed or stopped run says so here, in the job's own sentence. */}
+                  {testError && (
+                    <div data-testid="orientation-test-error">
+                      <LiveWarning variant="loud">{testError}</LiveWarning>
+                    </div>
+                  )}
 
                   <Button
                     size="sm"
                     variant={settled ? 'ghost' : 'primary'}
-                    disabled={running}
+                    disabled={running || applying != null}
                     onClick={() => void start()}
                     data-testid="mea-test-orientation"
                   >
-                    {running ? (job.job?.message ?? 'Testing…') : 'Test the orientation'}
+                    Test the orientation
                   </Button>
+
+                  {/* ⏱️ **THE BUTTON LABEL USED TO BE THE ENTIRE PROGRESS UI** for MINUTES of work
+                      — every frame of every located region decoded, scored four ways. `useJob` was
+                      already being called for the result and its `pct`/`etaText` were simply never
+                      read. The backend wave gave the job an overall pct (R48.5) and progress
+                      callbacks inside the two steps that were silent for ~16 s. */}
+                  {running && (
+                    <Progress
+                      label={job.job?.said_as || 'testing the orientation'}
+                      pct={job.pct}
+                      etaText={job.etaText}
+                      elapsedText={job.elapsedText}
+                      phase={phaseOf(job)}
+                      message={job.message}
+                      onStop={jobId ? () => void stopJob(jobId) : undefined}
+                      data-testid="orientation-test-progress"
+                    />
+                  )}
 
                   {result && <TestResult result={result} />}
                 </div>

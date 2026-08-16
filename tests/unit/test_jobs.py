@@ -418,3 +418,81 @@ def test_a_native_fastfail_is_diagnosed_not_called_a_cuda_oom(reg: JobRegistry) 
     assert "STATUS_DELAY_LOAD_FAILED" in msg
     assert "NOT a CUDA OOM" in msg
     assert "predance" in msg                     # and it names the thing that prevents it
+
+
+# =================================================================================================
+# THE ONE ESTIMATOR — BEHAVIOUR R48.3
+#
+# `eta_from_fraction` is what every waiting site in the app now divides by. Its failure modes are all
+# "the number on screen is a lie", so they are pinned here:
+#   * an absurd estimate from two samples in (the reason for ETA_MIN_FRACTION),
+#   * a NEGATIVE or infinite result from a degenerate denominator,
+#   * and — the one that motivated R48b — the fact that it must be called only where the fraction
+#     ACTUALLY ADVANCED. Nothing here can stop a caller putting it on a timer, but the docstring and
+#     the last test below record what that would produce.
+# =================================================================================================
+from camea.core.jobs import ETA_MIN_FRACTION, eta_from_counts, eta_from_fraction  # noqa: E402
+
+
+def test_eta_is_linear_extrapolation_of_measured_throughput():
+    # A quarter done after 10 s -> three quarters left -> 30 s.
+    assert eta_from_fraction(10.0, 0.25) == 30.0
+    assert eta_from_fraction(10.0, 0.5) == 10.0
+    assert eta_from_fraction(52.0, 0.5) == 52.0
+
+
+def test_eta_refuses_to_guess_too_early():
+    """Two samples into a 20,000-frame decode the rate is noise. A first ETA of '4h 12m' that becomes
+    '6m' a second later costs the number its credibility, and the number is the whole feature."""
+    assert eta_from_fraction(10.0, 0.001) is None
+    assert eta_from_fraction(10.0, ETA_MIN_FRACTION / 2) is None
+    # Exactly at the threshold it commits.
+    assert eta_from_fraction(10.0, ETA_MIN_FRACTION) is not None
+
+
+def test_eta_is_zero_when_done_and_never_negative():
+    """R8.3 — a negative time reads as a hang, which is the exact failure the ETA exists to prevent."""
+    assert eta_from_fraction(10.0, 1.0) == 0.0
+    assert eta_from_fraction(10.0, 1.5) == 0.0
+    for frac in (0.0, -0.5):
+        assert eta_from_fraction(10.0, frac) is None
+
+
+def test_eta_survives_a_degenerate_denominator_rather_than_raising():
+    """Progress reporting must never be able to fail a job that is otherwise succeeding."""
+    assert eta_from_counts(10.0, 5, 0) is None
+    assert eta_from_counts(10.0, 0, 0) is None
+    assert eta_from_fraction(10.0, None) is None          # type: ignore[arg-type]
+    assert eta_from_fraction(None, 0.5) is None           # type: ignore[arg-type]
+    assert eta_from_fraction(10.0, float("nan")) is None
+
+
+def test_eta_from_counts_is_the_same_estimator_over_a_loop_counter():
+    # The shape nearly every site uses: bytes, frames, samples, tiles, links, files.
+    assert eta_from_counts(10.0, 25, 100) == 30.0
+    assert eta_from_counts(2.0, 1_024, 4_096) == 6.0
+
+
+def test_the_estimate_may_get_WORSE_and_that_is_the_point():
+    """R8.4 / R48.11 — an honest upward revision beats a smooth lie. A job that slows down must be
+    allowed to report a bigger number than it did a second ago; nothing here clamps to a previous
+    value, and nothing should be added that does."""
+    fast = eta_from_fraction(10.0, 0.5)     # 10 s in, half done -> 10 s left
+    slow = eta_from_fraction(30.0, 0.6)     # it stalled: 30 s in, only 60 % done -> 20 s left
+    assert fast is not None and slow is not None
+    assert slow > fast
+
+
+def test_a_pinned_fraction_with_growing_elapsed_counts_UP_which_is_why_R48b_stands():
+    """⛔ THE FORBIDDEN HEARTBEAT, pinned as a fact rather than as a rule.
+
+    During a silent phase `pct` does not move. Re-emitting progress on a TIMER — the obvious way to
+    'keep the number fresh' — feeds this function a constant `frac` and a growing `elapsed`, and the
+    ETA then counts upward on screen. That is R8b, still standing under R48b. R48.4 is satisfied on
+    the CLIENT instead, by an elapsed clock and the words 'working out how long this will take'.
+    """
+    pinned = 0.30
+    first = eta_from_fraction(10.0, pinned)
+    later = eta_from_fraction(40.0, pinned)
+    assert first is not None and later is not None
+    assert later > first     # <- exactly what the user would see, and why we do not do it

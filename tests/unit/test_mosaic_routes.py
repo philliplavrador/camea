@@ -398,8 +398,8 @@ def test_the_build_solves_the_document_s_list_not_the_run(client, session, solve
     frame went straight back into the chain. This is the ONLY way a frame ever leaves a build."""
     spawned: dict = {}
 
-    def fake_submit(kind, target, kwargs, exclusive=None):
-        spawned.update(kind=kind, target=target, kwargs=kwargs, exclusive=exclusive)
+    def fake_submit(kind, target, kwargs, exclusive=None, label=""):
+        spawned.update(kind=kind, target=target, kwargs=kwargs, exclusive=exclusive, label=label)
         return SimpleNamespace(job_id="job_abc")
 
     monkeypatch.setattr(JOBS, "submit_process", fake_submit)
@@ -417,6 +417,8 @@ def test_the_build_solves_the_document_s_list_not_the_run(client, session, solve
     # 🔴 It holds the GPU lease, and it runs in a CHILD PROCESS — `t33.place` has no cooperative
     # cancel, so `terminate()` is the only cancel there is.
     assert spawned["exclusive"] == "gpu"
+    # R48.6 — the bar names the wait in his words, and the `Busy` refusal reuses the same sentence.
+    assert spawned["label"] == "placing the tiles"
 
 
 def test_an_unknown_config_knob_is_a_400_not_a_failed_job(client, solve):

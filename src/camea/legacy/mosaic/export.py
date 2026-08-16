@@ -133,9 +133,14 @@ OUTPUT_KINDS: tuple[str, ...] = ("tiff", "coverage", "png", "positions", "gt", "
 #: `api.schemas.DEFAULT_OUTPUTS`. `coverage` is absent because `tiff` implies it.
 DEFAULT_OUTPUTS: tuple[str, ...] = ("tiff", "png", "positions", "gt", "qc")
 
-#: feather 1.11 s · median 41.7 s · alpha 74.0 s (CPU, 312 frames in RAM). **feather is the default
-#: and the only interactive one.**
-RENDER_MODES: tuple[str, ...] = ("feather", "median", "alpha")
+#: ⏱️ mode -> seconds per render (CPU, 312 frames in RAM). **feather is the default and the only
+#: interactive one**, and the spread is the reason the export's bar has to be weighted at all: an
+#: `alpha` render is **67x** a `feather` one, so `idx / n_phases` cannot describe both (R48.5).
+#: The measurement is in `render_mosaic`'s docstring; these are the same three numbers, and they are
+#: written down ONCE — `_export_steps` reads them, and `RENDER_MODES` is their keys.
+_RENDER_COST: dict[str, float] = {"feather": 1.11, "median": 41.7, "alpha": 74.0}
+
+RENDER_MODES: tuple[str, ...] = tuple(_RENDER_COST)
 
 
 class ExportError(Exception):
@@ -255,6 +260,62 @@ def render_positions(doc: dict, include_unverified: bool = True) -> dict[int, tu
 
 
 # =================================================================================================
+# ⏱️ THE SPAN TABLE THE EXPORT'S BAR IS WEIGHTED BY (R48.5)
+# =================================================================================================
+#
+# 🔴 **`pct` MUST BE OVERALL, ACROSS THE WHOLE EXPORT.** It was not: the render ran its own 0 -> 100
+# and the first write then emitted `(idx - 0.5) / n_phases`, so on a TIFF + PNG export the bar filled
+# twice, snapped backwards, and any ETA taken off it counted *up* through the render.
+#
+# The pieces of an export are nowhere near equal, which is why an unweighted `idx / n_phases` cannot
+# describe them: an `alpha` render is 67x a `feather` one, while `positions.csv` is a few hundred
+# bytes of text. So each step declares a cost, and the spans are the running sum normalised to 0-100
+# — `features/videomosaic/pipeline._SPAN` written at run time rather than by hand, because an
+# export's steps depend on what was asked for and on the render mode.
+#
+# Units are arbitrary but SHARED — only the ratios matter, so this needs to be right to about a
+# factor of two, not to the millisecond.
+
+#: Per WRITE. Sized off what each file actually *is* — a 78 MB uint16 TIFF (written, re-read and
+#: atomically replaced) and its 39 Mpx PNG sidecar against a few KB of text — rather than off a
+#: stopwatch, which is why they are round. Anything unlisted falls back to the cheapest.
+_WRITE_COST = {"tiff": 4.0, "png": 2.0, "coverage": 1.0, "positions": 0.05, "gt": 0.05, "qc": 0.1}
+
+#: The pure-geometry coverage path (`coverage_mask`) reads no pixel at all — it is the union of the
+#: tile rectangles out of `render._canvas`. It still gets a step so the bar is not simply flat there.
+_GEOMETRY_COST = 0.2
+
+
+def _export_steps(kinds: list[str], render_mode: str, needs_pixels: bool) -> list[tuple[str, float]]:
+    """The export's work, in the order it happens, as `[(step, cost), …]`.
+
+    ⚠️ A render is paid **once per render, not once per export** — asking for both the TIFF and the
+    PNG is two renders, because they are two different sets of pixels (`export_all`'s docstring says
+    why, and it cost a x1.63 photometry bug to learn).
+    """
+    steps: list[tuple[str, float]] = []
+    if needs_pixels:
+        cost = _RENDER_COST.get(render_mode, min(_RENDER_COST.values()))
+        steps += [(f"render:{k}", cost) for k in ("png", "tiff") if k in kinds]
+    elif "coverage" in kinds:
+        steps.append(("render:mask", _GEOMETRY_COST))
+    return steps + [(k, _WRITE_COST.get(k, 0.05)) for k in kinds]
+
+
+def _spans(steps: list[tuple[str, float]]) -> dict[str, tuple[float, float]]:
+    """`[(step, cost), …]` in execution order -> `{step: (lo_pct, hi_pct)}`, the running sum
+    normalised to 0-100."""
+    total = sum(c for _, c in steps) or 1.0
+    out: dict[str, tuple[float, float]] = {}
+    acc = 0.0
+    for key, cost in steps:
+        lo = 100.0 * acc / total
+        acc += cost
+        out[key] = (lo, 100.0 * acc / total)
+    return out
+
+
+# =================================================================================================
 # THE JOB
 # =================================================================================================
 def export_all(
@@ -339,6 +400,28 @@ def export_all(
     n_phases = 1 + len(kinds)
     idx = 0
 
+    # ⏱️ One span per step, so `pct` is overall across the whole export (R48.5).
+    spans = _spans(_export_steps(kinds, render_mode, needs_pixels))
+
+    def at(step: str, frac: float, phase: str, i: int, message: str) -> None:
+        """Emit one `Progress` with `pct` mapped through `step`'s span, and the ETA derived from
+        **that overall pct** — never from the step's own 0->1, which is what made the bar snap back.
+
+        The countable unit under the renders is TILES (`_RenderSink` scrapes `rendered k/N` out of
+        the compositor's stdout). A write has none — it is one blocking call — so it emits once, at
+        its own `lo`, and the next step's `lo` (or the closing `done`) is what closes it out. There
+        is no timer here and there must not be one: R48b — with `pct` pinned, re-emitting on a clock
+        makes the ETA count up.
+        """
+        lo, hi = spans.get(step, (0.0, 100.0))
+        pct = lo + (hi - lo) * min(1.0, max(0.0, frac))
+        jobs.say(report, phase, i, n_phases, pct, message,
+                 jobs.eta_from_fraction(time.time() - t0, pct / 100.0))
+
+    # `render_mosaic(report=None)` skips the stdout scrape entirely — keep None meaning None, so a
+    # reportless export (every unit test) does not pay for a regex per composited tile.
+    at_or_none = at if report is not None else None
+
     img = cov = None  # the DISPLAY render (flat-fielded)  -> the PNG
     raw = rcov = None  # the RAW render (camera counts)     -> the TIFF
     shown = shown_cov = None  # whichever exists — the GEOMETRY is identical either way
@@ -347,34 +430,37 @@ def export_all(
         idx += 1
         jobs.check_cancelled(cancel, "export")
         if "png" in kinds:
-            jobs.say(report, "render", idx, n_phases, 0.0,
-                     f"rendering {len(positions)} tiles for the display PNG ({render_mode})")
+            at("render:png", 0.0, "render", idx,
+               f"rendering {len(positions)} tiles for the display PNG ({render_mode})")
             img, cov = render_mosaic(frames, positions, render_mode,
-                                     report=_render_cb(report, render_mode, len(positions), idx,
-                                                       n_phases),
+                                     report=_render_cb(at_or_none, "render:png", render_mode,
+                                                       len(positions), idx),
                                      cancel=cancel, flat=True)
         if "tiff" in kinds:
-            jobs.say(report, "render", idx, n_phases, 0.0,
-                     f"rendering {len(positions)} tiles as RAW CAMERA COUNTS for the TIFF "
-                     f"({render_mode})")
+            at("render:tiff", 0.0, "render", idx,
+               f"rendering {len(positions)} tiles as RAW CAMERA COUNTS for the TIFF "
+               f"({render_mode})")
             raw, rcov = render_mosaic(frames, positions, render_mode,
-                                      report=_render_cb(report, render_mode, len(positions), idx,
-                                                        n_phases),
+                                      report=_render_cb(at_or_none, "render:tiff", render_mode,
+                                                        len(positions), idx),
                                       cancel=cancel, flat=False)
         jobs.check_cancelled(cancel, "export")
         shown = img if img is not None else raw
         shown_cov = cov if cov is not None else rcov
-        jobs.say(report, "render", idx, n_phases, 100.0 * idx / n_phases,
-                 f"canvas {shown.shape[1]}x{shown.shape[0]} px, "
-                 f"{100.0 * float(shown_cov.mean()):.1f} % covered")
+        at("render:tiff" if "tiff" in kinds else "render:png", 1.0, "render", idx,
+           f"canvas {shown.shape[1]}x{shown.shape[0]} px, "
+           f"{100.0 * float(shown_cov.mean()):.1f} % covered")
     elif "coverage" in kinds:
         # Pure geometry — no pixel is read. (`engine.adapters.canvas` -> `render._canvas`.)
+        idx += 1
+        at("render:mask", 0.0, "render", idx, f"masking {len(positions)} tiles")
         shown_cov = coverage_mask(frames, positions)
+        at("render:mask", 1.0, "render", idx, f"masking {len(positions)} tiles")
 
     for kind in kinds:
         jobs.check_cancelled(cancel, "export")
         idx += 1
-        jobs.say(report, kind, idx, n_phases, 100.0 * (idx - 0.5) / n_phases, f"writing {kind}")
+        at(kind, 0.0, kind, idx, f"writing {kind}")
 
         if kind == "tiff":
             files += write_tiff(  # -> [tiff, coverage]. The sidecar is not optional.
@@ -413,7 +499,7 @@ def export_all(
                 app_version=app_version,
             )
 
-    jobs.say(report, "done", n_phases, n_phases, 100.0, f"wrote {len(files)} files")
+    jobs.say(report, "done", n_phases, n_phases, 100.0, f"wrote {len(files)} files", 0.0)
     return {
         "kind": "export",
         "files": files,
@@ -548,8 +634,15 @@ class _RenderSink:
 
     _RE = re.compile(r"rendered (\d+)/(\d+)")
 
+    #: ⏱️ Seconds between progress emits. A `feather` render composites ~280 tiles a second, and one
+    #: `Progress` per tile is 280 lock-takes and 280 log lines a second for a bar nobody can read
+    #: that fast. 10 Hz is well past what the eye resolves and the end of the render is emitted by
+    #: `export_all` regardless, so the last tile is never the one that gets dropped.
+    _MIN_INTERVAL_S = 0.1
+
     def __init__(self, report: Callable[..., None] | None, n: int) -> None:
         self.report, self.n, self.buf = report, max(n, 1), ""
+        self._last = 0.0
 
     def write(self, s: str) -> int:
         self.buf += s
@@ -557,6 +650,10 @@ class _RenderSink:
             line, self.buf = self.buf.split("\n", 1)
             m = self._RE.search(line)
             if m and self.report:
+                now = time.monotonic()
+                if now - self._last < self._MIN_INTERVAL_S:
+                    continue
+                self._last = now
                 self.report(100.0 * int(m.group(1)) / max(int(m.group(2)), 1), line.strip())
         return len(s)
 
@@ -565,24 +662,27 @@ class _RenderSink:
 
 
 def _render_cb(
-    report: Callable[[Progress], None] | None, mode: str, n: int, idx: int, n_phases: int
+    at: Callable[..., None] | None, step: str, mode: str, n: int, idx: int
 ) -> Callable[..., None] | None:
-    """Adapt `_RenderSink`'s `report(pct, message)` to the job registry's `report(Progress)`.
+    """Adapt `_RenderSink`'s `report(pct, message)` to `export_all`'s span-weighted emitter.
+
+    ⚠️ The sink's `pct` is the render's OWN 0->100 — tiles composited out of `n`. It is handed on as
+    a fraction and `at` maps it into this render's slice of the whole export, because a render that
+    paints the bar 0 -> 100 by itself is exactly the R48.5 violation: on a TIFF + PNG export it did
+    that twice and then jumped backwards to the first write.
 
     (`core.jobs.report_adapter` maps positionals as `(phase, pct, message)`, which is the wrong
     shape for this one. The renderer's callback shape is not part of any contract, so we adapt
     rather than assume.)
     """
-    if report is None:
+    if at is None:
         return None
 
     def cb(*args: Any) -> None:
-        if len(args) == 1 and isinstance(args[0], Progress):
-            report(args[0])
-            return
+        # `_RenderSink` is the only caller, and it always passes `(pct, line)`.
         pct = float(args[0]) if args else 0.0
         msg = str(args[1]) if len(args) > 1 else f"rendering {n} tiles"
-        jobs.say(report, "render", idx, n_phases, pct, f"{msg} ({mode})")
+        at(step, pct / 100.0, "render", idx, f"{msg} ({mode})")
 
     return cb
 

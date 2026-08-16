@@ -30,8 +30,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { browseRecordings, pickOpenFilePaths } from '../../api';
 import type { MeaRecordingCandidate } from '../../api';
 import { FolderPicker } from '../../core/picker/FolderPicker';
-import { Button, LiveWarning } from '../../design';
+import { Button, LiveWarning, Progress, useDelayedFlag } from '../../design';
 import { formatBytes, formatSeconds } from './format';
+import { useElapsedText } from './useElapsed';
 import styles from './ImportRecordings.module.css';
 
 /** A row he picked through the native dialog: an exact file, whose facts we have not read. */
@@ -80,6 +81,20 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
   const [failure, setFailure] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [noDialog, setNoDialog] = useState(false);
+  /**
+   * ⏱️ The native dialog is open (R48.7 — one of the four waits that genuinely cannot be stopped:
+   * it is a HUMAN, and the only thing that ends it is him). ⛔ It is also the reason the buttons go
+   * dead while it is up: without this the browse button could be clicked again behind the dialog,
+   * queueing a second one nobody asked for.
+   */
+  const [picking, setPicking] = useState(false);
+
+  // R48.1 — nothing appears under 400 ms. A local disk answers `fs/list` well inside that, and a
+  // bar that flashes on every click is worse than no bar.
+  const lookingWait = useDelayedFlag(loading);
+  const pickingWait = useDelayedFlag(picking);
+  // R48.9 — an unbounded directory walk has no denominator, so the honest number is a count-up.
+  const lookingFor = useElapsedText(loading);
 
   useEffect(() => {
     onChange(ticked);
@@ -122,13 +137,17 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
     });
 
   async function pickFiles(): Promise<void> {
+    if (picking) return;
     setNoDialog(false);
+    setPicking(true);
     let picked: string[] | null;
     try {
       picked = await pickOpenFilePaths({ title: 'Choose recordings', filters: ['HDF5 (*.h5)'] });
     } catch (e) {
       setFailure(e instanceof Error ? e.message : String(e));
       return;
+    } finally {
+      setPicking(false);
     }
     if (picked === null) {
       setNoDialog(true); // no desktop in this mode — say so, do not sit there silently
@@ -153,13 +172,15 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
         <Button
           variant="default"
           size="sm"
-          disabled={busy}
+          disabled={busy || picking}
           onClick={() => setBrowsing(true)}
           data-testid="mea-choose-folder"
         >
           Choose a folder
         </Button>
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => void pickFiles()}
+        {/* ⛔ **DEAD WHILE THE DIALOG IS UP.** Nothing came back from the click, so it could be
+            pressed again — and on a desktop that is a second native dialog behind the first. */}
+        <Button variant="ghost" size="sm" disabled={busy || picking} onClick={() => void pickFiles()}
           data-testid="mea-pick-files">
           Pick files…
         </Button>
@@ -168,6 +189,18 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
         </span>
       </div>
 
+      {/* ⏱️ R48.7/R48.9 — a wait on a HUMAN. There is nothing to estimate and nothing to cancel:
+          the dialog belongs to him, and Camea saying "Stop" about it would be a lie. */}
+      {pickingWait && (
+        <Progress
+          compact
+          label="Waiting for you to choose files"
+          pct={null}
+          unstoppableWhy="the file dialog is yours to finish or cancel"
+          data-testid="mea-import-picking"
+        />
+      )}
+
       {noDialog && (
         <p className={styles.note} data-testid="mea-no-dialog">
           This window has no file explorer. Use <b>Choose a folder</b> — it works the same.
@@ -175,7 +208,26 @@ export function ImportRecordings({ onChange, busy = false }: ImportRecordingsPro
       )}
 
       <div className={styles.list} role="group" aria-label="Recordings">
-        {loading && <p className={styles.state}>Looking…</p>}
+        {/* ⏱️ **R48 — THE ONE WORD `Looking…` WAS THE WHOLE REPORT ON A WALK OF UP TO 200 FILES**,
+            each of which is an h5 header opened for real. ⛔ NOT a filling bar: R48.9 names the
+            unbounded directory walk as one of the four waits with no denominator — there is no
+            count of folders until the walk returns, so a bar would be inventing one. The travelling
+            sliver plus a count-up that is true is what is honestly available.
+            ⛔ And no Stop: the browse is a single request with no cancel on the wire. */}
+        {loading &&
+          (lookingWait ? (
+            <Progress
+              className={styles.state}
+              label="Looking through this folder for recordings"
+              pct={null}
+              elapsedText={lookingFor}
+              message="Camea opens every recording it finds to read its length and channel count."
+              unstoppableWhy="this one look has to finish"
+              data-testid="mea-import-looking"
+            />
+          ) : (
+            <p className={styles.state}>Looking…</p>
+          ))}
 
         {!loading && failure && (
           <LiveWarning variant="loud" className={styles.state}>

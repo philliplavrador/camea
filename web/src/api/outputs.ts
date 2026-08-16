@@ -10,7 +10,8 @@
 // of the app, and R44 closed it.
 
 import { api, API_BASE, unwrap } from './client';
-import type { CopyOutputsResponse, OutputListResponse } from './types';
+import { pollJobUntilDone, type JobWatch } from './jobs';
+import type { CopyOutputsResponse, JobRef, OutputListResponse } from './types';
 
 /**
  * Everything this project has built, newest first. Read off the DIRECTORY, not the document — so a
@@ -49,24 +50,52 @@ export function outputUrl(
 }
 
 /**
- * ⭐ **THE ONE WAY WORK LEAVES CAMEA** — copy the chosen outputs into a folder he names.
+ * Submit the copy (`POST /api/projects/{id}/outputs/copy` → **202 `JobRef`**, kind `outputs_copy`).
+ * Use this when the screen drives the bar itself with `useJob`; `copyOutputs` below waits for you.
  *
- * It is a COPY: the project keeps its outputs, so the store stays the home and what leaves is what
- * he asked for. Throws with the backend's own reason, which is worth showing verbatim:
+ * 🔴 **THE THREE REFUSALS ARE STILL SYNCHRONOUS** and still throw from THIS call, before a byte
+ * moves — they are the reason this route is safe to run at all, and R48 did not soften them:
  *   * 409 `refused` — the destination is inside a dataset (⛔ never onto the evidence), or already
  *     holds a file of that name. **A clash refuses the whole request**, naming the files; nothing is
  *     half-copied and nothing of his is overwritten.
  *   * 404 — a name that is not this project's output.
+ * Only the BYTES became a job (R48): whole 16-bit mosaics used to be a request that simply did not
+ * come back.
  */
-export async function copyOutputs(
+export async function startCopyOutputs(
   analysisId: string,
   names: string[],
   dest: string,
-): Promise<CopyOutputsResponse> {
+): Promise<JobRef> {
   return unwrap(
     await api.POST('/api/projects/{analysis_id}/outputs/copy', {
       params: { path: { analysis_id: analysisId } },
       body: { names, dest },
     }),
   );
+}
+
+/**
+ * ⭐ **THE ONE WAY WORK LEAVES CAMEA** — copy the chosen outputs into a folder he names, and wait.
+ *
+ * It is a COPY: the project keeps its outputs, so the store stays the home and what leaves is what
+ * he asked for. Throws with the backend's own reason (see `startCopyOutputs` for the three refusals,
+ * which arrive synchronously and are worth showing verbatim).
+ *
+ * `onProgress` fires on every poll so a caller can draw a `<Progress>`: the bar counts BYTES and the
+ * message names the file in flight (R48).
+ */
+export async function copyOutputs(
+  analysisId: string,
+  names: string[],
+  dest: string,
+  opts: JobWatch = {},
+): Promise<CopyOutputsResponse> {
+  const ref = await startCopyOutputs(analysisId, names, dest);
+  const job = await pollJobUntilDone(ref.job_id, { onUpdate: opts.onProgress, signal: opts.signal });
+  const result = job.result;
+  if (!result || result.kind !== 'outputs_copy') {
+    throw new Error('the copy finished without saying what it wrote');
+  }
+  return result;
 }

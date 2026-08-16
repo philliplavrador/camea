@@ -21,9 +21,11 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from 'react';
-import { copyOutputs, listOutputs, outputUrl } from '../../api';
+import { copyOutputs, listOutputs, outputUrl, useJob, useStopJob } from '../../api';
 import type { OutputEntry } from '../../api';
 import { Help } from '../../design/primitives/Help';
+import { Progress } from '../../design/primitives/Progress';
+import { useDelayedFlag } from '../../design/primitives/useDelayedFlag';
 import { FolderPicker } from '../../core/picker/FolderPicker';
 import { PathField } from '../home/PathField';
 import { shortPath } from '../home/pathText';
@@ -49,6 +51,15 @@ export function OutputsPanel({ analysisId, version, title = 'Outputs' }: Outputs
   const [browsing, setBrowsing] = useState(false);
   const [copiedTo, setCopiedTo] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // ⏱️ R48 — the one way work leaves Camea (R44) used to be a button that said `Working…`.
+  const [copying, setCopying] = useState(false);
+  const [copyJobId, setCopyJobId] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const copyJob = useJob(copyJobId);
+  const stopJob = useStopJob();
+  // R48.10 — an in-flight listing and an empty project are different states. R48.1's grace keeps a
+  // fast local read from flashing a bar.
+  const listing = useDelayedFlag(outputs === null && loadError === null);
 
   useEffect(() => {
     let live = true;
@@ -83,8 +94,20 @@ export function OutputsPanel({ analysisId, version, title = 'Outputs' }: Outputs
    *  he needs to read while deciding where else to put it. */
   const copyInto = useCallback(
     async (dest: string) => {
-      const res = await copyOutputs(analysisId, [...chosen], dest);
-      setCopiedTo(res.dest);
+      setCopiedTo(null);
+      setCopyError(null);
+      setCopying(true);
+      try {
+        // ⏱️ The copy is a JOB (R48): it moves whole 16-bit mosaics, and the backend counts BYTES
+        // and names the file in flight. Watch it so the bar below is a real one.
+        const res = await copyOutputs(analysisId, [...chosen], dest, {
+          onProgress: (j) => setCopyJobId(j.job_id),
+        });
+        setCopiedTo(res.dest);
+      } finally {
+        setCopying(false);
+        setCopyJobId(null);
+      }
     },
     [analysisId, chosen],
   );
@@ -100,6 +123,20 @@ export function OutputsPanel({ analysisId, version, title = 'Outputs' }: Outputs
       </h2>
 
       {loadError && <p className={styles.error}>Could not read this project's outputs: {loadError}</p>}
+
+      {/* ⛔ R48.10 — NEVER STATE A FALSEHOOD WHILE LOADING. "Nothing built yet" while the listing is
+          still in flight is a confident, wrong answer that then swaps. */}
+      {listing && (
+        <Progress
+          className={styles.listing}
+          compact
+          data-testid="outputs-listing"
+          label="Reading what this project has built"
+          pct={null}
+          // R48.7 — a directory listing has nothing to poll; say so, never a dead button.
+          unstoppableWhy="reading the list cannot be stopped once it starts"
+        />
+      )}
 
       {outputs !== null && all.length === 0 && !loadError && (
         <p className={styles.empty} data-testid="outputs-empty">
@@ -169,6 +206,33 @@ export function OutputsPanel({ analysisId, version, title = 'Outputs' }: Outputs
                 data-testid="copy-into-field"
               />
             )}
+            {/* ⏱️ R48 — the copy names the file in flight and counts bytes; the estimate is the
+                backend's. It is stoppable, and stopping it leaves the copies already made. */}
+            {copying && (
+              <Progress
+                className={styles.copyProgress}
+                data-testid="outputs-copy-progress"
+                label={copyJob.job?.said_as || 'Copying the files you ticked'}
+                pct={copyJob.pct}
+                etaText={copyJob.etaText}
+                elapsedText={copyJob.elapsedText}
+                phase={copyJob.phase}
+                message={copyJob.message}
+                onStop={
+                  copyJobId && !copyJob.isTerminal && (copyJob.job?.cancellable ?? true)
+                    ? () => void stopJob(copyJobId)
+                    : undefined
+                }
+              />
+            )}
+            {/* 🔴 A FAILED COPY MUST NOT LOOK LIKE A SUCCESSFUL ONE. The picker path used to swallow
+                its rejection whole (`.catch(() => undefined)`), so a refused copy and a completed one
+                were the same screen. This is where that reason lands. */}
+            {copyError && (
+              <p className={styles.error} role="alert" data-testid="outputs-copy-error">
+                The copy did not happen: {copyError}
+              </p>
+            )}
             {copiedTo && (
               <p className={styles.copied} data-testid="outputs-copied">
                 Copied into <span className={styles.copiedPath}>{shortPath(copiedTo, 52)}</span>
@@ -184,9 +248,12 @@ export function OutputsPanel({ analysisId, version, title = 'Outputs' }: Outputs
           confirmLabel="Copy here"
           onPick={(p) => {
             setBrowsing(false);
-            // Swallowed: the picker is gone by now, so there is no inline slot to show a refusal in.
-            // The typed box is the drivable path and the one that reports (R38).
-            void copyInto(p).catch(() => undefined);
+            // 🔴 NOT swallowed. The picker is gone by the time this settles, so the reason lands in
+            // the panel's own slot beside the tick-list instead — a refused copy that looked exactly
+            // like a completed one was a correctness bug, not a missing nicety.
+            void copyInto(p).catch((e: unknown) =>
+              setCopyError(e instanceof Error ? e.message : String(e)),
+            );
           }}
           onClose={() => setBrowsing(false)}
         />

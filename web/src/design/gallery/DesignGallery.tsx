@@ -9,6 +9,7 @@ import {
   IconButton,
   Kbd,
   LiveWarning,
+  Progress,
   MOSAIC_STEPS,
   Panel,
   PerfReadout,
@@ -198,6 +199,41 @@ function Showcase() {
             hides itself.
           </span>
         </p>
+      </Section>
+
+      <Section title="Progress · every wait, one bar, and a time that is never blank">
+        <Progress
+          label="Reading the recording end to end"
+          pct={31}
+          etaText="42 s"
+          phase="envelope"
+          message="reading block 78 / 249 · 31.6 MB/s"
+          onStop={() => undefined}
+        />
+        <Progress
+          label="Building the mosaic"
+          pct={4}
+          etaText={null}
+          elapsedText="3m 41s"
+          phase="pass1 · 2/7"
+          message="[swim] 12,090 pairs in 205.9s (CPU)"
+          onStop={() => undefined}
+        />
+        <Progress
+          label="Looking for recordings"
+          pct={null}
+          etaText={null}
+          elapsedText="6 s"
+          message="14 recordings so far"
+          onStop={() => undefined}
+        />
+        <Progress
+          label="Deleting “260801 survey”"
+          pct={null}
+          etaText={null}
+          unstoppableWhy="a delete cannot be stopped once it starts"
+        />
+        <Progress compact label="Copying a recording in" pct={68} etaText="7 s" onStop={() => undefined} />
       </Section>
 
       <Section title="Live warnings · they stay on the page">

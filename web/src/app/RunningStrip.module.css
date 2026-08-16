@@ -1,0 +1,81 @@
+/* THE TOP STRIP (BEHAVIOUR R48.8) — anything running, visible from anywhere. */
+
+.strip {
+  /* Sits under the top bar, above everything else. It only exists while work is running, so it is
+     allowed to take vertical space rather than float over the page and hide content. */
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  padding: 4px var(--step);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--step);
+  min-height: var(--runstrip-h);
+}
+
+.well {
+  width: 140px;
+  flex: 0 0 auto;
+  height: var(--progress-h-thin);
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  overflow: hidden;
+  position: relative;
+}
+
+.bar {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  width: 0;
+  transition: width var(--dur) var(--ease);
+}
+
+/* R48.9 — no denominator, so no filling bar. */
+.indeterminate .bar {
+  width: 35%;
+  transition: none;
+  animation: creep 1.4s var(--ease) infinite;
+}
+
+@keyframes creep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+.said {
+  font-size: var(--fs-readout);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-readout);
+  color: var(--data);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* R48.4 — the slot is never empty here either. */
+.estimating {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
+  font-style: italic;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}

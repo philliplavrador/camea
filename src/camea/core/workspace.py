@@ -74,6 +74,10 @@ from camea.core.dataset import _looks_like_a_dataset as looks_like_a_dataset
 from camea.core.dataset import iso as _iso_dt
 from camea.core.dataset import refuse_write as _refuse_write_into
 
+# ⭐ `copy_file` polls the job registry's cancel flag, so the one `Cancelled` has to be the one the
+# runner catches (`core.jobs`, which imports nothing of ours — the arrow only points this way).
+from camea.core.jobs import check_cancelled
+
 __all__ = [
     # the workspace
     "Workspace",
@@ -101,6 +105,8 @@ __all__ = [
     # 🔴 atomic IO. Everything the app writes goes through these.
     "atomic_write_text",
     "atomic_write_bytes",
+    "copy_file",
+    "COPY_CHUNK",
     "dumps",
     "file_entry",
     # app state — NOT the workspace. `core.settings` lives here.
@@ -353,6 +359,64 @@ def atomic_write_text(path: str | Path, text: str) -> None:
     """UTF-8, LF. (`newline="\\n"` mattered: a document round-tripped through a CRLF writer is a
     diff against every copy of it anyone else holds.)"""
     atomic_write_bytes(path, text.encode("utf-8"))
+
+
+#: ⏱️ How much of a file moves per read/write when Camea copies one itself. Big enough that the
+#: syscall overhead disappears, small enough that a Stop lands within a frame and the byte counter
+#: the bar reads moves several times a second on a normal disk.
+COPY_CHUNK = 8 * 1024 * 1024
+
+
+def copy_file(src: str | Path, dest: str | Path, *,
+              on_bytes: Callable[[int], None] | None = None,
+              cancel: object | None = None,
+              chunk: int = COPY_CHUNK) -> int:
+    """Copy one file, **countably** — `on_bytes(n)` after every chunk. -> bytes copied.
+
+    ⭐ **THIS IS THE COUNTABLE UNIT BEHIND EVERY COPY BAR (BEHAVIOUR R48.3).** `shutil.copy2` copies
+    a 300 MB mosaic in one opaque call with nothing to divide, which is how the outputs copy — the
+    one way work leaves Camea (R44) — spent its whole life as a request that simply did not return.
+    Read it in chunks and the bar has bytes; poll `cancel` between them and the Stop button is real
+    (R48.7).
+
+    ⭐ **A TEMP NAME, THEN A RENAME.** A half-copied file sitting at the final name is
+    indistinguishable from a whole one, and everything downstream treats "it is on disk" as proof
+    that it finished. `os.replace` is atomic, so the final name only ever exists once all the bytes
+    are through it — and a cancel or a full disk leaves the `.part` behind, which is then removed.
+
+    ⛔ **It does NOT guard the destination.** The caller owns that question: this is used both for
+    files landing inside a project (where `refuse_write` applies) and for the copy-out the user
+    asked for into a folder of his own (where it does not). Guard first, then call this.
+
+    ⚠️ Metadata is preserved (`copystat`), so this is a drop-in for `shutil.copy2`. It was lifted
+    into core from `features/mea/recordings._copy_file`, which had it right and had it alone.
+    """
+    s, d = Path(src), Path(dest)
+    d.parent.mkdir(parents=True, exist_ok=True)
+    part = d.with_name(d.name + ".part")
+    done = 0
+    try:
+        with open(s, "rb") as fin, open(part, "wb") as fout:
+            while True:
+                check_cancelled(cancel, "copy")
+                buf = fin.read(chunk)
+                if not buf:
+                    break
+                fout.write(buf)
+                done += len(buf)
+                if on_bytes is not None:
+                    on_bytes(len(buf))
+            fout.flush()
+            os.fsync(fout.fileno())
+        shutil.copystat(str(s), str(part))
+        os.replace(part, d)
+    except BaseException:
+        try:
+            part.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    return done
 
 
 def file_entry(kind: str, path: str | Path) -> dict:

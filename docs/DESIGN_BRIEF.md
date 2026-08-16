@@ -215,6 +215,7 @@ tokens only.
 | `Kbd` | a keycap. The sweep **is** the keyboard, so the keys are shown | §3.3 |
 | `Help` | the hover-`?`: body-level fixed tooltip, empty-hides, text-only, blur/Esc/scroll-dismiss | R3 |
 | `LiveWarning` | the state banner: **block prose**, amber / `loud` red-pulse / `info` blue | R1, R3.8, §5 |
+| `Progress` | ⏱️ **THE ONE BAR.** Gliding track + label + phase + `%` + a time that is never blank + Stop. `pct={null}` = the travelling sliver, for the four cases with no denominator. Replaced five hand-rolled copies | **R48**, R8 |
 | `Stepper` | the six-step progress indicator with locked/done/active | R4 |
 | `StatusBar` / `StatusItem` | the footer readout shell + the `ms/frame` slot | R20 |
 | `Badge` | a tile-state pill (anchored / unverified / excluded / unplaced / blank / diverted / gpu) | §4 |

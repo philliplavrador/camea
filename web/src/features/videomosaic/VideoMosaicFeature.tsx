@@ -16,6 +16,12 @@
 //
 // Numbers, not prose (R3): the outcome is a stats strip read off `doc.build.stats`. The ETA counts
 // down every second (R8) — `useJob` owns the countdown; this only renders `etaText`.
+//
+// ⏱️ **EVERY WAIT ON THIS SCREEN IS A `<Progress>` (R48).** There is ONE bar in the app and it is
+// `design/primitives/Progress` (R48.2): the hand-rolled block that used to live here — and the copy
+// of it `RegionsStep` imported across the feature — are gone, along with their CSS. The time slot is
+// never empty (R48.4): `etaText` and `elapsedText` go through and the primitive says *"working out
+// how long this will take…"* when there is no anchor yet. Every one of them stops (R48.7).
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -28,6 +34,7 @@ import {
   videoGetElectrodeMap,
   cancelJob,
   useJob,
+  useStopJob,
   listJobs,
   isTerminalState,
   getMea,
@@ -40,18 +47,19 @@ import type {
   MeaAttachment,
   VideoMosaicDocument,
 } from '../../api';
-import { Button, ButtonLink, Help, Panel, LiveWarning } from '../../design';
+import { Button, ButtonLink, Help, Panel, LiveWarning, Progress, useDelayedFlag } from '../../design';
 import { OutputsDrawer } from '../outputs/OutputsDrawer';
 import { CoverageChoice } from '../electrodes/CoverageChoice';
 import { useCoverageHelp } from '../electrodes/device';
 import { ElectrodePanel, type ElectrodeSelection } from '../electrodes/ElectrodePanel';
 import { MeaTracePanel } from '../electrodes/MeaTracePanel';
 import { buildElectrodeIndex, electrodeAt, lookupElectrode } from '../electrodes/lookup';
-import { fmtDuration, fmtFps } from './format';
+import { fmtDuration, fmtFps, phaseOf } from './format';
 import { OrientationStep } from './OrientationStep';
 import { PipelineNav, PIPELINE_STEPS, type PipelineStepId } from './PipelineNav';
 import { PreviewViewer } from './PreviewViewer';
 import { RegionsStep } from './RegionsStep';
+import { useElapsedText } from './useElapsed';
 import { WorkFrame } from './WorkFrame';
 import { useToast } from '../../app';
 import styles from './VideoMosaicFeature.module.css';
@@ -105,6 +113,10 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
 
   const [doc, setDoc] = useState<VideoMosaicDocument | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // ⏱️ R48.1 — the document read shows nothing under 400 ms and a bar with a clock over it.
+  const openingWait = doc == null && loadError == null;
+  const opening = useDelayedFlag(openingWait);
+  const openingFor = useElapsedText(openingWait);
   const [buildError, setBuildError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   // ⭐ R47 — the outputs panel is a drawer now, not three copies stacked under three steps.
@@ -112,6 +124,14 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
 
   const job = useJob(jobId);
   const running = jobId != null && !job.isTerminal;
+  // ⭐ R48.10 — AN IN-FLIGHT ANSWER AND A KNOWN ANSWER ARE DIFFERENT STATES. Until the job list has
+  // been read we do not yet know whether a build of this project is already running, so the idle
+  // "Build mosaic" button must not be on screen: pressing it there earns a 409 for a build that is
+  // already going. `true` from the first render, never after a mount with nothing asked.
+  const [attaching, setAttaching] = useState(true);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  // R48.1 — a job list on localhost answers in a few ms; the bar appears only if it does not.
+  const attachSlow = useDelayedFlag(attaching);
 
   // ── the electrode map (server-owned, like the build): payload + its identify selection ──────
   const [emap, setEmap] = useState<ElectrodeMapPayload | null>(null);
@@ -134,6 +154,13 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
   const [mea, setMea] = useState<MeaAttachment | null>(null);
   const [meaBusy, setMeaBusy] = useState(false);
   const [meaError, setMeaError] = useState<string | null>(null);
+  // ⏱️ R48 — finding the recordings is a JOB now (it walks a tree, then opens every `data.raw.h5`
+  // it found through HDF5). `attachMea` still returns the attachment; the id arrives on the first
+  // poll so this screen can draw the same bar the top strip is drawing, with a real Stop.
+  const [meaJobId, setMeaJobId] = useState<string | null>(null);
+  const meaJob = useJob(meaJobId);
+  /** R48.7 — the one cancel that swallows the 409 a job which finished mid-click answers with. */
+  const stopJob = useStopJob();
   const eIndex = useMemo(() => (emap ? buildElectrodeIndex(emap) : null), [emap]);
   const emapRef = useRef(emap);
   emapRef.current = emap;
@@ -189,8 +216,15 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
 
   // Re-attach after a remount: the build is a detached server-side job; if one is running,
   // resume showing its progress instead of an idle screen whose Build button would 409.
+  //
+  // ⛔ **THE ANSWER IS NOT KNOWN UNTIL THIS LANDS (R48.10).** It used to swallow both halves of
+  // that: the screen showed the idle Build button for the whole round trip — a button that answers
+  // 409 when a build is already running — and a failed listing set nothing at all, so the same
+  // wrong screen simply stayed. `attaching` holds the build panel back, and a failure says so.
   useEffect(() => {
     let live = true;
+    setAttaching(true);
+    setAttachError(null);
     void listJobs().then(
       (r) => {
         if (!live) return;
@@ -198,8 +232,15 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
           (j) => j.kind === 'videomosaic_build' && !isTerminalState(j.state),
         );
         if (open) setJobId(open.job_id);
+        setAttaching(false);
       },
-      () => undefined, // listing jobs is best-effort; the idle screen is still usable
+      (e: unknown) => {
+        if (!live) return;
+        // R48.9 — a wait that ends badly still ends OUT LOUD. The screen stays usable (Build is
+        // offered) but the caveat is on it, because the 409 it may earn is now explainable.
+        setAttachError(errMsg(e));
+        setAttaching(false);
+      },
     );
     return () => {
       live = false;
@@ -338,15 +379,24 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
   const findRecordings = useCallback(async (): Promise<void> => {
     setMeaBusy(true);
     setMeaError(null);
+    setMeaJobId(null);
     try {
       // Discover, then save in one gesture — the paths land in the panel where he can read them,
       // and re-running it is harmless. What is NOT assumed is the chip's seating: `confirmed`
       // stays false, so every electrode identity stays marked provisional until it is settled.
-      setMea(await attachMea(analysisId, { confirm: true }));
+      //
+      // ⏱️ R48 — the scan is a job, so this reports where it has got to (`reading recording 3 of
+      // 11`) instead of the single word "Looking…" it showed for however long the tree took.
+      setMea(
+        await attachMea(analysisId, { confirm: true }, { onProgress: (j) => setMeaJobId(j.job_id) }),
+      );
     } catch (e: unknown) {
+      // R48.9 — including when it ends badly: "no MaxWell recordings found near this project's
+      // data folder" is the scan's own sentence and the only useful thing to read.
       setMeaError(e instanceof Error ? e.message : String(e));
     } finally {
       setMeaBusy(false);
+      setMeaJobId(null);
     }
   }, [analysisId]);
 
@@ -399,9 +449,24 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
     );
   }
   if (!doc) {
+    // ⏱️ R48.1/R48.4 — under the grace this renders NOTHING (the document read is one hop on
+    // localhost); over it, a bar with a running clock rather than a sentence that never changes.
+    // ⚠️ `app/FeatureGate.tsx` renders its own "Opening project…" for the round trip BEFORE this
+    // one — that half is another agent's file and is reported, not touched.
     return (
       <div className={styles.pane} data-testid="videomosaic">
-        <p className={styles.loading}>Opening project…</p>
+        {opening && (
+          <Progress
+            label="Opening the project"
+            // R48.9 — a single read with nothing countable inside it: the sliver, not a bar
+            // parked at 2 %, and the elapsed clock is what moves.
+            pct={null}
+            etaText={null}
+            elapsedText={openingFor}
+            unstoppableWhy="reading a project cannot be stopped — it is one read"
+            data-testid="vm-opening"
+          />
+        )}
       </div>
     );
   }
@@ -509,7 +574,30 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
             </LiveWarning>
           )}
 
-          {!running && !view && (
+          {/* R48.9/R48.10 — the job list could not be read, so whether a build is already running
+              is unknown. Say it rather than let the 409 be the first he hears of it. */}
+          {!running && attachError && (
+            <LiveWarning variant="warn" className={styles.block}>
+              <strong>Could not check what is already running.</strong> {attachError} If a build is
+              in flight, starting another one is refused.
+            </LiveWarning>
+          )}
+
+          {/* ⭐ R48.10 — WHILE THE ANSWER IS IN FLIGHT, DO NOT SHOW THE OTHER ONE. */}
+          {!running && !view && attaching && attachSlow && (
+            <div className={styles.buildPanel}>
+              <Progress
+                label="Checking whether this project is already building"
+                pct={null}
+                etaText={null}
+                elapsedText={null}
+                unstoppableWhy="reading the job list cannot be stopped"
+                data-testid="vm-attaching"
+              />
+            </div>
+          )}
+
+          {!running && !view && !attaching && (
             <div className={styles.buildPanel}>
               <Button
                 variant="primary"
@@ -535,39 +623,23 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
             </div>
           )}
 
+          {/* ⏱️ THE ONE BAR (R48.2). All seven phases carry an ETA since the backend wave — before
+              it only `track` did, so the time slot was empty for 54 % of a run. R48.4 means it is
+              never empty even then: the primitive says so and the elapsed clock runs. */}
           {running && (
-            <div data-testid="vm-progress">
-              <Panel title="Building" className={styles.progress}>
-                <div className={styles.barWell}>
-                  <div
-                    className={styles.bar}
-                    style={{
-                      transform: `scaleX(${Math.max(2, Math.min(100, job.pct ?? 0)) / 100})`,
-                    }}
-                  />
-                </div>
-                <div className={styles.progressRow}>
-                  <span className={styles.phase} data-testid="vm-phase">
-                    {job.phase ?? 'starting…'}
-                    {job.phaseIndex != null && job.nPhases != null
-                      ? ` · ${job.phaseIndex + 1}/${job.nPhases}`
-                      : ''}
-                  </span>
-                  <span className={styles.eta} data-testid="vm-eta">
-                    {job.etaText ?? ''}
-                  </span>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    onClick={() => void cancel()}
-                    data-testid="vm-cancel"
-                  >
-                    Cancel
-                  </Button>
-                </div>
-                {job.message && <div className={styles.msg}>{job.message}</div>}
-              </Panel>
-            </div>
+            <Panel title="Building">
+              <Progress
+                label={job.job?.said_as || 'building the mosaic'}
+                pct={job.pct}
+                etaText={job.etaText}
+                elapsedText={job.elapsedText}
+                phase={phaseOf(job)}
+                message={job.message}
+                logTail={job.logTail}
+                onStop={() => void cancel()}
+                data-testid="vm-progress"
+              />
+            </Panel>
           )}
 
           {!running && view && (
@@ -657,33 +729,23 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
             }
             rail={
               <>
+                {/* ⭐ R48.4 — this rendered a PERMANENTLY EMPTY time slot: the map job reported
+                    its phases' own 0→100 and never an `eta_s`, so the `<span>` beside the phase
+                    was `''` for the whole run. The backend now weights the phases and estimates
+                    (R48.5); the primitive fills the slot either way. */}
                 {mapping && (
-                  <div data-testid="vm-electrodes-progress">
-                    <Panel title="Mapping electrodes" className={styles.progress}>
-                      <div className={styles.barWell}>
-                        <div
-                          className={styles.bar}
-                          style={{
-                            transform: `scaleX(${
-                              Math.max(2, Math.min(100, mapJob.pct ?? 0)) / 100
-                            })`,
-                          }}
-                        />
-                      </div>
-                      <div className={styles.progressRow}>
-                        <span className={styles.phase}>{mapJob.phase ?? 'starting…'}</span>
-                        <span className={styles.eta}>{mapJob.etaText ?? ''}</span>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => void cancelEmap()}
-                          data-testid="vm-electrodes-cancel"
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </Panel>
-                  </div>
+                  <Panel title="Mapping electrodes">
+                    <Progress
+                      label={mapJob.job?.said_as || 'mapping the electrodes'}
+                      pct={mapJob.pct}
+                      etaText={mapJob.etaText}
+                      elapsedText={mapJob.elapsedText}
+                      phase={phaseOf(mapJob)}
+                      message={mapJob.message}
+                      onStop={() => void cancelEmap()}
+                      data-testid="vm-electrodes-progress"
+                    />
+                  </Panel>
                 )}
 
                 {/* ⭐ **THE REFUSAL IS SHOWN WHOLE** (R45.8 strict). Under "whole chip imaged" the
@@ -757,8 +819,28 @@ export function VideoMosaicFeature({ project }: VideoMosaicFeatureProps) {
                       onClick={() => void findRecordings()}
                       data-testid="vm-find-mea"
                     >
-                      {meaBusy ? 'Looking…' : 'Find the MEA recording'}
+                      Find the MEA recording
                     </Button>
+                    {/* ⏱️ R48 — the word "Looking…" on a button was the entire progress UI for a
+                        walk of a recording tree followed by an HDF5 open per file. The scan is a
+                        job now, so this is the real bar with the files-opened count in its
+                        message ("reading recording 3 of 11") and a Stop that stops it. */}
+                    {meaBusy && (
+                      <Progress
+                        className={styles.underButton}
+                        label={meaJob.job?.said_as || 'finding the electrical recordings'}
+                        // R48.9 — the walk has no denominator until it returns, so the first 8 %
+                        // is deliberately estimate-free; the opens that follow do have one.
+                        pct={meaJob.pct}
+                        etaText={meaJob.etaText}
+                        elapsedText={meaJob.elapsedText}
+                        phase={phaseOf(meaJob)}
+                        message={meaJob.message}
+                        onStop={meaJobId ? () => void stopJob(meaJobId) : undefined}
+                        unstoppableWhy={meaJobId ? undefined : 'starting…'}
+                        data-testid="vm-find-mea-progress"
+                      />
+                    )}
                   </Panel>
                 )}
 

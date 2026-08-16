@@ -214,3 +214,51 @@ def test_config_refuses_unknown_keys():
     cfg = VideoConfig.from_overrides({"keyframe_spacing_frac": 0.3})
     assert cfg.keyframe_spacing_frac == 0.3
     assert VideoConfig.from_overrides(None) == VideoConfig()
+
+
+# =================================================================================================
+# R48.5 — `pct` is OVERALL. The span tables are what make that true.
+# =================================================================================================
+def _tiles_the_bar(name: str, table: dict) -> None:
+    """A span table must run 0 -> 100 with no gap and no overlap. A gap is a bar that jumps; an
+    overlap is a bar that goes BACKWARDS at a phase boundary, which is the whole failure R48.5 was
+    written against ("the bar snaps backwards at every phase boundary")."""
+    spans = list(table.values())
+    assert spans, f"{name} is empty"
+    assert spans[0][0] == 0, f"{name} does not start at 0: {spans[0]}"
+    assert abs(spans[-1][1] - 100.0) < 0.11, f"{name} does not end at 100: {spans[-1]}"
+    for (a, b), (c, d) in zip(spans, spans[1:]):
+        assert a < b, f"{name}: a phase with no width cannot be seen ({a} -> {b})"
+        assert abs(b - c) < 0.11, f"{name}: gap or OVERLAP between {b} and {c}"
+    assert spans[-1][0] < spans[-1][1]
+
+
+def test_every_videomosaic_span_table_tiles_the_bar():
+    """🔴 BEHAVIOUR R48.5. Every job in this feature weights its phases with one of these; if one
+    of them stops tiling 0-100, that job's bar jumps or snaps back and the ETA derived from it
+    goes with it."""
+    from camea.features.videomosaic import pipeline as vpipeline
+    from camea.features.videomosaic import regions as vregions
+    from camea.features.videomosaic import routes as vroutes
+
+    _tiles_the_bar("pipeline._SPAN", vpipeline._SPAN)
+    _tiles_the_bar("regions.SPAN", vregions.SPAN)
+    # ⭐ and the SECOND region table: a re-locate copies nothing, so its phases have to stretch
+    # across the copy's share of the bar rather than leaving it empty.
+    _tiles_the_bar("regions.span_for(copying=False)", vregions.span_for(copying=False))
+    _tiles_the_bar("routes._MAP_SPAN", vroutes._MAP_SPAN)
+    _tiles_the_bar("routes._ATTACH_SPAN", vroutes._ATTACH_SPAN)
+    _tiles_the_bar("routes._ENVELOPE_SPAN", vroutes._ENVELOPE_SPAN)
+    # the orientation table is BUILT from the region count — one slice per region read — so it has
+    # to tile the bar for every count, not just for one
+    for n in (0, 1, 2, 5, 17):
+        _tiles_the_bar(f"routes._orientation_span({n})", vroutes._orientation_span(n))
+
+
+def test_a_region_jobs_phases_are_the_span_tables_keys():
+    """`PHASES` is what a caller indexes to report `phase_index`; if it ever drifts from `SPAN`
+    the index names a different phase than the pct belongs to."""
+    from camea.features.videomosaic import regions as vregions
+
+    assert vregions.PHASES == tuple(vregions.SPAN)
+    assert set(vregions.span_for(copying=False)) == set(vregions.SPAN) - {"copy"}

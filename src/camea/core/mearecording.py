@@ -1272,7 +1272,8 @@ class MeaRecording:
 
     def sync_episodes(self, t0: float = 0.0, t1: float | None = None, *,
                       min_channels: int = 50, min_duration_s: float = 0.5,
-                      bin_ms: float = 1.0) -> list[SyncEpisode]:
+                      bin_ms: float = 1.0,
+                      progress: Callable[[int, int], None] | None = None) -> list[SyncEpisode]:
         """Stretches where ``min_channels`` or more left the rail **together** — the 2P lamp marks.
 
         Synchrony is the whole discriminator: neural activity is local to a few electrodes, whereas
@@ -1282,6 +1283,11 @@ class MeaRecording:
         stream — measured ~16 s, far too slow to sit inside a request. Callers drawing a chart pass
         the window they are drawing, which costs a few blocks; callers building the MEA↔calcium
         clock alignment want the whole recording and should run it as a job.
+
+        ``progress(samples_done, samples_total)`` fires once per block — the countable unit is a
+        stored sample and the blocks are equal-sized, so a caller can divide (BEHAVIOUR R48.3).
+        ⭐ It is also the CANCEL seam: raise out of the callback and the pass unwinds between
+        blocks. Two whole-recording jobs sat silent and unstoppable in here for ~16 s each.
 
         Returned times are absolute (seconds from the recording's first sample), not relative to
         ``t0`` — a mark is a timestamp in the recording, whatever window revealed it.
@@ -1300,11 +1306,14 @@ class MeaRecording:
         parts: list[np.ndarray] = []
         try:
             for a in range(a0, a1, block):
-                blk = raw[:, a:min(a + block, a1)]
+                end = min(a + block, a1)
+                blk = raw[:, a:end]
                 off = (np.asarray(blk) != rail).sum(axis=0).astype(np.int32)
                 usable = off.size // per_bin * per_bin
                 if usable:
                     parts.append(off[:usable].reshape(-1, per_bin).max(axis=1))
+                if progress is not None:
+                    progress(end - a0, a1 - a0)
         except OSError as e:
             raise RawUndecodable(str(e)) from e
         if not parts:

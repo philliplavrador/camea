@@ -747,7 +747,7 @@ class Located:
 
 def locate(ref: np.ndarray, refmask: np.ndarray, stills: dict, zoom: Zoom,
            *, lattice: tuple[Sequence[float], Sequence[float]] | None = None,
-           progress: Callable[[str], None] | None = None,
+           progress: Callable[..., None] | None = None,
            max_candidates: int = MAX_CANDIDATES) -> Located:
     """Try each still (and each scale, if the zoom had to fall back) and keep the best.
 
@@ -756,8 +756,13 @@ def locate(ref: np.ndarray, refmask: np.ndarray, stills: dict, zoom: Zoom,
     median one — but the margin is a *within-surface* quantity: how far the winner stands
     above its own runner-up on its own correlation surface. That is comparable, and it is the
     quantity that actually predicts whether the answer is right.
+
+    `progress(message, done, total)` — the caller gets the COUNT, not just the sentence, because
+    a searched position is this function's countable unit and the caller needs it to divide
+    (R48.3). It used to hand over the message alone, with the numbers formatted into the string
+    and thrown away, and the region job reported `pct=0` for the minutes this takes.
     """
-    say = progress or (lambda _m: None)
+    say = progress or (lambda *_a: None)
     scales = [zoom.scale] if zoom.measured else scale_ladder()
     kinds = [k for k in STILL_KINDS if k in stills] or list(stills)
     if not kinds:
@@ -775,14 +780,27 @@ def locate(ref: np.ndarray, refmask: np.ndarray, stills: dict, zoom: Zoom,
 
     best: Located | None = None
     tried: list[dict] = []
-    total = len(kinds) * len(scales)
+    # ⏱️ THE COUNTABLE UNIT IS A SEARCHED POSITION: one still at one scale is one whole-plane
+    # match, and they cost the same. The two tail steps below count as one position each — the
+    # re-score IS one more match, and `refine_scale`'s 20 snaps are bounded windows costing a
+    # fraction of one — so `total` is honest to within the tail's own share.
+    # ⚠️ **THE CLIFF (BEHAVIOUR R48.11).** `n_search` is one position per still when the zoom was
+    # MEASURED and thirteen times that when the measurement refused — and which one it is only
+    # becomes known here, after the decode is already paid for. The ETA is SUPPOSED to jump up at
+    # that point; the message names the mode so the jump is explained rather than mysterious.
+    n_search = len(kinds) * len(scales)
+    total = n_search + 2
     done = 0
     for s in scales:
         for kind in kinds:
             done += 1
             say(f"matching {kind}"
                 + ("" if zoom.measured else f" at {s:.2f}x")
-                + f" ({done}/{total})")
+                + f" — {done} of {n_search} positions"
+                + ("" if zoom.measured
+                   else " (the recording's lattice could not be measured, so every scale is "
+                        "searched)"),
+                done, total)
             tpl, tmsk = prepare_template(stills[kind], s)
             tpl = notched(tpl, None)
             out = match(ref_g, refmask, tpl, tmsk, max_candidates=max_candidates)
@@ -820,7 +838,7 @@ def locate(ref: np.ndarray, refmask: np.ndarray, stills: dict, zoom: Zoom,
     # alias left to kill, and the grid is the sharpest, highest-contrast detail in the frame —
     # exactly what settles the last fraction of a pixel. Notching there would throw away the
     # signal that makes the answer precise, having already served its purpose upstream.
-    say("verifying the scale")
+    say("verifying the scale", n_search + 1, total)
     still = stills[best.still_kind]
     scale = best.zoom.scale
     at, size = (best.x, best.y), (best.w, best.h)
@@ -838,7 +856,7 @@ def locate(ref: np.ndarray, refmask: np.ndarray, stills: dict, zoom: Zoom,
     # perfectly good placement as thin (0.064 vs 0.16 measured on the synthetic scene). A
     # re-scored runner-up is not a cosmetic improvement, it is the difference between reporting
     # "confident" and reporting "check this", which is the one number the user acts on.
-    say("re-scoring the alternatives")
+    say("re-scoring the alternatives", n_search + 2, total)
     tpl, tmsk = prepare_template(still, scale)
     final = match(ref_g, refmask, notched(tpl, None), tmsk, max_candidates=max_candidates)
     if final.best is None:

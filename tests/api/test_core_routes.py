@@ -25,6 +25,48 @@ from .conftest import (
     store_entries,
 )
 
+
+# =================================================================================================
+# Local helpers — the three routes R48 promoted to jobs (2026-08-16)
+# =================================================================================================
+#
+# ⭐ `POST /api/datasets/at`, `POST .../outputs/copy` and `POST /api/documents/load` answer **202
+# `JobRef`** now, so every one of them is submit-then-poll. These are two-liners over `run_job` (the
+# suite's one polling loop) so no test below grows a wait of its own — and so that the **202** and
+# the **submit-time refusals** are asserted in exactly one place each.
+
+
+def scan_at(client, path, *, depth: int | None = None) -> dict:
+    """*"Look at THIS folder."* -> the `DatasetScanResult`."""
+    body = {"path": str(path)}
+    if depth is not None:
+        body["depth"] = depth
+    r = client.post("/api/datasets/at", json=body)
+    assert r.status_code == 202, r.text
+    return run_job(client, r.json()["job_id"])["result"]
+
+
+def copy_outputs(client, analysis_id: str, names: list[str], dest) -> dict:
+    """Take a copy out of a project (R44) -> the `CopyOutputsResult`.
+
+    ⚠️ Asserts the **202** only. The three refusals are still synchronous and are asserted as
+    4xx-on-submit by the tests that own them — this helper must never be used to check one.
+    """
+    r = client.post(f"/api/projects/{analysis_id}/outputs/copy",
+                    json={"names": names, "dest": str(dest)})
+    assert r.status_code == 202, r.text
+    return run_job(client, r.json()["job_id"])["result"]
+
+
+def load_document(client, path, session_id: str | None = None) -> dict:
+    """*"Load a project…"* -> the `LoadDocumentResult`. Refusals (missing file, no `data_dir`, the
+    range guard) are still 4xx on the submit and are asserted by their own tests."""
+    r = client.post("/api/documents/load",
+                    json={"path": str(path), "session_id": session_id})
+    assert r.status_code == 202, r.text
+    return run_job(client, r.json()["job_id"])["result"]
+
+
 # =================================================================================================
 # settings — ⛔ two keys, and both of them are LISTS OF PATHS
 # =================================================================================================
@@ -73,19 +115,25 @@ def test_there_is_no_root_registry_to_scan(client, synth):
     assert "/api/datasets/scan" not in paths
     assert "/api/workspace" not in paths
 
-    r = client.post("/api/datasets/at", json={"path": str(synth.path.parent)})
-    assert r.status_code == 200, r.text
-    assert synth.path.name in {d["name"] for d in r.json()["datasets"]}
+    body = scan_at(client, synth.path.parent)
+    assert synth.path.name in {d["name"] for d in body["datasets"]}
     # ...and no project folder was written down: there is no such index any more (R44).
     assert set(client.get("/api/settings").json()) == {"recent_datasets"}
+
+
+def test_a_mistyped_folder_is_refused_ON_THE_REQUEST(client, tmp_path):
+    """⭐ **R48 promoted the scan to a job; it did NOT push the refusal into it.** *"No such
+    directory"* is still a **400 on the request that asked**, so a typo lands beside the box he typed
+    it in — not as a job that fails a moment later with nobody waiting on it."""
+    r = client.post("/api/datasets/at", json={"path": str(tmp_path / "nope")})
+    assert r.status_code == 400
+    assert err(r)["code"] == "bad_request"
 
 
 def test_pointing_AT_a_dataset_says_so(client, synth):
     """He types the acquisition folder itself — the common case. One entry, `is_dataset` true, so
     the UI can take it without making him choose from a list of one."""
-    r = client.post("/api/datasets/at", json={"path": str(synth.path)})
-    assert r.status_code == 200, r.text
-    body = r.json()
+    body = scan_at(client, synth.path)
     assert body["is_dataset"] is True
     assert len(body["datasets"]) == 1
     assert body["datasets"][0]["name"] == synth.path.name
@@ -195,9 +243,7 @@ def test_there_is_no_route_that_opens_a_project_in_explorer(client):
 
 
 def test_looking_at_a_folder_reports_what_is_in_it(client, synth):
-    r = client.post("/api/datasets/at", json={"path": str(synth.path.parent)})
-    assert r.status_code == 200
-    body = r.json()
+    body = scan_at(client, synth.path.parent)
     ds = next(d for d in body["datasets"] if d["name"] == synth.path.name)
 
     assert ds["n_snapshots"] == len(synth.trials) + 4        # 3 strays + 1 off-shape
@@ -211,8 +257,7 @@ def test_looking_at_a_folder_reports_what_is_in_it(client, synth):
 
 
 def test_dataset_detail_and_thumbnail_cost_no_session(client, synth):
-    key = client.post("/api/datasets/at",
-                      json={"path": str(synth.path.parent)}).json()["datasets"][0]["key"]
+    key = scan_at(client, synth.path.parent)["datasets"][0]["key"]
 
     d = client.get(f"/api/datasets/{key}").json()
     blocks = [(b["lo"], b["hi"]) for b in d["blocks"]]
@@ -487,12 +532,37 @@ def test_save_as_and_a_COLD_load(client, synth, tmp_path):
     client.delete(f"/api/sessions/{s['session_id']}")        # <- the app now knows NOTHING
     assert client.get("/api/sessions").json()["sessions"] == []
 
-    r = client.post("/api/documents/load", json={"path": str(out)})
-    assert r.status_code == 200, r.text
-    body = r.json()
+    body = load_document(client, out)
     assert body["session"] is not None                       # bootstrapped from the doc's data_dir
     assert body["session"]["n"] == len(synth.trials)
     assert body["doc"]["id"] == aid
+
+
+def test_a_COLD_load_still_REFUSES_on_the_request(client, synth, tmp_path):
+    """🔴 **R48 made the load a job; the guards did NOT move into it.** They need the dataset's
+    identity and not one pixel, so every one of them is still 4xx on the request that asked —
+    a refusal that arrived as a failed job five seconds later would be a regression.
+
+    ⭐ The load-bearing one is the **range guard**: a document for a different acquisition is
+    `409 range_mismatch`, and that is what stops pass 2's file quietly overwriting pass 1's."""
+    # a file that is not there
+    r = client.post("/api/documents/load", json={"path": str(tmp_path / "ghost.camea.json")})
+    assert r.status_code == 404 and err(r)["code"] == "not_found"
+
+    s = open_session(client, synth.path, synth.trials)
+    aid = client.post("/api/projects",
+                      json={"session_id": s["session_id"], "feature": "mosaic", "name": "guard",
+                            "trials": synth.trials}).json()["analysis_id"]
+    doc = client.get(f"/api/analyses/{aid}/document").json()["doc"]
+
+    # ⛔ a document that says nothing about where its data came from, loaded cold
+    orphan = dict(doc, data_dir="")
+    p = tmp_path / "orphan.camea.json"
+    assert client.post("/api/documents/save-as",
+                       json={"path": str(p), "doc": orphan}).status_code == 200
+    client.delete(f"/api/sessions/{s['session_id']}")
+    r = client.post("/api/documents/load", json={"path": str(p)})
+    assert r.status_code == 400 and err(r)["code"] == "bad_request"
 
 
 def test_save_as_INTO_the_dataset_is_refused(client, synth):
@@ -630,12 +700,12 @@ def test_copying_outputs_out_is_a_COPY_and_the_project_keeps_them(client, synth,
     aid, out = _built(client, synth)
     dest = outbox / "for-the-paper"
 
-    r = client.post(f"/api/projects/{aid}/outputs/copy",
-                    json={"names": ["mosaic.png", "qc.md"], "dest": str(dest)})
-    assert r.status_code == 200, r.text
-    assert sorted(Path(p).name for p in r.json()["copied"]) == ["mosaic.png", "qc.md"]
+    res = copy_outputs(client, aid, ["mosaic.png", "qc.md"], dest)
+    assert sorted(Path(p).name for p in res["copied"]) == ["mosaic.png", "qc.md"]
     assert (dest / "mosaic.png").read_bytes() == (out / "mosaic.png").read_bytes()
     assert (out / "mosaic.png").is_file(), "a copy is not a move"
+    # ⏱️ R48 — the bar was counting BYTES, and the result says how many it counted.
+    assert res["bytes"] == sum((out / n).stat().st_size for n in ("mosaic.png", "qc.md"))
 
 
 def test_copying_out_refuses_to_write_over_HIS_files(client, synth, outbox):

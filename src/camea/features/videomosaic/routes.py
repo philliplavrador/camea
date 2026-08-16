@@ -28,6 +28,7 @@ pipeline is imported inside handlers/jobs only.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -150,6 +151,38 @@ def _probe(path: str):
         return probe(path)
     except VideoError as e:
         raise ApiError(400, "bad_request", str(e)) from e
+
+
+def _span_emitter(report, span: dict[str, tuple[float, float]], *,
+                  t0: float | None = None) -> Callable[..., None]:
+    """`emit(key, frac, message)` — a phase-local 0..1 becomes the job's **OVERALL** pct, and the
+    ETA is derived from that overall fraction. The `pipeline._emitter` pattern, shared by the jobs
+    in this module whose phases cost wildly different amounts.
+
+    ⛔ **R48.5.** Every job here used to report each phase's own 0→100, so the bar snapped back to
+    zero at every boundary and any ETA read off it counted *up* inside each phase. A phase-local
+    fraction must never reach `eta_from_fraction`; that is what this function is for.
+
+    `phase=` reports a different name than the span key — the orientation test weights each region
+    read separately (`video1`, `video2`, …) while the user still reads one phase called `video`.
+    `estimate=False` says *"this emit is not an anchor"*: a step that finished in no time at all
+    would otherwise hand the client a confident "0 s left" (R48.4 — the client says
+    *"working out how long this will take…"*, which is the truthful answer).
+    """
+    from camea.core import jobs as core_jobs  # noqa: PLC0415
+
+    started = time.monotonic() if t0 is None else float(t0)
+    names = list(span)
+
+    def emit(key: str, frac: float, message: str = "", *, phase: str | None = None,
+             estimate: bool = True) -> None:
+        lo, hi = span[key]
+        pct = lo + (hi - lo) * min(1.0, max(0.0, float(frac)))
+        eta = (core_jobs.eta_from_fraction(time.monotonic() - started, pct / 100.0)
+               if estimate else None)
+        core_jobs.say(report, phase or key, names.index(key), len(names), pct, message, eta)
+
+    return emit
 
 
 def _video_key(path: Path) -> str:
@@ -363,6 +396,12 @@ def get_output(analysis_id: str, name: str, v: str | None = None) -> Response:
 
 ELECTRODE_JOB_KIND = "electrode_map"
 
+#: phase -> (start_pct, end_pct) of the whole electrode-map job (R48.5 — `pct` is OVERALL).
+#: The three phases used to report 0 / 0-100 / 0 of their own, so the bar reset twice per run.
+#: `read` is one PIL decode of the finished mosaic, `fit` is `electrodegrid.fit_grid` (whose six
+#: internal steps carry their own measured weights — `FIT_SPAN`), `write` is two small files.
+_MAP_SPAN = {"read": (0, 25), "fit": (25, 98), "write": (98, 100)}
+
 
 @router.post("/api/videomosaic/electrodes/map", response_model=JobRef, status_code=202)
 def post_electrodes_map(body: VideoElectrodeMapRequest) -> dict:
@@ -405,24 +444,29 @@ def post_electrodes_map(body: VideoElectrodeMapRequest) -> dict:
     coverage = body.array_coverage
 
     def fn(report, cancel):
-        import time
-
         from camea.core import electrodegrid
         from camea.core import jobs as core_jobs
 
         from . import canvas as vcanvas
 
-        core_jobs.say(report, "read", 0, 3, 0.0, "reading the mosaic")
+        emit = _span_emitter(report, _MAP_SPAN)
+        # ⏱️ NO ETA ON THIS ONE EMIT, and R48.9 names the reason: `read_mosaic` is a single PIL
+        # decode of a survey-sized PNG with no callback to divide by — the "genuinely silent phase
+        # of an uninterruptible kernel" case. It is also why there is no cancel check inside it;
+        # the first one the user can reach is the fit's, one step later.
+        emit("read", 0.0, "reading the mosaic", estimate=False)
         # ⭐ ONE read-back, shared with the region-locating stage — see `canvas.read_mosaic`
         # for why coverage is geometry and never `png > 0`.
         arr, valid = vcanvas.read_mosaic(doc, out_dir)
+        core_jobs.check_cancelled(cancel, "electrode map")
 
         def prog(msg: str) -> None:
             core_jobs.check_cancelled(cancel, "electrode map")
-            steps = electrodegrid.FIT_STEPS
-            idx = steps.index(msg) if msg in steps else 0
-            # ⚠️ `Progress.pct` is 0-100, not 0-1
-            core_jobs.say(report, "fit", 1, 3, 100.0 * idx / len(steps), msg)
+            # ⏱️ The six fit steps are NOT equal cost (measured: `electrodegrid.FIT_SPAN`), and
+            # dividing by six is what made this bar crawl and then leap. `fit_grid` announces a
+            # step BEFORE running it, so the step's own `lo` is where the fit has actually got to.
+            lo, _hi = electrodegrid.FIT_SPAN.get(msg, (0.0, 0.0))
+            emit("fit", lo, msg)
 
         # ⭐ R45.8. The device goes in for BOTH modes — it is what buys the µm scale (17.5 µm
         # over the pitch this mosaic measures). Only the 220 × 120 shape rule is conditional,
@@ -431,7 +475,7 @@ def post_electrodes_map(body: VideoElectrodeMapRequest) -> dict:
                                     device=electrodegrid.MAXWELL,
                                     enforce_shape=(coverage == "full"))
 
-        core_jobs.say(report, "write", 2, 3, 0.0, "writing the electrode table")
+        emit("write", 0.0, "writing the electrode table")
         built_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         payload = electrodegrid.full_payload(
             gm,
@@ -546,8 +590,9 @@ def _save_regions(ws, analysis_id: str, regions: list[dict]) -> dict:
     return saved["doc"]
 
 
-def _adopt_video(ws, analysis_id: str, path: str) -> Path:
-    """Copy a recording into the project and hand back its new home.
+def _adopt_plan(ws, analysis_id: str, path: str) -> tuple[Path, Path | None]:
+    """Where a recording will live inside the project. -> `(source, destination)`, destination
+    `None` when there is nothing to copy.
 
     ⭐ **The project HOLDS its files** (his ruling, 2026-08-11: *"the project is what holds the
     project files"*). A located region must stay locatable after the original video is moved,
@@ -557,9 +602,13 @@ def _adopt_video(ws, analysis_id: str, path: str) -> Path:
 
     A file already in the project with the same name and size is adopted rather than re-copied —
     re-locating a recording must not multiply it on disk.
-    """
-    import shutil
 
+    ⭐ **DECIDED HERE, COPIED IN THE JOB (R48).** This half is pure arithmetic on paths and stays
+    on the request thread, so a path that is not a file is still a **400 the POST answers
+    immediately** rather than a job that starts, runs and fails asynchronously. Only the bytes
+    moved — an 884 MB `shutil.copy2` that ran right here with no progress of any kind, so the POST
+    simply hung with nothing on screen.
+    """
     src = Path(path).expanduser()
     if not src.is_file():
         raise ApiError(400, "bad_request", f"no video file at {src.as_posix()}")
@@ -568,23 +617,64 @@ def _adopt_video(ws, analysis_id: str, path: str) -> Path:
     except Exception as e:                                   # noqa: BLE001
         raise _project_error(e) from e
     if src.resolve().parent == Path(dest_dir).resolve():
-        return src                                           # already ours
+        return src, None                                     # already ours
     try:
         dest = Path(dest_dir) / safe_basename(src.name)
     except ValueError:
         dest = Path(dest_dir) / f"recording{src.suffix}"
     if dest.exists() and dest.stat().st_size == src.stat().st_size:
-        return dest
+        return dest, None
     stem, suffix = dest.stem, dest.suffix
     k = 2
     while dest.exists():
         dest = Path(dest_dir) / f"{stem}-{k}{suffix}"
         k += 1
+    return src, dest
+
+
+def _adopt_copy(src: Path, dest: Path, *, emit: Callable[..., None], cancel,
+                report_every_s: float = 0.25) -> None:
+    """Copy the recording into the project, reporting BYTES and stopping when asked.
+
+    ⏱️ The countable unit is the byte, and the file's own size is the denominator (R48.3).
+
+    🔴 **THE BYTES ARE MOVED BY `core_workspace.copy_file`, NOT BY A LOCAL LOOP.** That is core, not
+    another feature, and this module already imports it — so there is nothing to duplicate away
+    from. It owns the `.part` + `os.replace` (a half-copied video left at the final name would be
+    adopted for ever by `_adopt_plan`'s same-size check), the `fsync`, the cancel poll between
+    chunks, and — the part a hand-rolled loop drops — the `shutil.copystat` that makes this a
+    drop-in for the `shutil.copy2` it replaced. All this adds is the guard, the sentence and the
+    throttle.
+    """
+    core_workspace.refuse_write(dest)          # 🔴 R44 belt-and-braces: never outside the project
+    total = src.stat().st_size
+    done = 0
+    last_said = 0.0
+
+    def mb(n: int) -> str:
+        # ⚠️ NOT integer MB. A recording under a megabyte rendered as "0 of 0 MB" — a confident,
+        # wrong number on screen while the copy runs, which is exactly R48.10.
+        return f"{n / (1024 * 1024):.1f}"
+
+    def on_bytes(n: int) -> None:
+        nonlocal done, last_said
+        done += n
+        # a few times a second, not once per 8 MB chunk — a fast disk would otherwise put a
+        # hundred lines in the log drawer for one copy. ⛔ Throttled on ADVANCEMENT, never fired on
+        # a timer with the count standing still: that is the R48b heartbeat that makes an ETA
+        # count up.
+        if time.monotonic() - last_said >= report_every_s:
+            last_said = time.monotonic()
+            emit("copy", done / total if total else 1.0,
+                 f"copying the recording into the project "
+                 f"({mb(done)} of {mb(total)} MB)")
+
     try:
-        shutil.copy2(src, dest)
+        core_workspace.copy_file(src, dest, on_bytes=on_bytes, cancel=cancel)
     except OSError as e:
-        raise ApiError(500, "io_error", f"could not copy {src.name} into the project: {e}") from e
-    return dest
+        # ⚠️ NOT an `ApiError` — this runs on a worker thread, where an `HTTPException` becomes the
+        # job's error message as `"500: {'code': …}"`. A job says why it failed in a sentence.
+        raise RuntimeError(f"could not copy {src.name} into the project: {e}") from e
 
 
 @router.post("/api/videomosaic/regions/locate", status_code=202, response_model=JobRef)
@@ -614,16 +704,25 @@ def post_locate_region(body: LocateRegionRequest) -> dict:
     if not body.path.strip():
         raise ApiError(400, "bad_request", "give the path of a recording to locate")
 
-    video = _adopt_video(ws, analysis_id, body.path.strip())
+    # The refusals stay here; only the bytes move into the job. See `_adopt_plan`.
+    src, dest = _adopt_plan(ws, analysis_id, body.path.strip())
     base = _region_basename(doc, analysis_id)
     label = body.name
 
     def fn(report, cancel):
         from . import regions as vregions
 
+        # ⭐ ONE emitter for the whole job, created before the copy: the ETA divides by everything
+        # the user has waited, not by the part that starts after the file is in place (R48.5).
+        emit = vregions.emitter(report, span=vregions.span_for(copying=dest is not None))
+        video = src
+        if dest is not None:
+            _adopt_copy(src, dest, emit=emit, cancel=cancel)
+            video = dest
+
         fresh, _ = core_document.load_analysis(ws, analysis_id)
         region = vregions.locate_region(fresh, out_dir, base, video, name=label,
-                                        report=report, cancel=cancel)
+                                        emit=emit, cancel=cancel)
         kept = [r for r in (fresh.get("regions") or [])
                 if str(r.get("id")) != str(region["id"])]
         saved = _save_regions(ws, analysis_id, [*kept, region])
@@ -632,7 +731,8 @@ def post_locate_region(body: LocateRegionRequest) -> dict:
 
     try:
         job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE,
-                                 label="placing a recording")
+                                 label=("copying a recording in, then placing it"
+                                        if dest is not None else "placing a recording"))
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     return {"job_id": job.job_id, "kind": REGION_JOB_KIND}
@@ -675,8 +775,11 @@ def post_snap_region(body: SnapRegionRequest) -> dict:
                 "doc": core_document.jsonable(saved)}
 
     try:
+        # ⏱️ NO ETA FOR THIS ONE — see `regions.resnap_region`: a ~1 s gesture with no countable
+        # unit inside either step, so the bar advances on its two real costs and the time slot
+        # stays the client's "working out how long this will take…" for the whole run.
         job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE,
-                                 label="placing a recording")
+                                 label="snapping a recording into place")
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     return {"job_id": job.job_id, "kind": REGION_JOB_KIND}
@@ -728,9 +831,12 @@ def post_relocate_region(body: RelocateRegionRequest) -> dict:
     def fn(report, cancel):
         from . import regions as vregions
 
+        # nothing to copy — the project's own file is already the source (R46.9), so the phases
+        # stretch across the whole bar rather than leaving the copy's share of it empty
+        emit = vregions.emitter(report, span=vregions.span_for(copying=False))
         fresh, _ = core_document.load_analysis(ws, analysis_id)
         region = vregions.locate_region(fresh, out_dir, base, video, name=label, rid=rid,
-                                        report=report, cancel=cancel)
+                                        emit=emit, cancel=cancel)
         rs = list(fresh.get("regions") or [])
         # Replace IN PLACE — the row must not jump to the bottom of the list for being refreshed.
         if any(str(r.get("id")) == rid for r in rs):
@@ -743,7 +849,7 @@ def post_relocate_region(body: RelocateRegionRequest) -> dict:
 
     try:
         job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE,
-                                 label="placing a recording")
+                                 label="placing a recording again")
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     return {"job_id": job.job_id, "kind": REGION_JOB_KIND}
@@ -876,30 +982,47 @@ def _orientation_of(block: dict):
     )
 
 
-def _summarise(paths: list[Path]) -> tuple[list[dict], int | None, float | None]:
+class LayoutDisagreement(Exception):
+    """Two attached recordings describe different chips. -> 409 from a request, and the job's
+    error sentence from a job. ⚠️ Not an `ApiError`: `_summarise` now runs on a worker thread as
+    well as on the request thread, and an `HTTPException` raised there becomes the job's message
+    as `"409: {'code': …}"` — a dict where the user needs a sentence."""
+
+
+def _summarise(paths: list[Path], *,
+               progress: Callable[[int, int], None] | None = None,
+               ) -> tuple[list[dict], int | None, float | None]:
     """Header facts for each recording + the chip layout they agree on.
 
     The layout is DERIVED per file and must agree across them; a disagreement means the folder
     holds recordings from different devices, which we refuse rather than average.
+
+    ⏱️ `progress(files_opened, files_found)` — the countable unit is the FILE, and it is the only
+    denominator this loop can have: an h5 open costs what its header costs. It is also the cancel
+    seam, since one file is the smallest thing worth interrupting between.
     """
     from camea.core import mearecording  # noqa: PLC0415
 
     out: list[dict] = []
     stride: int | None = None
     pitch: float | None = None
-    for p in paths:
+    for n, p in enumerate(paths):
         try:
             with mearecording.MeaRecording(p) as r:
                 out.append(r.info().as_dict())
                 s, q = r.stride(), r.pitch_um()
         except mearecording.MeaError:
+            if progress is not None:
+                progress(n + 1, len(paths))
             continue
         if stride is None:
             stride, pitch = s, q
         elif s != stride:
-            raise ApiError(409, "refused",
-                           "these recordings describe different chip layouts "
-                           f"(stride {stride} vs {s}) — they cannot belong to one project")
+            raise LayoutDisagreement(
+                "these recordings describe different chip layouts "
+                f"(stride {stride} vs {s}) — they cannot belong to one project")
+        if progress is not None:
+            progress(n + 1, len(paths))
     return out, stride, pitch
 
 
@@ -915,65 +1038,123 @@ def get_mea(analysis_id: str) -> dict:
         return {"attached": False, "recordings": [], "decoder_present": present,
                 "orientation": _orientation_of(block).as_dict()}
     paths = mearecording.find_recordings(block["mea_dir"])
-    recs, stride, pitch = _summarise(paths)
+    try:
+        recs, stride, pitch = _summarise(paths)
+    except LayoutDisagreement as e:
+        raise ApiError(409, "refused", str(e)) from e
     return {"attached": bool(recs), "mea_dir": block["mea_dir"], "recordings": recs,
             "stride": stride, "pitch_um": pitch, "decoder_present": present,
             "orientation": _orientation_of(block).as_dict()}
 
 
-@router.post("/api/videomosaic/mea/attach", response_model=MeaAttachment)
+ATTACH_JOB_KIND = "mea_attach"
+
+#: phase -> (start_pct, end_pct) of the attach scan. `find` is a directory walk with no denominator
+#: until it returns — R48.9's one blessed no-ETA shape, so it counts UP in words and takes a small
+#: fixed slice — and `open` is the part with a real unit (files opened / files found), which is
+#: where the seconds actually go: every recording's header is read through HDF5.
+_ATTACH_SPAN = {"find": (0, 8), "open": (8, 98), "save": (98, 100)}
+
+
+@router.post("/api/videomosaic/mea/attach", status_code=202, response_model=JobRef)
 def post_mea_attach(body: MeaAttachRequest) -> dict:
     """Find the recordings that belong to a project — and, on `confirm`, remember them.
+    **202 `JobRef`**; the attachment comes back as the job's `MeaAttachResult`.
 
     ⭐ Two-step ON PURPOSE. Without `confirm` this only *reports* what it found, so the user sees
     the actual paths before anything is written. Attaching the wrong plate would pair one culture's
     voltages with another culture's neurons — silently, and in a dataset meant to be ground truth.
+
+    ⭐ **A JOB SINCE 2026-08-16 (R48).** It walks a directory tree and then opens every
+    `data.raw.h5` it found through HDF5 — an unbounded number of unbounded opens, previously on the
+    request thread with no bar, no time, no Stop and no timeout. Worse, *"Use this seating"* is the
+    same call with `confirm`, so confirming re-ran the entire scan with the screen frozen behind it.
+
+    ⚠️ **The cheap refusals stay synchronous** — a folder that does not exist is still a 404 the
+    POST answers. Only what the scan itself can discover (nothing found; nothing readable; two
+    chips in one folder) becomes the job's failure, because none of it is knowable until the walk
+    has run.
     """
-    from camea.core import mearecording  # noqa: PLC0415
-
     doc, ws = _video_project(body.analysis_id)
+    root_named: Path | None = None
     if body.mea_dir:
-        root = Path(body.mea_dir)
-        if not root.is_dir():
+        root_named = Path(body.mea_dir)
+        if not root_named.is_dir():
             raise ApiError(404, "not_found", f"no folder at {body.mea_dir}")
-        paths = mearecording.find_recordings(root)
-        if not paths:
-            raise ApiError(404, "not_found",
-                           f"no {mearecording.MEA_FILENAME} anywhere under {body.mea_dir}")
-    else:
-        data_dir = str(doc.get("data_dir") or "")
-        if not data_dir:
-            raise ApiError(409, "refused",
-                           "this project does not record where its data came from, so there is "
-                           "nowhere to look — name the recording folder instead")
-        paths = mearecording.suggest_recordings(data_dir, str(doc.get("name") or ""))
-        if not paths:
-            raise ApiError(404, "not_found",
-                           "no MaxWell recordings found near this project's data folder")
-        root = Path(os.path.commonpath([str(p.parent) for p in paths]))
-        # With a single recording the common path IS its run folder, which would freeze the
-        # attachment to that one run — a later run in the same assay would never be found. Step
-        # out to the folder that HOLDS runs so the attachment stays true as the session grows.
-        if (root / mearecording.MEA_FILENAME).is_file():
-            root = root.parent
+    elif not str(doc.get("data_dir") or ""):
+        raise ApiError(409, "refused",
+                       "this project does not record where its data came from, so there is "
+                       "nowhere to look — name the recording folder instead")
 
-    recs, stride, pitch = _summarise(paths)
-    if not recs:
-        raise ApiError(422, "refused",
-                       "found recording files but none could be read as a MaxLab recording")
-    orientation = (mearecording.Orientation(**body.orientation.model_dump())
-                   if body.orientation else _orientation_of(_mea_block(doc)))
-    payload = {"attached": True, "mea_dir": str(root).replace("\\", "/"), "recordings": recs,
-               "stride": stride, "pitch_um": pitch,
-               "decoder_present": mearecording.plugin_present(),
-               "orientation": orientation.as_dict()}
-    if body.confirm:
-        fresh, _ = core_document.load_analysis(ws, body.analysis_id)
-        fresh["mea"] = {"mea_dir": payload["mea_dir"], "orientation": orientation.as_dict(),
-                        "stride": stride, "pitch_um": pitch}
-        saved = core_document.save_analysis(ws, body.analysis_id, fresh)
-        core_document.DOCUMENTS.put(saved["doc"], ws.document_path(body.analysis_id))
-    return payload
+    def fn(report, cancel):
+        from camea.core import jobs as core_jobs  # noqa: PLC0415
+        from camea.core import mearecording as mr  # noqa: PLC0415
+
+        emit = _span_emitter(report, _ATTACH_SPAN)
+        # ⏱️ NO ETA HERE, and R48.9 names the reason: a directory walk has no denominator until it
+        # returns, so this slice of the bar is a fixed 0→8 % and `estimate=False` keeps the time
+        # slot on the client's "working out how long this will take…".
+        # ⚠️ R48.9 also asks for a **count-up** here (*"14 recordings so far"*) and this does NOT
+        # have one: `mearecording.find_recordings`/`suggest_recordings` return a finished list, so
+        # the only two things it can say are "looking" and "N found". Giving them a per-hit
+        # callback is the outstanding half of this, and it lives in core.
+        emit("find", 0.0, "looking for MaxWell recordings", estimate=False)
+        if root_named is not None:
+            root = root_named
+            paths = mr.find_recordings(root)
+            if not paths:
+                raise RuntimeError(
+                    f"no {mr.MEA_FILENAME} anywhere under {body.mea_dir}")
+        else:
+            paths = mr.suggest_recordings(str(doc.get("data_dir") or ""),
+                                          str(doc.get("name") or ""))
+            if not paths:
+                raise RuntimeError("no MaxWell recordings found near this project's data folder")
+            root = Path(os.path.commonpath([str(p.parent) for p in paths]))
+            # With a single recording the common path IS its run folder, which would freeze the
+            # attachment to that one run — a later run in the same assay would never be found. Step
+            # out to the folder that HOLDS runs so the attachment stays true as the session grows.
+            if (root / mr.MEA_FILENAME).is_file():
+                root = root.parent
+        emit("find", 1.0, f"{len(paths)} recording(s) found", estimate=False)
+
+        def opened(done: int, total: int) -> None:
+            core_jobs.check_cancelled(cancel, "finding the recordings")
+            emit("open", done / max(1, total), f"reading recording {done} of {total}")
+
+        try:
+            recs, stride, pitch = _summarise(paths, progress=opened)
+        except LayoutDisagreement as e:
+            raise RuntimeError(str(e)) from e
+        if not recs:
+            raise RuntimeError(
+                "found recording files but none could be read as a MaxLab recording")
+
+        orientation = (mr.Orientation(**body.orientation.model_dump())
+                       if body.orientation else _orientation_of(_mea_block(doc)))
+        payload = {"attached": True, "mea_dir": str(root).replace("\\", "/"), "recordings": recs,
+                   "stride": stride, "pitch_um": pitch,
+                   "decoder_present": mr.plugin_present(),
+                   "orientation": orientation.as_dict()}
+        if body.confirm:
+            emit("save", 0.0, "saving the attachment")
+            fresh, _ = core_document.load_analysis(ws, body.analysis_id)
+            fresh["mea"] = {"mea_dir": payload["mea_dir"], "orientation": orientation.as_dict(),
+                            "stride": stride, "pitch_um": pitch}
+            saved = core_document.save_analysis(ws, body.analysis_id, fresh)
+            core_document.DOCUMENTS.put(saved["doc"], ws.document_path(body.analysis_id))
+        return {"kind": ATTACH_JOB_KIND, "analysis_id": body.analysis_id,
+                "confirmed": bool(body.confirm), "attachment": payload}
+
+    try:
+        # ⚠️ **NO LEASE, on purpose.** `LEASE` exists so two CPU-bound video jobs queue instead of
+        # thrashing; this one reads h5 headers. Taking it would make attaching a recording a 409
+        # for the five minutes a build runs — a refusal the synchronous version never had.
+        job = JOBS.submit_thread(ATTACH_JOB_KIND, fn,
+                                 label="finding the electrical recordings")
+    except Busy as e:
+        raise ApiError(409, "busy", str(e)) from e
+    return {"job_id": job.job_id, "kind": ATTACH_JOB_KIND}
 
 
 @router.get("/api/videomosaic/{analysis_id}/mea/trace", response_model=ElectrodeTracePayload)
@@ -1102,9 +1283,12 @@ def get_mea_trace(analysis_id: str, electrode: str, run_id: str | None = None,
                 if env is None:
                     raise ApiError(
                         409, "refused",
+                        # ⚠️ Kept byte-identical with `web/src/core/trace/wholeRecording.ts ::
+                        # NOT_READ_YET` and with the mea feature's copy of this refusal. ⛔ It must
+                        # not promise a minute: reads are serialised one recording at a time (R48).
                         "Camea has not read this recording end to end yet, so it cannot show "
-                        "you the whole of it at once. It is a one-off job of about a minute per "
-                        "recording.",
+                        "you the whole of it at once. It is a one-off job per recording, and "
+                        "Camea reads one recording at a time.",
                         {"run_id": info.run_id, "needs": "envelope"},
                     )
                 got = env.window(channel, start, end, max_points)
@@ -1174,6 +1358,33 @@ ORIENTATION_CAVEAT_UNALIGNED = (
     "trace. The correlations compare the two recordings at their raw, unaligned clocks, so they "
     "mean nothing either way. Only the coverage numbers — which need no clock — say anything here."
 )
+
+
+#: What one step of the orientation test costs RELATIVE to the others. ⭐ Measured 2026-08-16, and
+#: the reason it is a table rather than "divide by the number of steps": reading ONE region
+#: recording end to end is by far the most expensive thing here — every frame is decoded, at a
+#: measured ~235 fps — and it happens **once per region**, while the electrical side is one pass of
+#: the raw stream (`sync_episodes`, ~16 s) whatever the region count. So the weights cannot be
+#: constants either: `_orientation_span` builds the table from `n_regions`, and a two-region run
+#: correctly puts ~90 % of the bar in the video reads where a fixed table would have said ~80 %.
+_ORIENT_COST = {"video": 1.0, "mea": 0.22, "score": 0.03}
+
+
+def _orientation_span(n_regions: int) -> dict[str, tuple[float, float]]:
+    """phase -> (lo, hi) pct across the WHOLE orientation test (R48.5).
+
+    One span key per region read (`video1`, `video2`, …) so each gets its own slice of the bar;
+    they all report the phase name `video`, which is the word the user reads.
+    """
+    weights = [(f"video{i + 1}", _ORIENT_COST["video"]) for i in range(max(1, n_regions))]
+    weights += [("mea", _ORIENT_COST["mea"]), ("score", _ORIENT_COST["score"])]
+    total = sum(w for _k, w in weights)
+    span: dict[str, tuple[float, float]] = {}
+    at = 0.0
+    for key, w in weights:
+        span[key] = (round(100.0 * at / total, 2), round(100.0 * (at + w) / total, 2))
+        at += w
+    return span
 
 
 def orientation_caveat(alignment_source: str) -> str:
@@ -1264,17 +1475,28 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
         from camea.core import jobs as core_jobs  # noqa: PLC0415
 
         n_regions = len(chosen)
-        steps = n_regions + 2
+        emit = _span_emitter(report, _orientation_span(n_regions))
         calcium_of: list[np.ndarray] = []
         for i, ch in enumerate(chosen):
-            core_jobs.say(report, "video", i + 1, steps, 0.0,
-                          f"reading region recording {i + 1} of {n_regions}")
-            arr, _fps = vorient.video_activity(ch["video"])
+            key = f"video{i + 1}"
+
+            def decoded(done: int, total: int, _k: str = key, _i: int = i) -> None:
+                # ⏱️ The countable unit is a DECODED FRAME, and the container's own frame count is
+                # the denominator (`orientation.video_activity` reports both). This is also the
+                # only cancel boundary inside a minutes-long decode: the loop has no other.
+                core_jobs.check_cancelled(cancel, "orientation test")
+                emit(_k, done / total if total else 0.0,
+                     f"reading region recording {_i + 1} of {n_regions} "
+                     f"({done} of {total} frames)" if total
+                     else f"reading region recording {_i + 1} of {n_regions} ({done} frames)",
+                     phase="video", estimate=bool(total))
+
+            emit(key, 0.0, f"reading region recording {i + 1} of {n_regions}", phase="video")
+            arr, _fps = vorient.video_activity(ch["video"], progress=decoded)
             calcium_of.append(arr)
             core_jobs.check_cancelled(cancel, "orientation test")
 
-        core_jobs.say(report, "mea", n_regions + 1, steps, 0.0,
-                      "reading the electrical recording")
+        emit("mea", 0.0, "reading the electrical recording")
         with mearecording.MeaRecording(rec_path) as r:
             info = r.info()
             stride = r.stride()
@@ -1299,8 +1521,20 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
                     [(p.start_s, p.end_s) for p in ttl], info.duration_s)
                 alignment_source = "ttl"
             else:
+                def scanned(done: int, total: int) -> None:
+                    # ⏱️ The countable unit is a STORED SAMPLE, and `sync_episodes` walks the raw
+                    # stream in equal blocks — so this is a real fraction, not a spinner. It used
+                    # to be ~16 s of complete silence with no way to stop it; the check here is
+                    # the only cancel boundary the pass has.
+                    core_jobs.check_cancelled(cancel, "orientation test")
+                    # the marks are the tail of the electrical phase — the mapping and the spike
+                    # table above are its first ~15 %
+                    emit("mea", 0.15 + 0.85 * (done / total if total else 0.0),
+                         f"looking for the lamp marks ({int(100 * done / max(1, total))}% "
+                         "of the recording read)")
+
                 try:
-                    eps = r.sync_episodes()
+                    eps = r.sync_episodes(progress=scanned)
                 except mearecording.RawUndecodable:
                     eps = []
                 if eps:
@@ -1314,12 +1548,17 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
                     alignment_source = "none"
         core_jobs.check_cancelled(cancel, "orientation test")
 
-        core_jobs.say(report, "score", steps, steps, 0.0, "scoring the four seatings")
+        emit("score", 0.0, "scoring the four seatings")
         # ⭐ EACH REGION IS ALIGNED ON ITS OWN. Each recording is its own video with its own start
         # instant, so one clock offset per region — never one offset stretched across videos that
         # never shared a clock.
         per_region: list[dict] = []
-        for ch, calcium in zip(chosen, calcium_of):
+        for n_scored, (ch, calcium) in enumerate(zip(chosen, calcium_of)):
+            # ⏱️ the countable unit of this last phase is the REGION — four seatings scored against
+            # one region is one indivisible unit of work
+            core_jobs.check_cancelled(cancel, "orientation test")
+            emit("score", n_scored / max(1, n_regions),
+                 f"scoring the four seatings against region {n_scored + 1} of {n_regions}")
             duration = calcium.size * vorient.BIN_S
             lo, hi = (float(calcium.min()), float(calcium.max())) if calcium.size else (0.0, 0.0)
             dark = (calcium < (lo + 0.5 * (hi - lo)) if hi > lo
@@ -1359,6 +1598,8 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
         chance_level: float | None = None
         beats_chance: bool | None = None
         if ranked:
+            emit("score", 1.0, "checking the winner against chance")
+            core_jobs.check_cancelled(cancel, "orientation test")
             top = ranked[0]
             pairs = []
             for pr, calcium in zip(per_region, calcium_of):
@@ -1556,6 +1797,12 @@ MEA_SYNC_VERSION = 1
 #: this only answers "is one being built right now".
 _MEA_ENVELOPE_JOBS: dict[str, str] = {}
 
+#: phase -> (start_pct, end_pct) of the envelope job. The reduction pass used to own the whole
+#: 0→100, so the bar reached 100 % and then sat there for the ~16 s the lamp-mark pass takes —
+#: a finished-looking bar on a job that has not finished is the shape R48.5 exists to stop.
+#: Weights from the two passes' measured costs on a real 300 s recording (~40 s and ~16 s).
+_ENVELOPE_SPAN = {"envelope": (0, 68), "sync": (68, 97), "save": (97, 100)}
+
 
 def _run_key(rec_path: Path) -> str:
     """A stable per-recording cache key: the run folder plus a hash of the resolved source path
@@ -1642,7 +1889,7 @@ def _start_mea_envelope(ws, analysis_id: str, rec_path: Path, *,
         from camea.core import jobs as core_jobs  # noqa: PLC0415
         from camea.core import mearecording as mrr  # noqa: PLC0415
 
-        emit = core_jobs.report_adapter(report)
+        emit = _span_emitter(report, _ENVELOPE_SPAN)
         with mrr.MeaRecording(rec_path) as opened:
             if opened.info().n_samples == 0:
                 # No continuous trace was ever recorded (an ActivityScan). Nothing to reduce,
@@ -1652,18 +1899,28 @@ def _start_mea_envelope(ws, analysis_id: str, rec_path: Path, *,
 
             def on_progress(frac: float) -> None:
                 core_jobs.check_cancelled(cancel, "envelope")
-                emit(phase="envelope", pct=100.0 * frac,
-                     message=f"{int(frac * 100)}% of the recording read")
+                emit("envelope", frac, f"{int(frac * 100)}% of the recording read")
 
             env = opened.build_envelope(ENVELOPE_BUCKETS, progress=on_progress)
+
+            def on_sync(done: int, total: int) -> None:
+                # ⏱️ Was ~16 s at a pinned 100 % with no Stop — the bar looked finished and hung.
+                # The countable unit is a stored sample; the block walk makes it a real fraction.
+                core_jobs.check_cancelled(cancel, "envelope")
+                emit("sync", done / total if total else 0.0,
+                     f"looking for the lamp marks ({int(100 * done / max(1, total))}% "
+                     "of the recording read)")
+
             # ⭐ The lamp marks, while every byte is already in reach. A second bounded pass
             # (~16 s on a real 300 s recording) beside a job that already took ~40 s — the only
             # affordable moment these will ever have.
             try:
                 episodes = [e.as_dict()
-                            for e in opened.sync_episodes(min_duration_s=SYNC_MIN_EPISODE_S)]
+                            for e in opened.sync_episodes(min_duration_s=SYNC_MIN_EPISODE_S,
+                                                          progress=on_sync)]
             except mrr.MeaError:
                 episodes = None                              # no sidecar: narrow windows scan live
+        emit("save", 0.0, "writing the cache")
         core_workspace.refuse_write(env_path)                # 🔴 R44 belt-and-braces
         mr.save_envelope(env_path, env)
         if episodes is not None:

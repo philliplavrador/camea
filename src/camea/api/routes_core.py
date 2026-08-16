@@ -37,7 +37,6 @@ spectralign: `/openapi.json` has to be inspectable on a machine where the engine
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 import tempfile
 import threading
@@ -58,7 +57,6 @@ from camea.api.schemas import (
     CreateAnalysisRequest,
     DatasetAtRequest,
     DatasetDetail,
-    DatasetListResponse,
     DialogOpenDirectoryRequest,
     DialogOpenFileRequest,
     DialogPathResponse,
@@ -73,15 +71,14 @@ from camea.api.schemas import (
     Job,
     JobCancelResponse,
     JobListResponse,
+    RunningJobsResponse,
     JobRef,
     LoadDocumentRequest,
-    LoadDocumentResponse,
     LogResponse,
     OkResponse,
     OpenSessionRequest,
     OutputListResponse,
     CopyOutputsRequest,
-    CopyOutputsResponse,
     SaveDocumentRequest,
     SaveResult,
     SessionListResponse,
@@ -104,7 +101,14 @@ from camea.core import document as core_document
 from camea.core import electrodegrid as core_electrodegrid
 from camea.core import project as core_project
 from camea.core import workspace as core_workspace
-from camea.core.jobs import JOBS, OPEN_PHASES, NotCancellable, phase_reporter
+from camea.core.jobs import (
+    JOBS,
+    OPEN_PHASES,
+    NotCancellable,
+    check_cancelled,
+    eta_from_counts,
+    phase_reporter,
+)
 from camea.settings import SETTINGS
 
 router = APIRouter(tags=["core"])
@@ -117,6 +121,119 @@ THUMBNAIL_PX = 256
 #: Frames sampled to window a thumbnail. The tone is **global over the sample**, never per-frame —
 #: a per-frame stretch would make the card lie about which datasets are dim.
 THUMBNAIL_SAMPLE = 8
+
+
+# =================================================================================================
+# ⏱️ PROGRESS — the measured spans core's own jobs weight themselves against.  (BEHAVIOUR R48)
+# =================================================================================================
+#
+# 🔴 **`pct` IS OVERALL, ACROSS THE WHOLE JOB (R48.5).** `OPEN_PHASES` is seven phases of wildly
+# unequal cost, so the frame counter is mapped into the SPAN the load owns rather than reporting its
+# own 0→100 — a phase on its own scale makes the bar snap backwards at every boundary and makes any
+# ETA derived from it count *up* inside each one.
+#
+# ⛔ These are **weights of the algorithm, not facts about a dataset.**
+#
+# ⚠️ **AND THE BAR'S GEOMETRY IS NOT A CLOCK.** The pct spans below are where the bar draws; the ETA
+# is derived from measured SECONDS (`OPEN_TAIL_S_PER_MPX`, `OPEN_TEXTURE_OVER_TONE`) and never from
+# them. Reading 5→60 does not mean the read is 55 % of the time — on a warm cache it is 3 %.
+
+#: Reading the frames runs the bar from 5 % to 60 % of the whole open.
+OPEN_LOAD_SPAN = (5.0, 60.0)
+
+#: ⏱️ **MEASURED — seconds the TAIL costs per megapixel of the whole stack.** The tail is everything
+#: after the last frame callback: `compute_tone` (which runs *inside* `FrameStore.load`, after the
+#: read) plus the `store.texture()` band-pass warm. 338 x 512 x 512 = 88.6 Mpx, timed on this
+#: machine: `compute_tone` 1.10 s + `store.texture()` 3.23 s = 4.33 s -> **0.049 s/Mpx**.
+#:
+#: ⛔ **IT IS ANCHORED ON PIXELS, NEVER ON THE READ'S OWN ELAPSED TIME.** The tail is CPU work on an
+#: array already in RAM; the read is disk work. A warm OS cache reads 338 frames in 0.13 s and a cold
+#: one takes seconds, and neither changes the tail by a millisecond — so *tail = k x read* is wrong
+#: by ~30x warm and ~2x cold, in the direction that makes the countdown reach zero with 4 s of work
+#: left. (It was `(100-60)/(60-5) = 0.73`, read off the bar's own geometry: a weight of the drawing,
+#: not of the work.) The megapixels come from the acquisition's own XML at run time — this constant
+#: is a speed of THIS MACHINE, and carries no knowledge of any dataset.
+OPEN_TAIL_S_PER_MPX = 0.049
+
+#: ⏱️ **MEASURED, and the one part of the estimate that survives a different CPU:** `store.texture()`
+#: costs this multiple of `compute_tone` (3.23 s against 1.10 s above). Both are the same numpy
+#: passes over the same array, so the RATIO holds where the absolute seconds do not. The moment
+#: `FrameStore.load` returns, the tone's real cost is known — and from there the estimate for the
+#: band-pass warm is measured off this run rather than modelled (see `post_sessions`).
+OPEN_TEXTURE_OVER_TONE = 2.9
+
+#: Emit no faster than this. ⚠️ `load_frames` calls back every 32 frames, which on a warm cache is
+#: ~13 ms — 75 progress messages a second, none of which a human can read, each one taking the job
+#: lock. The counters below still advance every iteration; only the *saying* is throttled.
+PROGRESS_MIN_INTERVAL_S = 0.15
+
+
+def _stack_mpx(snaps: Any, trials: list[int]) -> float:
+    """Megapixels the whole read will produce — `n x w x h`, off the XML, **no pixel is touched**.
+
+    ⏱️ The denominator `OPEN_TAIL_S_PER_MPX` divides into. Frame shape is already in the snapshot
+    inventory (`shape_groups` reads the same two keys), so this costs a dict lookup. 0.0 when the
+    inventory does not say, which turns the tail term off rather than guessing a frame size — ⛔ a
+    frame size assumed by the app would be dataset knowledge.
+    """
+    try:
+        m = snaps[trials[0]]
+        return len(trials) * int(m["w"]) * int(m["h"]) / 1e6
+    except Exception:                                   # noqa: BLE001 — an estimate is not failable
+        return 0.0
+
+
+def _frame_reporter(emit: Any, cancel: Any, what: str = "open", tail_s: float = 0.0) -> Any:
+    """The `progress=` callback `FrameStore.load` takes, wired for R48.
+
+    ⭐ **Both openers share it** — `POST /api/sessions` and `POST /api/documents/load` run the *same*
+    `FrameStore.load`, and until 2026-08-16 only one of them was a job at all. One reporter is what
+    stops them drifting into two different answers to "how long".
+
+    ⭐ **The countable unit is FRAMES** (R48.3): `i / n` of a loop that already had both numbers.
+
+    ⏱️ `tail_s` is what the caller expects to spend AFTER the last frame lands, in seconds — it is
+    added to every estimate so the job never promises to be over when the counter hits `n`. Pass
+    `OPEN_TAIL_S_PER_MPX * _stack_mpx(...)`.
+
+    ⏱️ `on_frame.read_full_s` is left holding what the WHOLE read costs, so the caller can subtract
+    it from `FrameStore.load`'s own elapsed and learn what `compute_tone` really cost. It is updated
+    on every callback, throttled or not (a throttled emit still advanced the read).
+    """
+    lo, hi = OPEN_LOAD_SPAN
+    t0 = time.monotonic()
+    last = 0.0
+
+    def on_frame(i: int, n: int) -> None:
+        nonlocal last
+        check_cancelled(cancel, what)           # R48.7 — the frame loop is where Stop lands
+        now = time.monotonic()
+        elapsed = now - t0
+        # ⏱️ `load_frames` calls back every 32 frames and AFTER the frame, so `i + 1` are in and the
+        # last <32 are never reported at all. Extrapolating to `n` here is what stops their time
+        # being charged to `compute_tone` below, which would make the tail estimate long by that much.
+        on_frame.read_full_s = elapsed * n / max(1, i + 1)   # type: ignore[attr-defined]
+        if i and now - last < PROGRESS_MIN_INTERVAL_S:
+            return
+        last = now
+        left = eta_from_counts(elapsed, i, n)   # seconds of *reading* still to do; None until 2 %
+        eta = None if left is None else left + tail_s
+        emit("load_frames", lo + (hi - lo) * i / max(1, n), f"reading frame {i}/{n}", eta_s=eta)
+
+    on_frame.read_full_s = 0.0                  # type: ignore[attr-defined]
+    return on_frame
+
+
+def _open_tail_s(loaded_s: float, read_full_s: float, modelled_s: float) -> float:
+    """⏱️ Seconds of `store.texture()` still to come, **measured off this run** where it can be.
+
+    `loaded_s` is how long `FrameStore.load` took and `read_full_s` how much of that was the read, so
+    the difference is `compute_tone` — the same numpy work the band-pass warm is, on the same array.
+    `OPEN_TEXTURE_OVER_TONE` turns one into the other. Falls back to the per-megapixel model when
+    there was no callback to measure against (a stack shorter than one `load_frames` step).
+    """
+    tone = max(0.0, loaded_s - read_full_s)
+    return (OPEN_TEXTURE_OVER_TONE * tone) if tone > 0.0 else modelled_s
 
 
 # =================================================================================================
@@ -542,10 +659,14 @@ def _dataset_list_body(path: str, is_dataset: bool, datasets: list[Any],
     }
 
 
-@router.post("/api/datasets/at", response_model=DatasetListResponse)
+#: The two stages of a scan, in order — the walk (no denominator) then the opens (a real bar).
+SCAN_PHASES = [core_dataset.SCAN_WALK, core_dataset.SCAN_OPEN]
+
+
+@router.post("/api/datasets/at", response_model=JobRef, status_code=202)
 def post_datasets_at(body: DatasetAtRequest) -> dict:
-    """⭐ *"Look at THIS folder."* A POST, not a GET: a Windows path in a query string is an
-    encoding trap.
+    """⭐ *"Look at THIS folder."* -> **202 `JobRef`**. Poll `GET /api/jobs/{id}`; `result` is a
+    `DatasetScanResult`. A POST, not a GET: a Windows path in a query string is an encoding trap.
 
     ⛔ **NOTHING IS REMEMBERED AND NOTHING IS RECOMMENDED.** This replaced `POST /api/datasets/scan`
     + `GET /api/datasets` on 2026-07-25. There is no root registry, no depth-3 walk on every launch,
@@ -555,17 +676,81 @@ def post_datasets_at(body: DatasetAtRequest) -> dict:
 
     ⛔ Nothing here recognises a dataset by name. A folder is a dataset iff it has a `log.txt` and at
     least one `NNN.xml`. That is the whole rule.
-    """
-    try:
-        res = core_dataset.scan(body.path, depth=body.depth)
-    except (OSError, ValueError) as e:
-        raise ApiError(400, "bad_request", str(e)) from e
 
-    root = Path(res.root)
-    for ds in res.datasets:
-        _remember(ds)
-    is_dataset = any(ds.path == root for ds in res.datasets)
-    return _dataset_list_body(root.as_posix(), is_dataset, list(res.datasets), list(res.skipped))
+    ⏱️ **IT IS A JOB BECAUSE IT IS TWO WAITS, NOT ONE (R48).** A tree walk of unbounded breadth, and
+    then ~0.2 s of `log.txt` + XML for every acquisition it turned up; on a folder of thirty this is
+    six seconds behind one static word. R48.9 says a directory walk has no denominator until it
+    returns, so the walk **counts up** and the opens that follow get the bar and the estimate.
+
+    ⚠️ *"No such directory"* is still refused **here**, on the request thread, so a mistyped path is
+    a 400 the client can act on rather than a job that fails a moment later — the same reasoning
+    that keeps `mixed_shape` in front of the open job.
+    """
+    root_in = Path(body.path).expanduser()
+    if not root_in.is_dir():
+        raise ApiError(400, "bad_request", f"no such directory: {root_in}")
+
+    def fn(report, cancel) -> dict:
+        emit = phase_reporter(report, SCAN_PHASES)
+        t_open = 0.0
+        last = 0.0
+        walked = -1                         # the last count the walk actually said
+
+        def on_scan(stage: str, done: int, total: int) -> None:
+            nonlocal t_open, last, walked
+            now = time.monotonic()
+            if stage == core_dataset.SCAN_WALK:
+                # ⛔ Only where the count ACTUALLY MOVED (R48b). Re-saying the same sentence every
+                # 0.15 s is a heartbeat: it says nothing new, it takes the job lock, and every
+                # message is appended to the job's 200-line log tail — a thirty-second walk over a
+                # folder holding nothing would evict the whole drawer with "looking for datasets…".
+                # The elapsed clock the client draws beside the count is what keeps it alive.
+                if walked == done:          # `walked` starts at -1, so the first word always lands
+                    return
+                walked, last = done, now
+                # ⏱️ **NO ETA AND NO BAR, AND THE REASON IS R48.9's FIRST ONE: an unbounded
+                # directory walk.** There is no denominator until it returns — the breadth is his
+                # disk — so this counts up and never draws a fraction it cannot justify.
+                # ⚠️ `pct=None`, NOT `0.0`: zero is a measurement ("none of it is done") and draws a
+                # bar parked at the 2 % floor, which is precisely what R48.9 forbids. `None` is the
+                # travelling sliver, and the count-up in the message carries the liveness.
+                emit(core_dataset.SCAN_WALK, None,
+                     f"{done} dataset(s) so far" if done else "looking for datasets…")
+                return
+            if t_open == 0.0:
+                t_open = now                    # the opens start their own clock: see below
+            if total <= 0:
+                emit(core_dataset.SCAN_OPEN, 100.0, "nothing in that folder is an acquisition",
+                     eta_s=0.0)
+                return
+            if done and done < total and now - last < PROGRESS_MIN_INTERVAL_S:
+                return
+            last = now
+            # ⏱️ The countable unit is DATASETS OPENED. `t_open` rather than the job's own start is
+            # deliberate and is NOT a phase-local fraction in R48.5's sense: the opens run to the end
+            # of the job, so "elapsed opening · remaining / done" IS time-to-finish. Charging them
+            # with the walk's elapsed would quote a walk-length wait for work that is already over.
+            emit(core_dataset.SCAN_OPEN, 100.0 * done / max(1, total),
+                 f"reading dataset {min(done + 1, total)}/{total}",
+                 eta_s=eta_from_counts(now - t_open, done, total))
+
+        # ⚠️ No `ApiError` in here. The path check that produced the 400 already ran on the request
+        # thread; anything left is a genuine disk failure and belongs in the job's own error, where
+        # its type and message survive intact instead of being flattened into a status code nobody
+        # is waiting on any more.
+        res = core_dataset.scan(body.path, depth=body.depth, progress=on_scan, cancel=cancel)
+
+        root = Path(res.root)
+        for ds in res.datasets:
+            _remember(ds)
+        is_dataset = any(ds.path == root for ds in res.datasets)
+        body_out = _dataset_list_body(root.as_posix(), is_dataset,
+                                      list(res.datasets), list(res.skipped))
+        return {"kind": "dataset_scan", **body_out}
+
+    job = JOBS.submit_thread("dataset_scan", fn,
+                             label=f"looking for datasets in {root_in.name or body.path}")
+    return {"job_id": job.job_id, "kind": "dataset_scan"}
 
 
 @router.get("/api/datasets/{key}", response_model=DatasetDetail)
@@ -705,24 +890,34 @@ def post_sessions(body: OpenSessionRequest) -> dict:
         emit("scan_dir", 2.0, f"{ds.name}: {len(have)} snapshot trials")
         emit("parse_log", 5.0, f"{len(ds.entries)} log entries")
 
-        def on_frame(i: int, n: int) -> None:
-            emit("load_frames", 5.0 + 55.0 * i / max(1, n), f"reading frame {i}/{n}")
-
-        store = core_frames.FrameStore.load(ds.path, have, snaps=ds.snapshots, progress=on_frame)
-        emit("flat_field", 65.0, "estimating the vignette")
-        emit("tone", 72.0, "one global window for the whole dataset")
+        tail = OPEN_TAIL_S_PER_MPX * _stack_mpx(ds.snapshots, have)
+        rep = _frame_reporter(emit, cancel, tail_s=tail)
+        t_load = time.monotonic()
+        store = core_frames.FrameStore.load(ds.path, have, snaps=ds.snapshots, progress=rep)
+        check_cancelled(cancel, "open")
+        # ⏱️ Past the frame counter the estimate stops being modelled and becomes MEASURED: the read
+        # is over, so what is left is `store.texture()`, and `compute_tone` (which ran inside the
+        # load) just told us what a pass of that size costs on this machine. All three of these
+        # phases emit before the warm — the vignette and the tone are already done — so all three
+        # carry the same number, and it may revise UP here, which R48.11 says out loud is allowed.
+        tail = _open_tail_s(time.monotonic() - t_load, rep.read_full_s, tail)
+        emit("flat_field", 65.0, "estimating the vignette", eta_s=tail)
+        emit("tone", 72.0, "one global window for the whole dataset", eta_s=tail)
         # ⭐ Warm the band stack HERE, in the job, where the user is watching a progress bar — not on
         # the first `Space`, where he is waiting on a match. It is also the texture map: the matcher's
         # band-passed stack and `std(DoG(3,30))` are THE SAME ARRAY (+0 s, +0 MiB).
-        emit("texture", 80.0, "band-passing (the matcher's input, and the texture measure)")
+        emit("texture", 80.0, "band-passing (the matcher's input, and the texture measure)",
+             eta_s=tail)
         store.texture()
-        emit("done", 100.0, f"{store.n} frames, {store.shape[1]}x{store.shape[0]}")
+        check_cancelled(cancel, "open")
+        emit("done", 100.0, f"{store.n} frames, {store.shape[1]}x{store.shape[0]}", eta_s=0.0)
 
         s = SESSIONS.put(Session(ds, store, skipped))
         SETTINGS.ensure_loaded().touch_dataset(ds.path)
         return {"kind": "open", "session": s.to_json()}
 
-    job = JOBS.submit_thread("open", fn)
+    # R48.6 — the bar names what is being waited for, and it is his folder, not the word "open".
+    job = JOBS.submit_thread("open", fn, label=f"opening {ds.name}")
     return {"job_id": job.job_id, "kind": "open"}
 
 
@@ -1160,10 +1355,15 @@ def get_output_file(analysis_id: str, name: str, download: bool = False) -> Resp
     return FileResponse(p, media_type=_media_type(p.name), headers=headers)
 
 
-@router.post("/api/projects/{analysis_id}/outputs/copy", response_model=CopyOutputsResponse)
+#: One phase: the copy itself. `pct` is bytes of the WHOLE request, so it is overall by construction
+#: (R48.5) — there is no second phase to weight it against.
+COPY_PHASES = ["copy"]
+
+
+@router.post("/api/projects/{analysis_id}/outputs/copy", response_model=JobRef, status_code=202)
 def post_copy_outputs(analysis_id: str, body: CopyOutputsRequest) -> dict:
     """⭐ **THE ONE WAY WORK LEAVES CAMEA** (R44) — copy the chosen outputs into a folder the user
-    names, right now, while looking at them.
+    names, right now, while looking at them. -> **202 `JobRef`**; `result` is a `CopyOutputsResult`.
 
     🔴 **THE THREE REFUSALS, IN ORDER, BEFORE A SINGLE BYTE IS WRITTEN:**
       1. `refuse_write(dest)` — ⛔ never onto the evidence. A destination inside `data/`, inside a
@@ -1178,6 +1378,12 @@ def post_copy_outputs(analysis_id: str, body: CopyOutputsRequest) -> dict:
 
     A copy is not a move: the project keeps its outputs. That is the point — the store stays the
     home, and what leaves is a copy the user asked for.
+
+    ⏱️ **THE THREE REFUSALS STAY ON THE REQUEST THREAD; ONLY THE BYTES BECOME A JOB (R48).** A clash
+    is still a 409 on the request that asked for it and still refuses the WHOLE request — it is not
+    a job that copies half of them and then thinks better of it. What moved is the copying, which is
+    whole 16-bit mosaics and used to be a request that simply did not come back: the bar counts
+    **bytes**, the message names the file in flight, and Stop lands between chunks (R48.7).
     """
     dest_raw = body.dest.strip()
     if not dest_raw:
@@ -1201,16 +1407,77 @@ def post_copy_outputs(analysis_id: str, body: CopyOutputsRequest) -> dict:
                        f"{dest.as_posix()} already contains {', '.join(clashes)}. Camea will not "
                        f"write over what is already in your folder — choose another one.")
 
-    try:
-        dest.mkdir(parents=True, exist_ok=True)
-        copied = [shutil.copy2(str(p), str(dest / p.name)) for p in sources]
-    except OSError as e:
-        raise ApiError(500, "io_error", f"could not copy into {dest.as_posix()}: {e}") from e
+    # ⏱️ The denominator, and it costs nothing: the clash check above already walked these, and the
+    # listing route already reads `st_size` for every one of them.
+    total = 0
+    for p in sources:
+        try:
+            total += p.stat().st_size
+        except OSError:
+            pass                                        # vanished under us; the copy will say so
 
-    return {
-        "copied": [Path(c).as_posix() for c in copied],
-        "dest": dest.as_posix(),
-    }
+    def fn(report, cancel) -> dict:
+        emit = phase_reporter(report, COPY_PHASES)
+        t0 = time.monotonic()
+        done = 0
+        last = 0.0
+        name = ""
+
+        def said(force: bool = False) -> None:
+            nonlocal last
+            now = time.monotonic()
+            if not force and now - last < PROGRESS_MIN_INTERVAL_S:
+                return
+            last = now
+            emit("copy", 100.0 * done / total if total else 100.0,
+                 f"{name} — {done // (1024 * 1024)} of {total // (1024 * 1024)} MB",
+                 eta_s=eta_from_counts(now - t0, done, total))
+
+        def on_bytes(n: int) -> None:
+            nonlocal done
+            done += n
+            said()
+
+        copied: list[Path] = []                         # bound before the try: the cleanup reads it
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            for p in sources:
+                check_cancelled(cancel, "copy")
+                name = p.name
+                target = dest / p.name
+                said(force=True)
+                if target.exists():
+                    # ⛔ It appeared between the clash check and now. R44 does not soften with time:
+                    # this route does not get to be the reason something in his folder is gone.
+                    raise FileExistsError(
+                        f"{target.as_posix()} appeared while Camea was copying. Nothing of yours "
+                        f"was written over — choose another folder."
+                    )
+                core_workspace.copy_file(p, target, on_bytes=on_bytes, cancel=cancel)
+                copied.append(target)
+        except BaseException:
+            # ⭐ A Stop leaves nothing behind. Every file removed here is one THIS job created
+            # seconds ago — the clash check refused the request outright if any of these names was
+            # already in his folder, and the loop re-checks before each one — so there is nothing of
+            # his to lose, and a half-delivered copy he has to reason about is worse than none.
+            for c in copied:
+                try:
+                    c.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
+
+        emit("copy", 100.0, f"{len(copied)} file(s) copied", eta_s=0.0)
+        return {
+            "kind": "outputs_copy",
+            "copied": [c.as_posix() for c in copied],
+            "dest": dest.as_posix(),
+            "bytes": done,
+        }
+
+    job = JOBS.submit_thread("outputs_copy", fn,
+                             label=f"copying {len(sources)} file(s) into {dest.name or dest_raw}")
+    return {"job_id": job.job_id, "kind": "outputs_copy"}
 
 
 # =================================================================================================
@@ -1295,15 +1562,28 @@ def post_autosave(analysis_id: str, body: AutosaveRequest) -> dict:
     return {k: res[k] for k in ("path", "bytes", "saved_at", "warnings")}
 
 
-@router.post("/api/documents/load", response_model=LoadDocumentResponse)
+@router.post("/api/documents/load", response_model=JobRef, status_code=202)
 def post_document_load(body: LoadDocumentRequest) -> dict:
-    """*"Load a project…"* — and it **must work COLD**, with no session open. That is the whole point:
-    the app remembers nothing between launches, so this file is its only memory. Save -> quit ->
-    load restores the session whole, and nothing else does.
+    """*"Load a project…"* -> **202 `JobRef`**; `result` is a `LoadDocumentResult`. It **must work
+    COLD**, with no session open. That is the whole point: the app remembers nothing between
+    launches, so this file is its only memory. Save -> quit -> load restores the session whole, and
+    nothing else does.
 
     The server bootstraps a session from the file's own `data_dir` when one is not given, then
     re-reads the file **against that session's scope**, so the range guard actually runs against the
     session the document belongs to.
+
+    ⏱️ **IT IS A JOB, AND UNTIL 2026-08-16 IT WAS NOT (R48).** It runs the *same* `FrameStore.load`
+    as the open job thirty lines up — ~5 s and 340 MiB — and it ran it on the request thread with no
+    job, no bar, no estimate and no way to stop it: the request simply hung with nothing on screen.
+    It now reports the same seven `OPEN_PHASES`, off the same frame counter, through the same
+    reporter, so the two openings cannot drift into two different answers to *"how long"*.
+
+    ⚠️ **EVERY REFUSAL STILL HAPPENS HERE, ON THE REQUEST THREAD** — the missing file, the document
+    that names no dataset, the dataset that is not on this machine, and (the important one) the
+    **range guard**, which needs only the dataset's identity and not a single pixel. So a document
+    for the wrong acquisition is still `409 range_mismatch` on the request that asked for it, and
+    not a job that fails five seconds later. Same reasoning as `mixed_shape` in front of the open.
     """
     from camea.core import frames as core_frames
 
@@ -1318,8 +1598,9 @@ def post_document_load(body: LoadDocumentRequest) -> dict:
     except Exception as e:                              # noqa: BLE001
         raise _document_error(e) from e
 
-    session_json: dict | None = None
     s = SESSIONS.get(body.session_id) if body.session_id else None
+    ds: Any = None
+    trials: list[int] = []
 
     if s is None:
         data_dir = str(doc.get("data_dir") or "")
@@ -1332,27 +1613,65 @@ def post_document_load(body: LoadDocumentRequest) -> dict:
                            f"the dataset this document was made from is not on this machine: "
                            f"{data_dir}")
         try:
+            # ~0.2 s and no pixels. It stays in front of the job so the *identity* the guard below
+            # needs is known now, and so an unreadable acquisition is a 500 the client can act on.
             ds = _remember(core_dataset.open_dataset(data_dir))
             trials = [int(k) for k in (doc.get("tiles") or {})] or ds.snapshot_trials
             trials = sorted({t for t in trials if t in ds.snapshots})
-            store = core_frames.FrameStore.load(ds.path, trials, snaps=ds.snapshots)
         except (OSError, ValueError) as e:
             raise ApiError(500, "io_error", f"could not open {data_dir}: {e}") from e
-        s = SESSIONS.put(Session(ds, store))
-        SETTINGS.ensure_loaded().touch_dataset(ds.path)
-        session_json = s.to_json()
         warnings.append(f"opened {ds.name} from the document's own data_dir ({len(trials)} frames)")
 
     # ⭐ NOW re-read it against the session's scope — this is where the range guard actually fires.
-    expect = core_document.Scope(dataset=s.dataset.name, dataset_key=s.dataset.key)
+    expect = core_document.Scope(
+        dataset=(ds.name if ds is not None else s.dataset.name),
+        dataset_key=(ds.key if ds is not None else s.dataset.key),
+    )
     try:
         doc, w2 = core_document.load(p, expect=expect)
         warnings += [x for x in w2 if x not in warnings]
     except Exception as e:                              # noqa: BLE001
         raise _document_error(e) from e
 
-    core_document.DOCUMENTS.put(doc, p)
-    return {"doc": doc, "session": session_json, "warnings": warnings, "migrated_from": None}
+    def fn(report, cancel) -> dict:
+        emit = phase_reporter(report, OPEN_PHASES)
+        session_json: dict | None = None
+
+        if ds is not None:
+            emit("scan_dir", 2.0, f"{ds.name}: {len(trials)} trials in this project")
+            emit("parse_log", 5.0, f"{len(ds.entries)} log entries")
+            tail = OPEN_TAIL_S_PER_MPX * _stack_mpx(ds.snapshots, trials)
+            rep = _frame_reporter(emit, cancel, "loading a project", tail_s=tail)
+            t_load = time.monotonic()
+            store = core_frames.FrameStore.load(ds.path, trials, snaps=ds.snapshots, progress=rep)
+            check_cancelled(cancel, "loading a project")
+            # ⏱️ Measured, not modelled, from here — the same arithmetic as the open job, which is
+            # the point of sharing the reporter: two openings, one answer to "how long".
+            tail = _open_tail_s(time.monotonic() - t_load, rep.read_full_s, tail)
+            emit("flat_field", 65.0, "estimating the vignette", eta_s=tail)
+            emit("tone", 72.0, "one global window for the whole dataset", eta_s=tail)
+            # ⭐ Warm the band stack HERE, exactly as the open job does. A session bootstrapped by a
+            # load used to skip this, which did not save the 3 s — it moved them onto the first
+            # `Space` and onto the Screen step's texture read, where nothing is drawing a bar.
+            emit("texture", 80.0, "band-passing (the matcher's input, and the texture measure)",
+                 eta_s=tail)
+            store.texture()
+            check_cancelled(cancel, "loading a project")
+
+            opened = SESSIONS.put(Session(ds, store))
+            SETTINGS.ensure_loaded().touch_dataset(ds.path)
+            session_json = opened.to_json()
+
+        emit("done", 100.0, f"{p.name} loaded", eta_s=0.0)
+        core_document.DOCUMENTS.put(doc, p)
+        return {"kind": "document_load", "doc": doc, "session": session_json,
+                "warnings": warnings, "migrated_from": None}
+
+    job = JOBS.submit_thread(
+        "document_load", fn,
+        label=(f"opening {ds.name} for this project" if ds is not None else "loading a project"),
+    )
+    return {"job_id": job.job_id, "kind": "document_load"}
 
 
 @router.post("/api/documents/save-as", response_model=SaveResult)
@@ -1393,6 +1712,20 @@ def post_document_validate(body: ValidateDocumentRequest) -> dict:
 @router.get("/api/jobs", response_model=JobListResponse)
 def get_jobs() -> dict:
     return {"jobs": [j.to_json() for j in JOBS.list()]}
+
+
+@router.get("/api/jobs/running", response_model=RunningJobsResponse)
+def get_running_jobs() -> dict:
+    """⏱️ **What the top strip polls (BEHAVIOUR R48.8)** — every live job, oldest first, slimmed.
+
+    ⚠️ **Declared BEFORE `/api/jobs/{job_id}`, and it must stay there.** FastAPI matches routes in
+    declaration order, so the parameterised route would otherwise swallow `running` as a job id and
+    answer 404.
+
+    ⚠️ Do not "simplify" this into `GET /api/jobs` with a filter: that route serialises every job in
+    history including finished ones whose `result` embeds a whole document. See `Job.to_brief`.
+    """
+    return {"jobs": [j.to_brief() for j in JOBS.live()]}
 
 
 @router.get("/api/jobs/{job_id}", response_model=Job)

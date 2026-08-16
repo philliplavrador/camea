@@ -90,3 +90,21 @@
   cursor: pointer;
   user-select: none;
 }
+
+/* ⭐ **THE SAME DIM-AND-BADGE AS THE TRACE BESIDE IT** (R48.10, MeaTrace.module.css `.stale`). While
+   the windowed tally is out, the colours on the chip are the stretch he just left — dimmed and
+   named, never blanked (a blink per zoom) and never left claiming to follow a view they do not. */
+.map {
+  min-width: 0;
+}
+
+.stale canvas {
+  opacity: 0.45;
+}
+
+.staleBadge {
+  color: var(--text-faint);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

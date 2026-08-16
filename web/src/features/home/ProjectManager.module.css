@@ -161,8 +161,10 @@
   color: var(--text-dim);
 }
 
-.muted {
-  color: var(--text-dim);
+/* ⏱️ R48 — the home's waits (reading the list, a rename, a delete). Spacing only; the bar itself is
+   `design/primitives/Progress`, which replaced this screen's one-line `Loading projects…`. */
+.busy {
+  margin-bottom: 16px;
 }
 
 .error {

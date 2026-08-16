@@ -163,12 +163,30 @@ turn on a red one. The Python suites (3m26s) are too expensive per-turn, so they
 guard automatically; `scripts/check-engine.js` does the cheap half instead (53 ms) by proving the
 four guarded files are still byte-identical to `archive/analysis/mosaic/`.
 
+## ⏱️ EVERY WAIT SHOWS A BAR AND SAYS HOW LONG IS LEFT — BEHAVIOUR R48, 2026-08-16.
+*"everywhere where there's gonna be like some sort of loading or waiting period, make sure there's
+like some sort of progress bar with an ETA, like everywhere in the app."* **This binds every feature,
+including the ones that don't exist yet.** If you make the user wait longer than 400 ms, you owe him
+a `<Progress>` from `web/src/design/`, a label in his words, a time, and a Stop button.
+- ⭐ **An ETA is the DEFAULT; "cannot say" is a claim you have to argue.** He pushed back on the
+  escape hatch — *"i find it hard you cannot figure out an ETA at all, so try."* Nearly every loop
+  here has a countable unit already in it (bytes, frames, samples, tiles, links, files) — find it and
+  divide. `eta_from_fraction()` in `core/jobs.py` is the one estimator. **R48.9 lists the only four
+  accepted reasons** an ETA may be missing; anything else is unfinished work.
+- ⛔ **No sixth progress bar.** One primitive, one height token, one animation. Five hand-rolled
+  copies were deleted to make this true.
+- ⛔ **No server-side ETA heartbeat** — it makes the number count *up*. R8b is unchanged; R48.4 is
+  satisfied on the client.
+- ⚠️ **Never render a Stop that isn't wired, and never let a wait end in silence** (R48.7, R48.9) —
+  a countdown that hits zero and vanishes is worse than the bare "Reading…" it replaced.
+
 ## The rulings live in `docs/BEHAVIOUR.md`.
-The ~44 decisions the user paid days to discover (Esc must not kill the sweep; the solver-fallback
+The ~48 decisions the user paid days to discover (Esc must not kill the sweep; the solver-fallback
 constants; blanks refused not scored; the prefetch must not be client-cached; difference mode clears
-to black; save from any screen; …) are captured there as testable statements, each backed by a
-Playwright test in `web/tests/e2e/`. Read it before touching the mosaic UI. Do not "improve" a
-ruling away; if one seems wrong, ask (via the tool) — don't silently change it.
+to black; save from any screen; every wait shows a bar with a time on it; …) are captured there as
+testable statements, each backed by a Playwright test in `web/tests/e2e/`. Read it before touching
+the mosaic UI. Do not "improve" a ruling away; if one seems wrong, ask (via the tool) — don't
+silently change it.
 
 ## Read the knowledge base first
 Cross-session shared memory lives at **`utils/knowledge/`** (gitignored). A SessionStart hook

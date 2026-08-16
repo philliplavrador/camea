@@ -41,8 +41,18 @@ export interface LoadStepProps extends WizardStepProps {
   onOpenDirectory?: (dir: string) => Promise<void> | void;
   /** `Load a project…` — resume from a saved file. The shell owns load → hydrate → navigate (R5.3). */
   onLoadProject?: () => Promise<void> | void;
-  /** Live open-progress phase, painted at `load-phase` while a (re)open runs (BEHAVIOUR §2 step 1). */
+  /**
+   * Live open-progress phase, painted at `load-phase` while a (re)open runs (BEHAVIOUR §2 step 1).
+   * This is the SHELL's own narration for the round trips that are not jobs (reading the project,
+   * reading the dataset); the frame load itself is `openJobId`.
+   */
   openPhase?: string | null;
+  /**
+   * ⏱️ The open JOB, once one is in flight (BEHAVIOUR R48). The shell only knew its phase string
+   * before, so the percentage and the estimate already on the wire were dropped on the floor. Given
+   * the id, Load watches the job itself and gets R8's ticking countdown and a Stop.
+   */
+  openJobId?: string | null;
 }
 
 export interface RangeStepProps extends WizardStepProps {

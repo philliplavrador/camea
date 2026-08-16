@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { formatEta, reanchorEta } from './jobs';
+import { formatElapsed, formatEta, jobErrorSentence, reanchorEta } from './jobs';
 import type { Job } from './types';
 
 // A Job carrying only the field `reanchorEta` reads. Fixtures may use literal numbers (HARD RULE 3
@@ -99,5 +99,68 @@ describe('reanchorEta — re-anchor ONLY on a genuine server change (BEHAVIOUR R
     vi.setSystemTime(T0 + 4000);
     reanchorEta(job(90), lastRaw, anchor); // child printed again — a real new 90
     expect(anchor.current).toEqual({ etaS: 90, at: T0 + 4000 });
+  });
+});
+
+// ── R48.4 — the elapsed clock that fills the slot when there is no estimate ──────────────────────
+//
+// This is the half of R48.4 that lets the rule be satisfied WITHOUT the forbidden server-side ETA
+// heartbeat (R48b). `elapsed_s` was on the wire the whole time and nothing rendered it.
+describe('formatElapsed — the "so far" clock (BEHAVIOUR R48.4)', () => {
+  it('counts up in seconds under a minute', () => {
+    expect(formatElapsed(0)).toBe('0 s');
+    expect(formatElapsed(47)).toBe('47 s');
+  });
+
+  it('switches to minutes at 60, matching formatEta so the two never disagree on a boundary', () => {
+    expect(formatElapsed(60)).toBe('1m 00s');
+    expect(formatElapsed(221)).toBe('3m 41s');
+  });
+
+  it('never says "almost there…" — that is a statement about the FUTURE, and elapsed is the past', () => {
+    expect(formatElapsed(0.4)).toBe('0 s');
+  });
+
+  it('is null for null, and for a number that is not one', () => {
+    expect(formatElapsed(null)).toBeNull();
+    expect(formatElapsed(Number.NaN)).toBeNull();
+    expect(formatElapsed(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it('never renders a negative', () => {
+    expect(formatElapsed(-3)).toBe('0 s');
+  });
+});
+
+// ── R48.9 — a wait that ends BADLY still ends in a sentence ──────────────────────────────────────
+//
+// The job registry writes `f"{type(e).__name__}: {e}"` into `error.message` so the LOG keeps the
+// exception class beside its traceback. The screen must not repeat that at the user: he does not
+// learn there are no recordings from the word `RuntimeError`.
+describe('jobErrorSentence — the failure a person reads (BEHAVIOUR R48.9)', () => {
+  it('drops the exception class Python put in front of the sentence', () => {
+    expect(jobErrorSentence("RuntimeError: no MaxWell recordings found near this project's data folder"))
+      .toBe("no MaxWell recordings found near this project's data folder");
+    expect(jobErrorSentence('FileExistsError: nothing of yours was written over')).toBe(
+      'nothing of yours was written over',
+    );
+  });
+
+  it('drops exactly ONE prefix, and leaves a colon that belongs to the sentence alone', () => {
+    expect(jobErrorSentence('OSError: could not open D:/data: permission denied')).toBe(
+      'could not open D:/data: permission denied',
+    );
+  });
+
+  it('leaves a message that never had one — a hand-written refusal is already a sentence', () => {
+    const m = 'that folder already contains mosaic.png — choose another one.';
+    expect(jobErrorSentence(m)).toBe(m);
+    expect(jobErrorSentence('job failed')).toBe('job failed');
+  });
+
+  it('is null for null, and never eats the whole message', () => {
+    expect(jobErrorSentence(null)).toBeNull();
+    expect(jobErrorSentence(undefined)).toBeNull();
+    expect(jobErrorSentence('RuntimeError: ')).toBe('RuntimeError: ');
   });
 });

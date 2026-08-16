@@ -30,6 +30,8 @@ from typing import Callable, Iterator
 import cv2
 import numpy as np
 
+from ...core.jobs import check_cancelled
+
 
 class VideoError(Exception):
     """The video cannot be used, with the reason in one sentence (surfaces as the job error /
@@ -139,7 +141,9 @@ def iter_gray(path: str | Path, *,
 def read_frames_at(path: str | Path, indices: list[int],
                    consume: Callable[[int, np.ndarray], None],
                    *, progress: Callable[[int, int], None] | None = None,
-                   colour: Callable[[int, np.ndarray], None] | None = None) -> list[int]:
+                   colour: Callable[[int, np.ndarray], None] | None = None,
+                   scanned: Callable[[int, int], None] | None = None,
+                   cancel=None) -> list[int]:
     """One forward pass; `consume(index, gray)` fires for each requested index, in order.
     `grab()` skips the frames in between without the BGR conversion. Returns the indices that
     were actually reachable (a truncated stream shortens the list rather than raising).
@@ -147,11 +151,24 @@ def read_frames_at(path: str | Path, indices: list[int],
     `colour(index, frame_bgr)`, if given, sees the frame BEFORE `to_gray` collapses it. That is the
     only seam where the source's colour still exists, and these are the very frames that become the
     mosaic's pixels — so the measured tint describes what is rendered, not what was skipped.
+
+    ⏱️ **TWO counters, because they measure two different things (R48.3).**
+    `progress(n_consumed, n_wanted)` counts what the CALLER asked for; `scanned(frames_passed,
+    frames_to_pass)` counts what it COSTS — this is one forward pass, so the work is frames grabbed,
+    and the last wanted index is where it ends. They diverge badly whenever the wanted indices are
+    not evenly spread: the mosaic's keyframes are spaced by *travel*, so a dwell is thousands of
+    frames that yield none and a bar driven by `progress` sits still through it. Drive the bar from
+    `scanned`, and the sentence from `progress`.
+
+    `cancel` is polled inside the skip loop as well — the gap between two wanted indices is
+    otherwise the one stretch of this pass with no boundary to stop on, and on a long dwell that is
+    thousands of frames of an unstoppable Stop button.
     """
     want = sorted(set(int(i) for i in indices))
     got: list[int] = []
     if not want:
         return got
+    span = want[-1] + 1                              # the frames this forward pass must walk past
     cap = open_capture(path)
     try:
         pos = 0
@@ -160,6 +177,10 @@ def read_frames_at(path: str | Path, indices: list[int],
                 if not cap.grab():
                     return got
                 pos += 1
+                if pos % 128 == 0:                   # ~4 ms of grabbing between checks
+                    check_cancelled(cancel, "video decode")
+                    if scanned is not None:
+                        scanned(pos, span)
             ok, frame = cap.read()
             if not ok or frame is None:
                 return got
@@ -170,6 +191,8 @@ def read_frames_at(path: str | Path, indices: list[int],
             got.append(target)
             if progress is not None:
                 progress(n + 1, len(want))
+            if scanned is not None:
+                scanned(pos, span)
         return got
     finally:
         cap.release()

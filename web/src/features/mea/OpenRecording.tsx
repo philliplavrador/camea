@@ -61,6 +61,14 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
   const [traceView, setTraceView] = useState<{ t0: number; t1: number } | null>(null);
   /** The windowed tally the chip is coloured by while following; null = use the whole recording. */
   const [viewActivity, setViewActivity] = useState<MeaChipActivity | null>(null);
+  /**
+   * ⭐ **THE COLOURS ON SCREEN ARE THE PREVIOUS STRETCH'S, AND THEY SAY SO** (R48.10, 2026-08-16).
+   * "Colors follow the view" is a promise, and for the ~200 ms between a zoom and its windowed
+   * tally landing the chip was quietly still coloured by the stretch he had just left — while the
+   * chart beside it correctly dimmed and badged `previous`. Same pattern, same word: this is the
+   * house answer for a sub-second interactive read, and R48 explicitly says NOT to put a bar here.
+   */
+  const [followPending, setFollowPending] = useState(false);
   // The existing ticket idiom (MeaTrace's): a late windowed reply holding a stale ticket is
   // dropped, so a slow wide request can never recolour the view he already left.
   const followTicket = useRef(0);
@@ -107,15 +115,24 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
     const mine = ++followTicket.current;
     if (!followView || traceView == null) {
       setViewActivity(null);
+      setFollowPending(false);
       return;
     }
+    // R48.10 — from this moment the colours under him are the OLD window's, and the badge below
+    // says so until the new tally lands. Set before the settle, not inside it: the stretch he is
+    // looking at has already changed, and that is when the picture stops being current.
+    setFollowPending(true);
     const timer = setTimeout(() => {
       void meaChipActivity(analysisId, recordingId, { t0: traceView.t0, t1: traceView.t1 })
         .then((a) => {
-          if (mine === followTicket.current) setViewActivity(a);
+          if (mine !== followTicket.current) return;
+          setViewActivity(a);
+          setFollowPending(false);
         })
         .catch(() => {
-          if (mine === followTicket.current) setViewActivity(null);
+          if (mine !== followTicket.current) return;
+          setViewActivity(null);
+          setFollowPending(false);
         });
     }, FOLLOW_SETTLE_MS);
     return () => clearTimeout(timer);
@@ -190,13 +207,22 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
                 Colors follow the view
               </label>
               <Help body={FOLLOW_VIEW_HELP} label="What 'Colors follow the view' does" />
+              {/* ⭐ One word, exactly as on the trace beside it: what is coloured in is the stretch
+                  he just left. ⛔ Not a bar — R48 names this read as one the picture answers. */}
+              {followPending && (
+                <span className={styles.staleBadge} data-testid="mea-follow-stale">
+                  previous
+                </span>
+              )}
             </div>
-            <ChipMap
-              layout={layout}
-              activity={viewActivity ?? activity}
-              selected={channel}
-              onSelect={setChannel}
-            />
+            <div className={followPending ? `${styles.map} ${styles.stale}` : styles.map}>
+              <ChipMap
+                layout={layout}
+                activity={viewActivity ?? activity}
+                selected={channel}
+                onSelect={setChannel}
+              />
+            </div>
           </div>
           <div className={styles.side}>
             <MeaTrace

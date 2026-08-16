@@ -128,12 +128,10 @@
   gap: 10px;
 }
 
+/* ⏱️ R48 — this held one centred word; it holds the ONE bar now, so it is a container and nothing
+   else. `text-align: center` would drag the bar's own baseline row out of alignment. */
 .creating {
   padding: 48px 0;
-  text-align: center;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: var(--fs-readout);
 }
 
 /* The Files step's running count, beside Create. ⭐ It states the empty case in words rather than

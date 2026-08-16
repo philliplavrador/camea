@@ -34,6 +34,11 @@ export type { HelpProps } from './primitives/Help';
 export { LiveWarning } from './primitives/LiveWarning';
 export type { LiveWarningProps, LiveWarningVariant } from './primitives/LiveWarning';
 
+/** ⏱️ THE ONE PROGRESS BAR (BEHAVIOUR R48.2). Never hand-roll a sixth. */
+export { Progress, ESTIMATING_TEXT } from './primitives/Progress';
+export type { ProgressProps } from './primitives/Progress';
+export { useDelayedFlag, WAIT_GRACE_MS } from './primitives/useDelayedFlag';
+
 export { Stepper } from './primitives/Stepper';
 export type { StepperProps } from './primitives/Stepper';
 export { MOSAIC_STEPS } from './primitives/steps';

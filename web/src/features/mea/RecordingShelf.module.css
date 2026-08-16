@@ -40,6 +40,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* R48.10 — the shelf's own read, beside the heading that is deliberately NOT stating a count yet. */
+.headProgress {
+  width: min(280px, 100%);
+}
+
 /* 001's empty state, unchanged in shape: a dashed well with one line and one button. The shape of
    the screen is the promise — a screen that grows a control later reads as a different screen. */
 .empty {
@@ -201,11 +206,21 @@
   white-space: nowrap;
 }
 
-.reading {
-  font-size: var(--fs-readout);
-  color: var(--text-dim);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
+/* ⏱️ A wait ON a row (BEHAVIOUR R48): the copy filling in, the one-off end-to-end read, a remove.
+   It sits in the MAIN column rather than the side strip — a bar with a label, a percentage and a
+   countdown in it needs the width, and the side is a nowrap line of short words and two buttons.
+   ⛔ Still no bar across the TOP of the shelf: the rows finish at wildly different times, so one
+   number for all of them would be a number about nothing (see the top of this file). */
+.rowProgress {
+  width: min(420px, 100%);
+  margin-top: 2px;
+}
+
+/* R48.9 — the read is over and this recording still cannot be shown whole. A quiet line, not a
+   warning: an activity scan that stores no continuous trace is a fact about the assay. */
+.readEnded {
+  font-size: var(--fs-micro);
+  color: var(--text-faint);
 }
 
 /* Two rows, one file on disk. A fact about the shelf, said small — nothing is wrong. */

@@ -260,9 +260,10 @@
   gap: 12px;
 }
 
-.phase {
-  font: 500 var(--fs-readout) / 1 var(--font-mono);
-  color: var(--text-dim);
+/* ⏱️ R48 — the bare phase word beside the Export button is gone; the export renders the ONE bar
+   (`design/primitives/Progress`) under it, with a percentage, a time and a Stop. */
+.exportProgress {
+  margin-top: 12px;
 }
 
 /* ── autosave note (crash-net; separate from Save…) ── */

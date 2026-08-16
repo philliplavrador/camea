@@ -24,7 +24,7 @@ from typing import Callable
 
 import numpy as np
 
-from ...core.jobs import Progress, check_cancelled
+from ...core.jobs import Progress, check_cancelled, eta_from_fraction
 from .colour import ColourStats, palette_rgb, tint_of
 from .config import VideoConfig
 from .register import Link, candidate_links, measure_link
@@ -58,16 +58,51 @@ def artifact_names(basename: str) -> dict[str, str]:
     return {k: f"{basename}{suffix}" for k, suffix in ARTIFACTS.items()}
 
 
-def _emitter(report: Callable[[Progress], None] | None):
-    t0 = time.monotonic()
+#: ⏱️ How far into the WHOLE build before we will name a time. `core.jobs.ETA_MIN_FRACTION` is 2 %,
+#: which here is exactly where `probe` ends — and probe is a file open plus one decoded frame, near
+#: constant, while everything after it scales with the length of the video. Extrapolating an
+#: eight-minute build from it announces "10 s left" at the top of the run. 5 % puts the first
+#: estimate a little way into `track`, where the number is measured throughput.
+_ETA_MIN_OVERALL = 0.05
 
-    def emit(phase: str, frac: float, message: str = "", eta_s: float | None = None) -> None:
+#: ⏱️ Floor on how often a phase may speak. A `Progress` is not free — the registry appends every
+#: message to the job's log tail — and registration measures a link in ~0.1 s, so a per-iteration
+#: emit would push ten messages a second at a bar that redraws once. A phase's first and last word
+#: are never dropped, so no transition is swallowed and every span lands on its own end.
+_MIN_EMIT_S = 0.25
+
+
+def _emitter(report: Callable[[Progress], None] | None):
+    """`emit(phase, frac, message)` — maps a phase-local 0..1 into that phase's slice of `_SPAN`,
+    and derives the ETA **here, once, from the resulting OVERALL fraction** (R48.5).
+
+    ⭐ The estimate is computed in exactly one place on purpose. Every phase used to be free to work
+    one out for itself and only `track` ever did, so on his 16,098-frame video the time remaining
+    appeared for 46 % of the build and vanished for the other 54 % — which reads as a hang, not as
+    honesty. Deriving it from the weighted overall pct also kills the whole family of bugs where a
+    phase hands `eta_from_fraction` its own 0→1: the number then counts *up* inside every phase and
+    restarts at every boundary. Registration is the worst case — each refine round builds a fresh
+    `todo` list, so a per-round estimate would jump backwards in the middle of one phase.
+    """
+    t0 = time.monotonic()
+    st = {"t": t0 - _MIN_EMIT_S - 1.0, "phase": ""}
+
+    def emit(phase: str, frac: float, message: str = "") -> None:
         if report is None:
             return
+        now = time.monotonic()
+        f = min(1.0, max(0.0, float(frac)))
+        if f < 1.0 and phase == st["phase"] and now - st["t"] < _MIN_EMIT_S:
+            return
+        st["t"], st["phase"] = now, phase
         lo, hi = _SPAN[phase]
+        pct = lo + (hi - lo) * f
         report(Progress(phase=phase, phase_index=PHASES.index(phase), n_phases=len(PHASES),
-                        pct=lo + (hi - lo) * min(1.0, max(0.0, frac)),
-                        message=message, eta_s=eta_s))
+                        pct=pct, message=message,
+                        # ⛔ NOT `f` — that is phase-local. `pct` is the whole job and `t0` is the
+                        # whole job's clock, so this pair is the only one that answers "how much
+                        # longer until the mosaic exists" (R48.5).
+                        eta_s=eta_from_fraction(now - t0, pct / 100.0, _ETA_MIN_OVERALL)))
 
     emit.t0 = t0  # type: ignore[attr-defined]
     return emit
@@ -107,12 +142,21 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
     emit("probe", 1.0, f"{info.width}×{info.height}, ~{info.n_frames} frames")
 
     # ---- pass 1: track -------------------------------------------------------------------
-    t0 = time.monotonic()
-
     def track_progress(i: int, n: int) -> None:
-        rate = i / max(1e-6, time.monotonic() - t0)
-        eta = (n - i) / rate if rate > 0 and i > 50 else None
-        emit("track", i / max(1, n), f"analyzing motion: frame {i} / {n}", eta)
+        # `n` comes from CAP_PROP_FRAME_COUNT and it lies in BOTH directions (video.py's header
+        # note); `track` raises it as the stream approaches the claim. The 99 % ceiling is the
+        # other half of that: on a container whose count happens to be exact the phase would
+        # otherwise report itself finished while frames are still arriving. Only the final
+        # `progress(n_read, n_read)`, fired after the decode loop ends, closes this span.
+        #
+        # ⛔ R48.10 — a denominator that MOVED must not be printed as though the container had said
+        # it. Once `track` has revised the claim, the count is ours and the sentence says `~`; the
+        # closing tick (`i >= n`) is the one exact number here and prints bare.
+        done = i >= n
+        total = f"{n}" if done or n == info.n_frames else f"~{n}"
+        frac = i / max(1, n)
+        emit("track", frac if done else min(0.99, frac),
+             f"analyzing motion: frame {i} / {total}")
 
     tr = track(str(video_path), info, cfg, progress=track_progress, cancel=cancel)
     say(f"tracked {tr.stats['frames_tracked']}/{tr.n_read} frames, "
@@ -145,8 +189,12 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
     levels: dict[int, float] = {}
     by_frame = {k.index: i for i, k in enumerate(tr.keyframes)}
 
+    n_decoded = 0
+
     def consume(frame_idx: int, gray: np.ndarray) -> None:
+        nonlocal n_decoded
         check_cancelled(cancel, "keyframe decode")
+        n_decoded += 1
         i = by_frame[frame_idx]
         f = subtract_background(gray, bg)
         cache[i] = f.astype(np.float16)
@@ -163,11 +211,18 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
         if by_frame[frame_idx] % tint_every == 0:
             tint_stats.offer(frame_bgr, cfg)
 
+    def kf_scanned(pos: int, span: int) -> None:
+        # ⏱️ The bar is driven by FRAMES WALKED PAST, not by keyframes produced. This is one forward
+        # `grab()` pass, so the cost is the walking — while keyframes are spaced by TRAVEL, so a
+        # dwell is a long stretch of the video that yields none and a bar counting keyframes freezes
+        # exactly where the decoder is busiest. The sentence still counts keyframes, because that is
+        # what he asked for.
+        emit("keyframes", pos / max(1, span), f"decoding keyframes: {n_decoded} / {len(by_frame)}")
+
     got = read_frames_at(str(video_path), list(by_frame),
                          consume,
-                         progress=lambda i, n: emit("keyframes", i / n,
-                                                    f"decoding keyframes: {i} / {n}"),
-                         colour=sample_colour)
+                         scanned=kf_scanned,
+                         colour=sample_colour, cancel=cancel)
     tint = tint_of(tint_stats, cfg)
     tint_text = "grey (not single-channel)" if tint is None else \
         "BGR " + " ".join(f"{v:.3f}" for v in tint)
@@ -201,7 +256,13 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
         fresh = 0
         todo = [lk for lk in cands if (lk.a, lk.b) not in all_links
                 or not all_links[(lk.a, lk.b)].ok]
-        t_reg = time.monotonic()
+        # ⚠️ Every refine round starts a FRESH `todo`, so the counter genuinely does restart —
+        # "3 / 18" straight after "340 / 340" reads as a jump backwards unless the sentence says
+        # which round it belongs to. The BAR does not move back (`frac0`/`frac1` give each round its
+        # own slice of the register span) and neither does the ETA (it comes from the overall pct,
+        # not from this loop's rate — which is what would have restarted with `todo`).
+        what = "registering frames" if round_no == 0 else \
+            f"re-checking alignment, round {round_no}"
         for n_done, lk in enumerate(todo):
             check_cancelled(cancel, "registration")
             prior = tuple(pos_of(lk.b) - pos_of(lk.a)) if lk.kind != "bridge" else (0.0, 0.0)
@@ -214,10 +275,8 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
                 say(f"  round {round_no}: link kf{lk.a}->kf{lk.b} ({lk.kind}) rejected: "
                     f"{measured.reject_reason} (resp {measured.response:.2f}, "
                     f"ncc {measured.ncc:.2f})")
-            rate = (n_done + 1) / max(1e-6, time.monotonic() - t_reg)
             emit("register", frac0 + (frac1 - frac0) * (n_done + 1) / max(1, len(todo)),
-                 f"registering frames: {n_done + 1} / {len(todo)}",
-                 (len(todo) - n_done - 1) / rate if rate > 0 else None)
+                 f"{what}: {n_done + 1} / {len(todo)}")
         return fresh
 
     cands = candidate_links(kf_pos, kf_seg, (info.width, info.height), cfg,
@@ -238,6 +297,13 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
         sol = solve_links(len(keyframes), list(all_links.values()), cfg)
         say(f"solve round {r + 1}: {sol.stats}")
 
+    # 🔴 Close the register span on its own end (R48.5). Nothing inside the loop above guarantees
+    # it: a refine round whose `todo` comes out empty emits not once, and round 0's terminal tick
+    # sits at frac 0.6, which the cadence guard is free to drop. Measured on tests/fixtures/
+    # survey.avi, registration reached **62.1 of its 62→84 span** and the bar then jumped 22 points
+    # to `solve`. This is real advancement, not a heartbeat — registration is finished here.
+    emit("register", 1.0, f"{sum(1 for lk in all_links.values() if lk.ok)} of "
+                          f"{len(all_links)} frame pairs registered")
     emit("solve", 1.0, "alignment solved")
     links = list(all_links.values())
     n_ok = sum(1 for lk in links if lk.ok)
@@ -264,7 +330,10 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
         raise PipelineError(str(e)) from e
 
     # ---- save ------------------------------------------------------------------------------
-    emit("save", 0.2, "writing outputs")
+    # The last place a Stop can be honoured cheaply. Past here the artifacts start landing, and a
+    # half-written set of outputs is worse than a build that finishes and is thrown away — so the
+    # writes below deliberately have no cancel checks between them.
+    check_cancelled(cancel, "saving the outputs")
     from PIL import Image                                    # lazy: keep import time lean
 
     def commit(name: str, write) -> None:
@@ -274,7 +343,24 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
         write(tmp)
         os.replace(tmp, out / name)
 
+    n_save = len(ARTIFACTS) + int(bool(diagnostics and tr.bg_small is not None))
+    n_written = 0
+
+    def writing(what: str) -> None:
+        """Tick the save phase, announced BEFORE each write with the fraction ALREADY on disk — so
+        the sentence names what he is waiting on and the bar never claims work it has not done.
+
+        ⏱️ One tick per named artifact is as fine-grained as this phase honestly goes: PIL exposes
+        no callback inside `Image.save`, so a 400 Mpx PNG encode is a single atom however it is
+        counted. It still beats what stood here — one "writing outputs" pinned at 96 % until the
+        whole job said `done`, which on a large canvas is the longest silent stretch of the build.
+        """
+        nonlocal n_written
+        emit("save", n_written / n_save, f"writing {what}")
+        n_written += 1
+
     if diagnostics and tr.bg_small is not None:              # dev only — see `diagnostics` above
+        writing("the background model")
         b = tr.bg_small
         b8 = np.clip((b - b.min()) / max(1e-6, float(b.max() - b.min())) * 255, 0, 255)
         commit(f"{basename}-background.png",
@@ -293,8 +379,11 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
         im.putpalette(pal)
         im.save(path, format="PNG", compress_level=level)
 
+    writing("the mosaic image")
     commit(names["mosaic"], lambda t: png(rr.mosaic_u8, t, cfg.png_compress_level))
+    writing("the preview")
     commit(names["preview"], lambda t: png(preview_of(rr.mosaic_u8, cfg), t, 6))
+    writing("the positions table")
     with (out / ".tmp-positions.csv").open("w", newline="", encoding="utf-8") as fh:
         cw = csv.writer(fh)
         cw.writerow(["keyframe", "video_frame", "x_px", "y_px", "segment", "reason",
@@ -334,6 +423,7 @@ def build(video_path: str | Path, out_dir: str | Path, cfg: VideoConfig | None =
         "dropped_video_frames": [keyframes[i].index for i in dropped_idx],
         "elapsed_s": round(time.monotonic() - t_start, 1),
     }
+    writing("the build record")
     commit(names["build"], lambda t: t.write_text(json.dumps({
         "stats": stats,
         "config": cfg.to_json(),

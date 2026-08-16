@@ -56,10 +56,14 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from camea.core import jobs as core_jobs
 from camea.core import mearecording as mr
@@ -79,6 +83,12 @@ _CHUNK = 8 * 1024 * 1024
 #: How many recordings one browse may list. A folder of thousands is a wrong turn, not a workload —
 #: the UI says the list was cut rather than pretending it is all of them.
 BROWSE_LIMIT = 200
+
+#: ⏱️ How often the copy says where it has got to. At the 184 MB/s he gets off the SSD an 8 MiB
+#: chunk lands 23 times a second, and a progress message per chunk is 23 lines a second into a
+#: 200-line log tail for a number no client reads faster than every 2 s (R48: emit where the counter
+#: advanced, at a cadence a human can read).
+_COPY_SAY_EVERY_S = 0.2
 
 _DOC_LOCK = threading.RLock()
 
@@ -476,8 +486,46 @@ def load_envelope_for(project_dir: str | Path, rec: Mapping) -> mr.Envelope | No
     return mr.load_envelope(envelope_path(project_dir, rec))
 
 
+def envelope_version_on_disk(path: str | Path) -> int | None:
+    """The `version` stamped in an envelope cache, **without materialising its arrays**.
+
+    ⚠️ **THIS EXISTS BECAUSE ASKING `load_envelope` A YES/NO QUESTION COST 33 MB.** That builds a
+    whole `Envelope` — every `lo`/`hi` row off the disk, 22-29 ms measured — and `has_envelope` threw
+    all of it away to return a bool, once every 2 s **per recording**, while the backfill it reports
+    was reading those same files. `np.load` on an `.npz` is lazy: opening it reads the zip's
+    directory, and indexing one 8-byte member reads one 8-byte member.
+
+    `None` = there is no cache, it will not open, or it stamps no version — all of which mean "not
+    built" to every caller, exactly as `mr.load_envelope` returning None does.
+    """
+    try:
+        with np.load(Path(path)) as z:
+            return int(z["version"])
+    except Exception:                                        # noqa: BLE001
+        # As wide as `mr.load_envelope`'s catch, and for its reason: a cache truncated mid-write
+        # reaches `zipfile.BadZipFile`, a plain `Exception`, and a cache miss must never become a
+        # 500 on a screen whose whole job is to say "not read yet" honestly. Do not narrow it.
+        return None
+
+
+def _envelope_ready(path: Path) -> bool:
+    """Is there a **current** envelope at `path`? 🔴 A cache written by an older Camea is NOT ready:
+    `ENVELOPE_VERSION` is the whole reason a changed layout rebuilds instead of being reinterpreted,
+    and answering yes here would serve the stale shape for ever. Same rule `mr.load_envelope`
+    enforces by returning None — only without reading the arrays to find out.
+
+    ⚠️ The one case this reads differently from a full load: an `.npz` that opens but whose *arrays*
+    are corrupt now reports ready, and the trace's 409 says so rather than the backfill rebuilding
+    it. `save_envelope` writes to `.part` and renames, so the file at this path is either whole or
+    is not there at all — which is what makes that trade affordable."""
+    return path.is_file() and envelope_version_on_disk(path) == mr.ENVELOPE_VERSION
+
+
 def has_envelope(project_dir: str | Path, rec: Mapping) -> bool:
-    return load_envelope_for(project_dir, rec) is not None
+    """Can this recording be shown whole yet? **Polled every 2 s per recording** by the envelope
+    status route — see `envelope_version_on_disk` for why that makes the cost of the answer matter
+    more than the answer."""
+    return _envelope_ready(envelope_path(project_dir, rec))
 
 
 def live_envelope_job(recording_id: str) -> core_jobs.Job | None:
@@ -486,6 +534,148 @@ def live_envelope_job(recording_id: str) -> core_jobs.Job | None:
     if not jid:
         return None
     return core_jobs.JOBS.get(jid)
+
+
+# ── one recording is read at a time, and the ones behind it say so ──────────────────────────────
+#
+# 🔴 **h5py SERIALISES THESE READS WHETHER OR NOT CAMEA DOES, SO CAMEA DOES IT HONESTLY.**
+# `start_envelopes` submits one thread per recording, and h5py holds a global lock across the whole
+# of each block read — so five of them do not finish five times sooner. They finish at the same wall
+# clock with **five bars each crawling at a fifth of the speed**, and each bar's linear ETA is then a
+# lie that revises *down* every time a sibling drops out. Measured 2026-08-16: one reader alone
+# 0.96 s; three concurrent, 2.59 s each. Queued, every running ETA is the truth and every waiting one
+# says it is waiting (R48.3/R48.4).
+#
+# ⚠️ **AND IT IS NOT `submit_thread(exclusive=...)`, DELIBERATELY.** The registry's lease does not
+# queue — `JobRegistry._claim` raises `Busy` on the spot — so a lease here would let the backfill
+# start ONE recording and refuse the other four, and `routes._start_copies` swallows that refusal, so
+# four recordings would silently never get an envelope at all. `start_envelopes`' contract is *submit
+# them all*; this turnstile keeps it and makes the queue visible instead of inventing a 409 nobody
+# asked for.
+#
+# ⛔ **Interactive reads do NOT queue behind this.** A pad click reads a narrow window in ~0.5 s
+# (`routes.get_mea_trace`); making that wait out a four-minute backfill would be a worse app than the
+# one this fixes.
+
+#: How often a waiting read looks up to see whether its turn has come. Short enough that Stop is felt
+#: while it is still queued (R48.7), cheap enough to be free.
+_TURN_POLL_S = 0.5
+
+#: …and how often it says so. Every client that watches this polls at 2 s; talking faster than the
+#: listener listens is churn in the log tail and nothing else.
+_TURN_SAY_EVERY_S = 2.0
+
+_READ_LOCK = threading.RLock()
+
+#: `[recording id, file bytes]` for every envelope read waiting or running, oldest first — index 0 is
+#: the one actually reading. ⚠️ Not persisted, same reasoning as `_COPY_JOBS`: it is a handle on
+#: running work, and running work does not survive the process.
+_READ_QUEUE: list[list] = []
+
+#: Bytes of `data.raw.h5` per second, as measured by whichever read is running. It is what lets the
+#: ones behind it estimate their own wait. ⛔ Not dataset knowledge: it is a property of this disk on
+#: this run, re-measured from zero every time the app starts, and 0.0 means *nobody has measured yet,
+#: so say nothing* rather than a guess.
+_READ_BYTES_PER_S = 0.0
+
+
+def _note_read_rate(nbytes: float, frac: float, elapsed_s: float) -> None:
+    """Record what the running read is achieving, in bytes of source file per second."""
+    global _READ_BYTES_PER_S
+    if nbytes <= 0 or elapsed_s <= 0 or frac < core_jobs.ETA_MIN_FRACTION:
+        return
+    _READ_BYTES_PER_S = float(nbytes) * float(frac) / float(elapsed_s)
+
+
+def _place_in_queue(entry: list) -> int:
+    """How many reads are in front of `entry`; -1 once it has left the queue. ⚠️ Identity, never the
+    recording id — `start_envelope` can in principle be raced into submitting two jobs for the same
+    recording, and matching by id would put both of them at position 0, which is the exact
+    trampling this queue exists to stop."""
+    with _READ_LOCK:
+        for i, q in enumerate(_READ_QUEUE):
+            if q is entry:
+                return i
+    return -1
+
+
+def _queued_eta(entry: list) -> float | None:
+    """⏱️ Seconds until **this** read is finished, counted through everything in front of it.
+
+    ⭐ The whole wait, not the wait until its turn. A countdown that reached zero as the turn came
+    and then jumped back up to a full read would be counting down to the wrong event — he is waiting
+    for his recording, not for a queue position.
+
+    `None` until *something* has measured a read rate (the first read's first 2 %, a second or two).
+    That is R48.4's case, not R48.9's: the client says *"working out how long this will take…"*
+    beside a running elapsed clock, which is true and is what it is for.
+    """
+    with _READ_LOCK:
+        idx = _place_in_queue(entry)
+        if idx <= 0:
+            return None                     # gone, or it IS the reader — its own progress says
+        head, head_bytes = str(_READ_QUEUE[0][0]), float(_READ_QUEUE[0][1])
+        # Everything from the one behind the reader up to and including this one: none of them has
+        # started, so each still costs a whole read of its own file.
+        not_started = [float(q[1]) for q in _READ_QUEUE[1:idx + 1]]
+        rate = _READ_BYTES_PER_S
+    if rate <= 0:
+        return None
+    job = live_envelope_job(head)
+    p = job.progress if job is not None else None
+    # 🔴 **ONLY A READ'S OWN ESTIMATE COUNTS, AND `phase` IS HOW WE KNOW IT IS ONE.** A job that has
+    # just taken the turn is still carrying the `queued` Progress it emitted up to
+    # `_TURN_SAY_EVERY_S` ago — whose eta included the read that has since FINISHED — and it keeps
+    # carrying it until its own first block clears `ETA_MIN_FRACTION`. Borrowing that made every
+    # waiter's countdown jump **UP** at each hand-over (measured: C 20.1 s -> 22.0 s against a truth
+    # of 20.0 s), which is precisely the shape R48b exists to forbid, reached by a different road.
+    # A head with nothing of its own to say is worth its file over the measured rate — which is also
+    # why a waiter now keeps a number through the hand-over instead of blanking (R48.3).
+    ahead_s = p.eta_s if p is not None and p.phase == "envelope" else None
+    if ahead_s is None:
+        ahead_s = head_bytes / rate
+    return float(ahead_s) + sum(not_started) / rate
+
+
+@contextmanager
+def read_turn(recording_id: str, nbytes: int, cancel: Any,
+              emit: Callable[..., None]) -> Iterator[None]:
+    """Wait until this recording is the one being read, then hold the turn for the body.
+
+    Public, and named without a leading underscore on purpose: this is the *app's* turnstile, not
+    this module's. Any other whole-recording h5 read that ships — videomosaic builds an envelope of
+    its own — must take the same turn, or the honesty this buys is undone by a job that queues
+    against nothing.
+    """
+    entry: list = [str(recording_id), float(nbytes)]
+    with _READ_LOCK:
+        _READ_QUEUE.append(entry)
+    try:
+        said = 0.0
+        while True:
+            ahead = _place_in_queue(entry)
+            if ahead <= 0:
+                break
+            core_jobs.check_cancelled(cancel, "envelope")     # R48.7 — stoppable while it waits, too
+            now = time.monotonic()
+            if now - said >= _TURN_SAY_EVERY_S:
+                said = now
+                # ⚠️ **This is not the heartbeat R48b forbids.** That one re-derives an ETA from a
+                # PINNED `pct` and a growing elapsed, so it counts UP. This number is read off the
+                # job in front and gets smaller every time that one advances; `pct` is not an input
+                # to it at all, and there is genuinely new information at every emit.
+                emit(phase="queued", pct=0.0, eta_s=_queued_eta(entry),
+                     message=("waiting for the recording in front of it to be read"
+                              if ahead == 1 else
+                              f"waiting for {ahead} recordings in front of it to be read"))
+            time.sleep(_TURN_POLL_S)
+        yield
+    finally:
+        with _READ_LOCK:
+            for i, q in enumerate(_READ_QUEUE):
+                if q is entry:
+                    del _READ_QUEUE[i]
+                    break
 
 
 def start_envelope(project_dir: str | Path, analysis_id: str, rec: Mapping, *,
@@ -505,24 +695,54 @@ def start_envelope(project_dir: str | Path, analysis_id: str, rec: Mapping, *,
     if live is not None and live.state in ("queued", "running"):
         return live.job_id
     dest = envelope_path(project_dir, rec)
-    if not force and mr.load_envelope(dest) is not None:
+    if not force and _envelope_ready(dest):
         return None
     path = open_path(project_dir, rec)
     if path is None:
         return None
+    nbytes = _size(path)
 
     def fn(report, cancel) -> dict:
         emit = core_jobs.report_adapter(report)
+        # 🔴 **THE FILE IS OPEN ONLY WHILE IT IS ACTUALLY BEING READ — the header peek closes before
+        # the turnstile and the read re-opens after it.** ⚠️ Waiting for a turn with the handle still
+        # open put a Windows share-lock on `data.raw.h5` for the whole queue: the fourth recording of
+        # a backfill held one for minutes while reading nothing, so deleting the original — the very
+        # thing a `stored` recording is supposed to survive — and `forget()`'s rmtree of the
+        # project's own copy both failed with `WinError 32`. (Caught by
+        # `test_a_stored_recording_survives_the_original_being_deleted` and
+        # `test_all_three_routes_read_the_PROJECTS_OWN_COPY_once_it_has_landed`.) The second open
+        # costs one header read, ~20 ms once per recording; the lock cost minutes of someone else's
+        # file.
         with mr.MeaRecording(path) as opened:
             if opened.info().n_samples == 0:
                 # No continuous trace was ever recorded. Nothing to reduce, and nothing wrong.
+                # ⭐ Answered BEFORE it takes a turn: a recording with nothing to read must not sit
+                # behind four that do in order to say so.
                 return {"kind": ENVELOPE_JOB_KIND, "analysis_id": analysis_id,
                         "recording_id": rid, "built": False, "n_buckets": 0}
 
+        # Turn first, THEN the handle — and on the way out the handle closes before the turn is
+        # released, so the next in the queue never overlaps this one's open file.
+        with read_turn(rid, nbytes, cancel, emit), mr.MeaRecording(path) as opened:
+            t0 = time.monotonic()
+
             def on_progress(frac: float) -> None:
                 core_jobs.check_cancelled(cancel, "envelope")
+                elapsed = time.monotonic() - t0
+                _note_read_rate(nbytes, frac, elapsed)
+                # ⏱️ **R48.3 — THE COUNTABLE UNIT IS THE BLOCKS OF THE RAW STREAM ALREADY
+                # DECOMPRESSED.** `build_envelope` calls this once per block with `k/n_buckets`,
+                # and this read is one phase with nothing silent in it, so `frac` **is** the
+                # overall fraction (R48.5) and the plain estimator is exactly right — no span
+                # table, no weighting. Measured 2026-08-16 on a 1.64 GB file: 249 uniform
+                # blocks, 0.208 s apart, elapsed at a quarter / half / three quarters =
+                # 13.1 / 26.1 / 39.2 s of a 52 s read. This is the screenshot that said
+                # "Reading…" with no bar and no number; the fraction was on the wire the whole
+                # time and only the estimate was missing.
                 emit(phase="envelope", pct=100.0 * frac,
-                     message=f"{int(frac * 100)}% of the recording read")
+                     message=f"{int(frac * 100)}% of the recording read",
+                     eta_s=core_jobs.eta_from_fraction(elapsed, frac))
 
             env = opened.build_envelope(n_buckets, progress=on_progress)
         core_workspace.refuse_write(dest)            # belt and braces: never outside the project
@@ -540,7 +760,12 @@ def start_envelopes(project_dir: str | Path, analysis_id: str, doc: Mapping, *,
                     n_buckets: int, force: bool = False) -> list[str]:
     """⭐ **THE BACKFILL.** Every recording in the project that has no envelope yet gets one. The
     jobs are submitted together and the registry runs them; each is skipped in `start_envelope` if it
-    turns out to be unnecessary, so calling this repeatedly is free."""
+    turns out to be unnecessary, so calling this repeatedly is free.
+
+    ⚠️ **Submitted together, but READ ONE AT A TIME** — see `read_turn`. All of them get a job id and
+    a row, exactly as before; the difference is that four of them start out saying they are waiting
+    instead of four bars crawling at a fifth speed while h5py's own lock does the queueing invisibly.
+    ⛔ Nothing here raises `Busy`: the contract is *submit them all*, and it is kept."""
     out: list[str] = []
     for rec in list(doc.get("recordings") or []):
         jid = start_envelope(project_dir, analysis_id, rec, n_buckets=n_buckets, force=force)
@@ -571,6 +796,8 @@ def _copy_file(src: Path, dest: Path, *, report: Any = None, cancel: Any = None)
     total = _size(src)
     done = 0
     emit = core_jobs.report_adapter(report)
+    t0 = time.monotonic()
+    said = 0.0
     try:
         with open(src, "rb") as fin, open(part, "wb") as fout:
             while True:
@@ -580,8 +807,23 @@ def _copy_file(src: Path, dest: Path, *, report: Any = None, cancel: Any = None)
                     break
                 fout.write(chunk)
                 done += len(chunk)
+                now = time.monotonic()
+                # Throttled, except for the chunk that finishes it — 100 % must be said the moment
+                # it is true, never up to a fifth of a second after the file is whole.
+                if now - said < _COPY_SAY_EVERY_S and not (0 < total <= done):
+                    continue
+                said = now
+                elapsed = now - t0
+                # ⏱️ **R48.3 — THE COUNTABLE UNIT IS BYTES, and this loop was already counting them
+                # for the percentage.** ⭐ The measured rate goes in the message beside them because
+                # it is free at this line and it is the one number that explains the wait: the same
+                # gigabytes off his SSD and off a mounted share are the same bar moving ten times
+                # slower, and only the rate says which one he is looking at.
                 emit(phase="copy", pct=(100.0 * done / total if total else 100.0),
-                     message=f"{done // (1024 * 1024)} MB")
+                     message=(f"{done // (1024 * 1024)} MB"
+                              + (f" · {done / elapsed / (1024 * 1024):.0f} MB/s"
+                                 if elapsed > 0 else "")),
+                     eta_s=core_jobs.eta_from_counts(elapsed, done, total))
             fout.flush()
             os.fsync(fout.fileno())
         os.replace(part, dest)

@@ -3,6 +3,7 @@ import { ToastProvider } from './ToastProvider';
 import { SaveControllerProvider } from './SaveController';
 import { SaveIndicator } from './SaveIndicator';
 import { ThemeToggle } from './ThemeToggle';
+import { RunningStrip } from './RunningStrip';
 import styles from './AppShell.module.css';
 
 /**
@@ -45,6 +46,10 @@ function ShellFrame() {
           <ThemeToggle />
         </div>
       </header>
+      {/* ⏱️ R48.8 — anything running, visible from every screen. Renders nothing when nothing is
+          running, so it costs no height on an idle app. It sits OUTSIDE <main> deliberately: a
+          feature that scrolls its own pane must not be able to scroll the strip out of sight. */}
+      <RunningStrip />
       <main className={styles.main}>
         <Outlet />
       </main>

@@ -41,13 +41,19 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from xml.etree import ElementTree
 
 import numpy as np
+
+# ⭐ `check_cancelled` ONLY — the ONE `Cancelled` the job runner catches (a second one is how v1's
+# cancelled `open` came back marked "failed, with a traceback"). `core.jobs` imports nothing of
+# ours, so this does not close a loop.
+from camea.core.jobs import check_cancelled
 
 # ⭐ `gaps()` ONLY — and imported BY NAME, so nothing in this module can reach the dataset lists that
 # live beside it. `gaps(trials)` is a PURE FUNCTION of an arbitrary trial list (consecutive pairs
@@ -76,6 +82,8 @@ __all__ = [
     "read_trial_meta",
     "refuse_write",
     "scan",
+    "SCAN_WALK",
+    "SCAN_OPEN",
     "snapshot_blocks",
     "store_key",
 ]
@@ -760,7 +768,17 @@ class ScanResult:
     skipped: list[dict]  # [{"path": str, "reason": str}] — looked like one, could not be read
 
 
-def scan(root: str | os.PathLike[str], depth: int = 3) -> ScanResult:
+#: ⏱️ The two stages `scan` reports, and they are **not** interchangeable (BEHAVIOUR R48.9). The
+#: WALK has no denominator until it returns — the tree's breadth is the user's disk — so it counts
+#: up ("14 datasets so far") and offers no estimate. The OPENS do: every candidate found is ~0.2 s
+#: of `log.txt` + XML, so `i / n` is a real fraction and the bar is a real bar.
+SCAN_WALK = "scan_dirs"
+SCAN_OPEN = "open_datasets"
+
+
+def scan(root: str | os.PathLike[str], depth: int = 3,
+         progress: Callable[[str, int, int], None] | None = None,
+         cancel: Any = None) -> ScanResult:
     """Find the datasets under a folder **the USER pointed at**. Read-only; no pixels; ~0.2 s each.
 
     `depth` is how many directory levels below `root` to look (1 = `root` itself only). A directory
@@ -768,21 +786,37 @@ def scan(root: str | os.PathLike[str], depth: int = 3) -> ScanResult:
 
     ⛔ Nothing here recognises a dataset by name, and nothing is skipped for being "the wrong one".
     A folder is a dataset iff it has a `log.txt` and at least one `NNN.xml`. That is the whole rule.
+
+    ⏱️ `progress(stage, done, total)` is called with `SCAN_WALK` (`total = 0` — there is no
+    denominator yet) while the tree is being walked, and with `SCAN_OPEN` once the candidates are
+    known and each is being read. `cancel` is polled at both boundaries.
+
+    ⭐ **THE WALK AND THE OPENS ARE NOW TWO PASSES, DELIBERATELY.** They used to be one — `walk`
+    opened each dataset the moment it recognised it — which meant the expensive half had no total
+    to divide by even after every candidate was known. Collecting the paths first costs one extra
+    `_looks_like_a_dataset` per directory (a `stat` and a `glob`) and buys an honest bar.
     """
     r = Path(root).expanduser()
     if not r.is_dir():
         raise FileNotFoundError(f"no such directory: {r}")
     r = r.resolve()
 
+    candidates: list[Path] = []
     found: list[Dataset] = []
     skipped: list[dict] = []
 
     def walk(d: Path, level: int) -> None:
+        check_cancelled(cancel, "scan")
+        # ⏱️ Per DIRECTORY, not per dataset found: a walk of ten thousand folders holding nothing
+        # would otherwise report nothing at all, and a count-up that never counts is the blank slot
+        # R48.4 was written against. `total` is 0 — there is no denominator here and there will not
+        # be one until this returns.
+        if progress is not None:
+            progress(SCAN_WALK, len(candidates), 0)
         if _looks_like_a_dataset(d):
-            try:
-                found.append(open_dataset(d))
-            except (OSError, ValueError) as e:
-                skipped.append({"path": d.as_posix(), "reason": str(e)})
+            candidates.append(d)
+            if progress is not None:
+                progress(SCAN_WALK, len(candidates), 0)
             return  # a dataset does not contain another dataset
         if level >= depth:
             return
@@ -797,5 +831,18 @@ def scan(root: str | os.PathLike[str], depth: int = 3) -> ScanResult:
             walk(c, level + 1)
 
     walk(r, 1)
+
+    n = len(candidates)
+    for i, d in enumerate(candidates):
+        check_cancelled(cancel, "scan")
+        if progress is not None:
+            progress(SCAN_OPEN, i, n)
+        try:
+            found.append(open_dataset(d))
+        except (OSError, ValueError) as e:
+            skipped.append({"path": d.as_posix(), "reason": str(e)})
+    if progress is not None:
+        progress(SCAN_OPEN, n, n)
+
     found.sort(key=lambda ds: ds.name)
     return ScanResult(root=r, datasets=found, skipped=skipped)

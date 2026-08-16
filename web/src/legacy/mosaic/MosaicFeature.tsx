@@ -71,6 +71,9 @@ export function MosaicFeature() {
 
   const [step, setStep] = useState<MosaicStepId>('load');
   const [openPhase, setOpenPhase] = useState<string | null>(null);
+  // ⏱️ R48 — the open JOB's id, so Load can paint its percentage, its estimate and a Stop instead of
+  // one line of phase text. The shell keeps `openPhase` for the round trips that are not jobs.
+  const [openJobId, setOpenJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<SessionResponse | null>(null);
 
@@ -147,10 +150,20 @@ export function MosaicFeature() {
     let sess = await findOpenSession(dsKey, trials);
     if (!alive()) return;
     if (!sess) {
-      sess = await openSessionAndWait(
-        { dataset_key: dsKey, trials },
-        { onProgress: (j) => alive() && setOpenPhase(j.phase ?? j.message ?? 'opening…') },
-      );
+      try {
+        sess = await openSessionAndWait(
+          { dataset_key: dsKey, trials },
+          {
+            onProgress: (j) => {
+              if (!alive()) return;
+              setOpenJobId(j.job_id);
+              setOpenPhase(j.phase ?? j.message ?? 'opening…');
+            },
+          },
+        );
+      } finally {
+        if (alive()) setOpenJobId(null);
+      }
       if (!alive()) return;
     }
 
@@ -174,6 +187,7 @@ export function MosaicFeature() {
       } catch (e) {
         if (token === openToken.current) {
           setOpenPhase(null);
+          setOpenJobId(null);
           setError(errMsg(e));
         }
       }
@@ -228,7 +242,9 @@ export function MosaicFeature() {
       )}
 
       <div className={styles.body} data-step={step}>
-        {step === 'load' && <LoadStep onNavigate={go} openPhase={openPhase} />}
+        {step === 'load' && (
+          <LoadStep onNavigate={go} openPhase={openPhase} openJobId={openJobId} />
+        )}
         {step === 'range' && <RangeStep onNavigate={go} />}
         {step === 'screen' && <ScreenStep onNavigate={go} />}
         {step === 'place' && <PlaceStep onNavigate={go} />}

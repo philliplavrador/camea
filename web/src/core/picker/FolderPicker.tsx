@@ -19,6 +19,8 @@ import { createPortal } from 'react-dom';
 import { api } from '../../api/client';
 import type { components } from '../../api/schema';
 import { Button } from '../../design/primitives/Button';
+import { Progress } from '../../design/primitives/Progress';
+import { useDelayedFlag } from '../../design/primitives/useDelayedFlag';
 import { cx } from '../../design/cx';
 import styles from './FolderPicker.module.css';
 
@@ -96,6 +98,12 @@ export function FolderPicker({
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
+  // ⏱️ R48.1 — a local `fs/list` is usually well inside the 400 ms grace, and a word that flashes on
+  // every double-click through a tree is worse than none. R48.10 — after the grace it is a BAR, so
+  // "still reading" cannot be mistaken for "this folder has nothing in it"; R48.9 — a directory read
+  // has no denominator, so it is the travelling sliver.
+  const reading = useDelayedFlag(loading);
+
   const atRoots = !path;
   const parent = data?.parent ?? undefined;
   const entries = atRoots
@@ -138,7 +146,19 @@ export function FolderPicker({
         </div>
 
         <div className={styles.list} role="listbox" aria-label="Folders">
-          {loading && <div className={styles.state}>Reading…</div>}
+          {loading && reading && (
+            <div className={styles.reading}>
+              <Progress
+                compact
+                data-testid="folder-picker-reading"
+                label="Reading that folder"
+                pct={null}
+                // R48.7 — one `fs/list` with nothing to poll. Cancel closes the dialog; it cannot
+                // stop the read, so the bar says so rather than implying a Stop it does not have.
+                unstoppableWhy="reading a folder cannot be stopped once it starts"
+              />
+            </div>
+          )}
           {!loading && failure && <div className={cx(styles.state, styles.error)}>{failure}</div>}
           {!loading && !failure && data?.error && (
             <div className={cx(styles.state, styles.error)}>{data.error}</div>

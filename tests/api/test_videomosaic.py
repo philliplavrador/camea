@@ -187,9 +187,13 @@ def test_build_end_to_end_and_the_outputs_are_browsable(client, survey, outbox, 
     assert next(o for o in listed if o["name"] == "night sky.png")["previewable"] is True
 
     # ⭐ and THIS is how the mosaic reaches a paper: pick one, name a folder, take a copy.
+    # ⏱️ Since R48 the copy is a JOB (202 + a bar that counts bytes); the three refusals in front of
+    # it are still synchronous, and `test_core_routes.py` is where they are proved.
     r = client.post(f"/api/projects/{aid}/outputs/copy",
                     json={"names": ["night sky.png"], "dest": str(outbox)})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
+    copied = run_job(client, r.json()["job_id"])["result"]["copied"]
+    assert [Path(p).name for p in copied] == ["night sky.png"]
     assert (outbox / "night sky.png").is_file()
     assert (out / "night sky.png").is_file(), "a copy — the project keeps its mosaic"
 

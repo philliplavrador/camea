@@ -1,5 +1,9 @@
-/* THE VIDEOMOSAIC FEATURE — one screen. The progress block mirrors PlaceStep's (same bar, same
-   mono readouts) so a job looks like a job everywhere; the facts row mirrors the receipts'. */
+/* THE VIDEOMOSAIC FEATURE — one screen. The facts row mirrors the receipts'.
+
+   ⛔ **THERE IS NO PROGRESS BAR IN THIS FILE ANY MORE (BEHAVIOUR R48.2).** It held one of the five
+   hand-rolled copies — 8 px, `scaleX`, an accent gradient — and `RegionsStep` imported it from here
+   to draw two more. All of them are `design/primitives/Progress` now: one height (`--progress-h`),
+   one animation, one `role="progressbar"`. Do not start a sixth. */
 
 /* ⭐ R47 — THE PANE IS A FRAME, NOT A COLUMN. The picture fills the window and the page itself
    never scrolls: header · pipeline · step area, with the step area taking whatever is left. Only
@@ -35,14 +39,6 @@
 .stepFill {
   min-height: 0;
   height: 100%;
-}
-
-.loading {
-  padding: 48px 0;
-  text-align: center;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: var(--fs-readout);
 }
 
 .head {
@@ -86,6 +82,11 @@
   margin-bottom: 4px;
 }
 
+/* A bar that follows the button that started it, on a rail. */
+.underButton {
+  margin-top: 10px;
+}
+
 /* ── not built yet: one button, and a `?` for anyone who wants it (R3) ───── */
 .buildPanel {
   display: flex;
@@ -98,59 +99,11 @@
   background: var(--bg-card);
 }
 
-/* ── building (mirrors PlaceStep) ────────────────────────────────────────── */
-.progress {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-card);
-}
-
-.barWell {
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-inset);
-  overflow: hidden;
-  margin-bottom: 10px;
-}
-
-.bar {
-  height: 100%;
-  width: 100%;
-  border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
-  /* R8.5 — the bar GLIDES; it does not step. scaleX, not width: same glide, no layout pass.
-     (The three older bars still animate width — migrate all together someday, or never.) */
-  transform-origin: left;
-  transition: transform var(--dur) var(--ease);
-}
-
-.progressRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.phase {
-  font-family: var(--font-mono);
-  font-size: var(--fs-readout);
-  color: var(--text-dim);
-  text-transform: lowercase;
-}
-
-.eta {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-readout-lg);
-  font-weight: 600;
-  color: var(--data);
-  font-variant-numeric: tabular-nums;
-}
-
-.msg {
-  margin-top: 8px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  color: var(--text-faint);
+/* A bar inside the dashed build panel is the panel's whole content — let it have the width. */
+.buildPanel > :only-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 20px;
 }
 
 /* ── the stats strip ─────────────────────────────────────────────────────── */

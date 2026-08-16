@@ -748,3 +748,19 @@ def test_the_csv_states_its_coordinate_frame_on_every_row(tmp_path):
     lines = (tmp_path / "f.csv").read_text(encoding="utf-8").splitlines()
     assert {ln.split(",")[-1] for ln in lines[1:] if ln} == {"full"}
     assert len(lines) == TEST_DEVICE.electrodes + 1, "full = a row per electrode on the chip"
+
+
+def test_every_fit_step_has_a_measured_weight_and_the_weights_tile_the_bar():
+    """🔴 BEHAVIOUR R48.5 — `pct` is OVERALL. The electrode-map job looks each step's share of the
+    bar up in `FIT_SPAN` **by the name `fit_grid` emits**, so a step added to `FIT_STEPS` without a
+    weight would fall back to 0 and snap the bar backwards to the start of the fit mid-run. It also
+    checks the weights are contiguous and cover 0..1 — a gap is a bar that jumps, an overlap is a
+    bar that goes back."""
+    from camea.core.electrodegrid import FIT_SPAN, FIT_STEPS
+
+    assert tuple(FIT_SPAN) == FIT_STEPS, "same steps, same order"
+    spans = list(FIT_SPAN.values())
+    assert spans[0][0] == 0.0 and spans[-1][1] == 1.0
+    for (_a, b), (c, d) in zip(spans, spans[1:]):
+        assert b == c, "the weights must tile the bar with no gap and no overlap"
+        assert c < d, "a step with no width cannot be seen"

@@ -11,24 +11,28 @@
 // anchor → recompute → verify → anchor more → recompute.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSweepStore } from '../../store';
-import { startRecompute, pollJobUntilDone } from '../../../../api';
-import type { RecomputeResult, MosaicDocument } from '../../../../api';
+import { startRecompute, useJob, useStopJob } from '../../../../api';
+import type { MosaicDocument, RecomputeResult } from '../../../../api';
 import { useToast } from '../../../../app';
-import { Panel, Button } from '../../../../design';
+import { Panel, Button, Progress } from '../../../../design';
 import styles from './RecomputePanel.module.css';
 
 export function RecomputePanel() {
   const doc = useSweepStore((s) => s.doc);
   const order = useSweepStore((s) => s.order);
   const toast = useToast();
+  const stopJob = useStopJob();
 
-  const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState<{ pct: number | null; message: string | null }>({
-    pct: null,
-    message: null,
-  });
+  // ⏱️ R48 — the job is WATCHED, not just awaited: `useJob` owns the ticking countdown (R8) and the
+  // elapsed clock, so this panel renders a real bar with a real time instead of a 5 px green meter
+  // and a button caption. The imperative `pollJobUntilDone` it replaced threw both away.
+  const [starting, setStarting] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const job = useJob(jobId);
+  const running = jobId != null && !job.isTerminal;
+  const busy = starting || running;
 
   // The frozen reference (anchored) and what a recompute would re-place (everything else that is not
   // hand-placed or excluded). Mirrors the server's target rule, so the counts are honest.
@@ -45,32 +49,52 @@ export function RecomputePanel() {
     return { nRef: ref, nTargets: targets };
   }, [doc, order]);
 
+  /**
+   * ⏱️ R48.9 — **the wait ends OUT LOUD, including badly.** Every terminal state says something: a
+   * failure, a Stop, a finished run that carried no document, and the good case's summary. A panel
+   * whose bar simply vanishes leaves the user unable to tell "done" from "gave up".
+   */
+  useEffect(() => {
+    if (!jobId || !job.isTerminal) return;
+    const finished = job.job;
+    setJobId(null);
+    if (job.state === 'failed') {
+      toast.push(`Recompute failed${job.error?.message ? ` — ${job.error.message}` : '.'}`, {
+        tone: 'danger',
+      });
+      return;
+    }
+    if (job.state !== 'done') {
+      toast.push('Recompute stopped — nothing moved.', { tone: 'default' });
+      return;
+    }
+    const result = finished?.result;
+    if (!result || result.kind !== 'recompute') {
+      toast.push('Recompute finished but returned no document.', { tone: 'danger' });
+      return;
+    }
+    // Adopt the transformed document — re-hydrate the sweep spine and push it through the store's
+    // persistence hook (the same seam an A/E judgement uses), so auto-save keeps it.
+    const s = useSweepStore.getState();
+    s.hydrate(result.doc, { sessionId: s.sessionId });
+    useSweepStore.getState().hooks.onChange?.(result.doc, { judgement: false });
+    toast.push(summarise(result), { tone: 'good' });
+  }, [jobId, job.isTerminal, job.state, job.job, job.error, toast]);
+
   async function run(): Promise<void> {
     const cur = useSweepStore.getState().doc;
     const sid = useSweepStore.getState().sessionId;
     if (!cur || !sid || busy || nRef === 0) return;
-    setBusy(true);
-    setProgress({ pct: 0, message: 'Recomputing…' });
+    setStarting(true);
     try {
       const ref = await startRecompute({ session_id: sid, doc: cur as MosaicDocument });
-      const finished = await pollJobUntilDone(ref.job_id, {
-        onUpdate: (j) => setProgress({ pct: j.pct ?? null, message: j.message ?? null }),
+      setJobId(ref.job_id);
+    } catch (e) {
+      toast.push(`Recompute failed — ${e instanceof Error ? e.message : String(e)}`, {
+        tone: 'danger',
       });
-      const result = finished.result;
-      const rc = result && result.kind === 'recompute' ? (result as RecomputeResult) : null;
-      if (rc) {
-        // Adopt the transformed document — re-hydrate the sweep spine and push it through the store's
-        // persistence hook (the same seam an A/E judgement uses), so auto-save keeps it.
-        const s = useSweepStore.getState();
-        s.hydrate(rc.doc, { sessionId: s.sessionId });
-        useSweepStore.getState().hooks.onChange?.(rc.doc, { judgement: false });
-        toast.push(summarise(rc), { tone: 'good' });
-      }
-    } catch {
-      toast.push('Recompute failed.', { tone: 'danger' });
     } finally {
-      setBusy(false);
-      setProgress({ pct: null, message: null });
+      setStarting(false);
     }
   }
 
@@ -86,6 +110,8 @@ export function RecomputePanel() {
         <p className={styles.lead} data-testid="recompute-summary">
           <strong>{nRef}</strong> anchored → re-place <strong>{nTargets}</strong>
         </p>
+        {/* ⛔ The job's narration no longer hijacks the caption (R48.6): the button says what it does,
+            and the bar below says what is happening. */}
         <Button
           variant="primary"
           size="sm"
@@ -94,20 +120,30 @@ export function RecomputePanel() {
           onClick={() => void run()}
           disabled={disabled}
         >
-          {busy ? (progress.message ?? 'Recomputing…') : 'Recompute'}
+          Recompute
         </Button>
         {nRef === 0 && (
           <p className={styles.hint} data-testid="recompute-hint">
             Anchor a tile you trust first.
           </p>
         )}
-        {busy && progress.pct != null && (
-          <div className={styles.meter} data-testid="recompute-meter">
-            <div
-              className={styles.meterFill}
-              style={{ width: `${Math.max(0, Math.min(100, progress.pct))}%` }}
-            />
-          </div>
+        {busy && (
+          <Progress
+            className={styles.progress}
+            compact
+            data-testid="recompute-progress"
+            label={job.job?.said_as || 'Re-placing the tiles you have not anchored'}
+            pct={job.pct}
+            etaText={job.etaText}
+            elapsedText={job.elapsedText}
+            phase={job.phase}
+            message={job.message}
+            onStop={
+              running && jobId && (job.job?.cancellable ?? true)
+                ? () => void stopJob(jobId)
+                : undefined
+            }
+          />
         )}
       </div>
     </Panel>

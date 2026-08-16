@@ -67,6 +67,17 @@ export const ROUTES = {
 
 /** THE TESTID REGISTRY. Grouped by screen; see README.md for the human-readable table. */
 export const TID = {
+  // ── ⏱️ WAITING — the one bar, everywhere (BEHAVIOUR R48) ──────────────────────
+  // `<Progress>` composes its ids from the `data-testid` it is given: `${id}`, `${id}-bar`,
+  // `${id}-pct`, `${id}-eta`, `${id}-stop`, `${id}-log`. So a screen registers its ROOT id here and
+  // the five children follow by construction — that is why there is no entry per suffix.
+  runningStrip: 'running-strip', //         ⭐ R48.8: the strip under the top bar. ABSENT when nothing
+  //                                        is running — assert `toHaveCount(0)`, not hidden.
+  runningSaid: 'running-said', //           what a strip row is waiting for, in his words (R48.6)
+  runningEta: 'running-eta', //             ⭐ R48.4: NEVER EMPTY. Either "42 s left" or "working out
+  //                                        how long · 12 s". An empty slot here is the bug R48 exists
+  //                                        for — four screens had one.
+  runningStop: 'running-stop', //           R48.7; rendered only when the server says `cancellable`
   // ── Home / shell (2026-07-24: the home is a PROJECT MANAGER — R41) ─────────────
   manager: 'project-manager', //            the home. ⭐ No first-run prompt since 2026-07-25 (R41.2)
   newProject: 'new-project', //             the "New project" CTA
@@ -77,6 +88,10 @@ export const TID = {
   projectExport: 'project-export',
   projectDelete: 'project-delete', //       ⭐ R44: delete means delete. There is no Remove.
   projectGrid: 'project-grid',
+  projectsLoading: 'projects-loading', //   ⛔ R48.10 — the list IN FLIGHT. `projects-empty` is the
+  //                                        ANSWER "no projects", and the two must never coincide.
+  projectsBusy: 'projects-busy', //         ⏱️ a rename or a delete, NAMING the project. R48.7 — it
+  //                                        carries no Stop and says why (an rmtree has no callback).
   projectsUnreadable: 'projects-unreadable', // store folders that could not be read
   projectsMigrated: 'projects-migrated', //  the one-time R44 "your projects moved" notice
   // the new-project flow (/new): name → task → where the DATA is (R44: no save folder)
@@ -86,6 +101,10 @@ export const TID = {
   npBack: 'np-back',
   npCancel: 'np-cancel',
   npCreate: 'np-create',
+  npCreating: 'np-creating', //             the slot that replaces the step while a project is made
+  npProgress: 'np-progress', //             ⏱️ R48 — ⭐ THE FIRST WAIT A NEW USER EVER SEES. The bar
+  //                                        (root; `-bar`, `-pct`, `-eta`, `-stop`). Tens of seconds
+  //                                        on a real dataset; it used to be one word.
   taskCard: 'task-card', //                 data-task = videomosaic | mea (⭐ two tasks again since
   //                                        2026-08-14, so the Task step is a real stop). ⚠️ Address
   //                                        a card by `data-task`, NEVER by position.
@@ -93,6 +112,20 @@ export const TID = {
   //                                        recordings yet") — where a video's filename would sit
   projectInputCount: 'project-input-count', // issue 011: an Analyze MEA card with recordings says
   //                                        "N recordings" there instead; empty keeps NoInput
+  // ── The feature gate (`/project/:id` — which task owns this project?) ─────────
+  featureGateError: 'feature-gate-error', // role=alert; not-found / unknown-task / a real failure
+  gateProgress: 'gate-progress', //         ⏱️ R48 — the one round trip before a feature mounts.
+  //                                        Absent under R48.1's 400 ms grace, which is most of them.
+
+  // ── CORE · the served folder picker (R38 — the native dialog does not exist here) ──
+  folderPicker: 'folder-picker', //         role=dialog
+  folderPickerEntry: 'folder-picker-entry', // data-dataset = true|false
+  folderPickerPath: 'folder-picker-path',
+  folderPickerConfirm: 'folder-picker-confirm',
+  folderPickerReading: 'folder-picker-reading', // ⏱️ R48.10 — the folder read IN FLIGHT, so it can
+  //                                        never be mistaken for "No sub-folders here." (which is
+  //                                        the ANSWER). Absent under R48.1's 400 ms grace.
+
   // ── Analyze MEA (the standalone task) ───────────────────────────────────────
   meaFeature: 'mea-feature', //             the project screen root
   meaProjectName: 'mea-project-name',
@@ -113,7 +146,18 @@ export const TID = {
   //                                        FILE every time. Absent on a row that lost its file.
   meaRecordingCopy: 'mea-recording-copy', // where Camea is reading it from, in plain words
   meaRecordingReady: 'mea-recording-ready', // the one-off end-to-end read is done (data-ready=
-  //                                        'true') or running ('reading'); absent while unread
+  //                                        'true') or running ('reading'); absent while unread.
+  //                                        ⏱️ R48: the RUNNING case is a <Progress> in the row's
+  //                                        main column, under this same id — `meaRecordingReading`
+  //                                        is the bar inside it.
+  meaRecordingReading: 'mea-recording-reading', // the bar: label · pct · ETA · Stop, off the job
+  meaRecordingCopyProgress: 'mea-recording-copy-progress', // the copy's bar, inside meaRecordingCopy
+  meaRecordingReadEnded: 'mea-recording-read-ended', // 🔴 R48.9 — the read ENDED and the recording
+  //                                        still cannot be shown whole (an activity scan stores no
+  //                                        continuous trace). Never a poller that just stops.
+  meaRemoving: 'mea-removing', //           R48.7 — names the row, and says a delete cannot be stopped
+  meaShelfLoading: 'mea-shelf-loading', //  ⏱️ R48.10 — the shelf's own read. ⛔ While it is up the
+  //                                        heading says "Recordings", NEVER "0 recordings"
   meaReadNow: 'mea-recording-read-now', //  fires the EXISTING backfill POST; MeaTrace's wording
   meaRecordingDuplicate: 'mea-recording-duplicate', // "same file as '<name>'" — source_path twins
   meaRecordingMissing: 'mea-recording-missing', // 🔴 the live warning: not where you left it
@@ -123,6 +167,10 @@ export const TID = {
   meaRemoveAnyway: 'mea-remove-anyway',
   meaAddDialog: 'mea-add-dialog',
   meaAddConfirm: 'mea-add-confirm',
+  meaAdding: 'mea-adding', //               ⏱️ R48 — the Add POST, which opens every picked file to
+  //                                        confirm it before writing. Indeterminate + a count-up
+  //                                        (R48.9: the opens are inside one request). Absent under
+  //                                        R48.1's 400 ms grace, which a local two-file import is.
   // ── the import tick-list (002) — ⭐ ONE component, mounted in the wizard AND in the shelf ──
   meaImport: 'mea-import',
   meaChooseFolder: 'mea-choose-folder',
@@ -134,6 +182,11 @@ export const TID = {
   meaImportNone: 'mea-import-none', //      "no recordings in this folder"
   meaImportError: 'mea-import-error', //    the browse itself failed (a live warning, not a toast)
   meaImportStart: 'mea-import-start', //    before he has chosen a folder
+  meaImportLooking: 'mea-import-looking', // ⏱️ R48.9 — the folder walk: the travelling sliver and a
+  //                                        count-up. ⛔ NEVER a filling bar; no denominator exists
+  //                                        until the walk returns. Under 400 ms it stays `Looking…`
+  meaImportPicking: 'mea-import-picking', // the native dialog is open — a HUMAN, so no ETA and no
+  //                                        Stop, and both buttons are dead while it is up
   meaTickAll: 'mea-tick-all',
   npMeaCount: 'np-mea-count', //            the wizard Files step's running count
   npMeaError: 'np-mea-error', //            a refusal, INLINE beside the ticks (never a toast)
@@ -149,6 +202,9 @@ export const TID = {
   meaFollowView: 'mea-follow-view', //      the "Colors follow the view" mode row, above the chip;
   //                                        carries the `?` (R7 — a mode control earns one)
   meaFollowViewTick: 'mea-follow-view-tick', // its checkbox; default OFF
+  meaFollowStale: 'mea-follow-stale', //    ⭐ R48.10 — "previous": the colours on the chip are the
+  //                                        stretch he just left, dimmed and named while the
+  //                                        windowed tally is out. The trace's own pattern. No bar.
   meaOpenError: 'mea-open-error', //        🔴 refused BY NAME — never an empty chip map
   meaCloseRecording: 'mea-close-recording',
   meaChipMap: 'mea-chip-map',
@@ -203,6 +259,16 @@ export const TID = {
   //                                        one-off whole-recording read has not been done yet.
   //                                        ⚠️ The e2e fixture never reaches it — 3.0 s at 20 kHz is
   //                                        60k samples, well under the route's live-read budget.
+  meaTraceReading: 'mea-trace-reading', //  ⏱️ R48 — the read's bar, INSIDE needs-envelope: label ·
+  //                                        pct · ticking ETA · Stop, all off the job. It replaced
+  //                                        the bare word `Reading…` on a button
+  meaTraceReadEnded: 'mea-trace-read-ended', // 🔴 R48.9 — the read ended and the whole recording
+  //                                        still cannot be shown, and WHY
+  meaTraceLoading: 'mea-trace-loading', //  ⭐ R48.10 — the empty chart between a pad click and its
+  //                                        reply. It keeps the panel's shape; the word inside it
+  //                                        waits out the 400 ms grace
+  meaTracePlaceholderChart: 'mea-trace-placeholder-chart', // that chart's canvas — its OWN id, so a
+  //                                        test asserting the real chart cannot pass on an empty box
   meaTraceStale: 'mea-trace-stale', //      "previous", on the dimmed close-up while a new stretch
   //                                        loads — the chart on screen is the stretch he just left
   meaTraceFlat: 'mea-trace-flat', //        🔴 LIVE WARNING: the waveform did not decode
@@ -213,6 +279,9 @@ export const TID = {
   // ── the ONE path box (R41.3 → R42 → ⭐ R44: "into" is gone, the app owns the folder) ────────
   paths: 'project-paths',
   fromField: 'from-field', //               "Pull data from" — a PathField
+  fromScanProgress: 'from-scan-progress', // ⏱️ R48 — the two-stage dataset scan (root; `-bar`,
+  //                                        `-pct`, `-eta`, `-stop`). Stage 1 is a count-up with NO
+  //                                        denominator (R48.9), stage 2 a real bar over the opens.
   datasetChoice: 'dataset-choice', //       shown ONLY when one folder holds several acquisitions
   card: 'dataset-card', //                  the RECEIPT for the folder he typed, not a browse card
   cardName: 'dataset-name',
@@ -238,7 +307,9 @@ export const TID = {
   loadBrowse: 'load-browse',
   loadOpen: 'load-open',
   loadOpenDataset: 'load-open-dataset', //  the open project's dataset name + its "N trials · K excluded"
-  loadPhase: 'load-phase',
+  loadPhase: 'load-phase', //               the slot the open narrates into — always present
+  loadProgress: 'load-progress', //         ⏱️ R48 — the open job's bar inside it (root; `-bar`,
+  //                                        `-pct`, `-eta`, `-stop`). Absent under R48.1's 400 ms grace.
   loadProject: 'load-project', //           R5.3 — "Load a project…" (reachable cold)
   loadResultFORBIDDEN: 'load-result', //    R4.5/§6.6 — must NOT exist
 
@@ -261,6 +332,9 @@ export const TID = {
   factRecommended: 'fact-recommended',
   factThreshold: 'fact-threshold',
   screenGrid: 'screen-grid',
+  screenScanProgress: 'screen-scan-progress', // ⏱️ R48.10 — the scan IN FLIGHT. Distinct from the
+  //                                        empty answer ("Nothing recommended.") and from…
+  screenScanFailed: 'screen-scan-failed', //  …R48.9's third state: the scan that ended badly.
   screenCard: 'screen-card', //             data-trial, data-choice=keep|hand|exclude
   screenKeep: 'screen-keep', //             within a card; aria-pressed
   screenHand: 'screen-handplace', //        DEFAULT selected (R6.2)
@@ -276,13 +350,17 @@ export const TID = {
   placeCost: 'place-cost',
   placeGpu: 'place-gpu',
   placeRun: 'place-run',
-  placeCancel: 'place-cancel',
   placeUseCache: 'place-use-cache',
   placeSkip: 'place-skip', //               "Skip — place by hand" (destructive — R27)
-  placeProgressBar: 'place-progress-bar',
-  placeEta: 'place-eta', //                 R8 — ticks DOWN every second, never frozen > 2 s
-  placePhase: 'place-phase',
-  placeLog: 'place-log', //                 last 8 lines (R8.7)
+  // ⏱️ R48.2 — the build bar is `<Progress>` now, so its children follow from the ROOT id and the
+  // per-part ids below are just that root plus a suffix. The phase has no id of its own (the
+  // primitive does not give it one); assert on `placeProgress` for "the build is alive".
+  placeProgress: 'place-progress', //       the whole bar block
+  placeProgressBar: 'place-progress-bar', // the gliding fill (R8.5 — `transition: width`)
+  placeEta: 'place-progress-eta', //        R8 — ticks DOWN every second, never frozen > 2 s. Reads
+  //                                        "3m 20s left", or R48.4's "working out how long…".
+  placeCancel: 'place-progress-stop',
+  placeLog: 'place-progress-log', //        last 8 lines (R8.7)
   placeWorklist: 'place-worklist',
   placeWorklistItem: 'place-worklist-item',
   placeAdvanced: 'place-advanced',
@@ -345,6 +423,9 @@ export const TID = {
   alternativesItem: 'alternatives-item', // data-rank (0-indexed storage); DISPLAY is rank+1 (R12.3)
   stalePanel: 'stale-panel',
   staleRecheck: 'stale-recheck',
+  staleRecheckProgress: 'stale-recheck-progress', // ⏱️ R48 — the re-check's own bar (root; `-bar`,
+  //                                        `-pct`, `-eta`, `-stop` follow). 120 stale tiles is ~2 min.
+  staleRecheckNote: 'stale-recheck-note', // R48.9 — what it says when the re-check ended BADLY
   staleItem: 'stale-item', //               data-trial (the "go and look" buttons)
   buildStalePanel: 'build-stale-panel',
   buildStaleResolve: 'build-stale-resolve',
@@ -376,6 +457,8 @@ export const TID = {
   mosaicIncludeUnverified: 'mosaic-include-unverified',
   mosaicUmPerPx: 'mosaic-umperpx',
   mosaicExport: 'mosaic-export',
+  mosaicExportProgress: 'mosaic-export-progress', // ⏱️ R48 — the export's bar (root; `-bar`, `-pct`,
+  //                                        `-eta`, `-stop`). The overall pct is phase-weighted (R48.5).
   mosaicAutosaveNote: 'mosaic-autosave-note',
   provenancePanel: 'provenance-panel',
   provenanceStamp: 'provenance-stamp', //   W5 — "NOT AN INDEPENDENT GROUND TRUTH…"
@@ -387,9 +470,11 @@ export const TID = {
   electrodesViewer: 'electrodes-viewer', //    the step root (canvas + rail)
   electrodesCanvas: 'electrodes-canvas', //    the READ-ONLY core-viewer <canvas>
   electrodesMap: 'electrodes-map', //          Map electrodes / Re-run (both states, one testid)
-  electrodesProgress: 'electrodes-progress', // the map job block (bar + phase + cancel)
-  electrodesPhase: 'electrodes-phase',
-  electrodesCancel: 'electrodes-cancel',
+  electrodesProgress: 'electrodes-progress', // the map job block
+  // ⏱️ R48.2 — the bar inside it is `<Progress>`, so its parts are this root plus a suffix:
+  // `-bar`, `-pct`, `-eta` (NEVER empty — R48.4), `-stop`.
+  electrodesMapping: 'electrodes-mapping',
+  electrodesCancel: 'electrodes-mapping-stop',
   electrodesMapError: 'electrodes-map-error', // ⭐ the refusal, VERBATIM. Under "whole chip imaged"
   //                                           the strict fit ends in a map or a refusal that names
   //                                           both shapes and says to answer "part of the chip" —
@@ -417,8 +502,10 @@ export const TID = {
   //                                           IMAGED REGION, not of the chip"
   // videomosaic
   vmMapElectrodes: 'vm-map-electrodes', //     Map electrodes / Re-run on the video screen
-  vmElectrodesProgress: 'vm-electrodes-progress',
-  vmElectrodesCancel: 'vm-electrodes-cancel',
+  vmElectrodesProgress: 'vm-electrodes-progress', // ⏱️ R48.2 — a `<Progress>` root now, so the bar
+  //                                           is `-bar`, the time `-eta`, the Stop `-stop`. Its
+  //                                           ETA slot used to be a permanently empty `<span>`.
+  vmElectrodesCancel: 'vm-electrodes-progress-stop', // R48.7 — composed by the primitive
   vmElectrodesMapError: 'vm-electrodes-map-error', // the same refusal, verbatim, on the video screen
   vmViewer: 'vm-viewer', //                    the preview scroller; data-fit / data-identify
   vmZoomToggle: 'vm-zoom-toggle', //           Fit ↔ 100% — shown once plain click means identify
@@ -438,6 +525,15 @@ export const TID = {
   vmStepSurvey: 'vm-step-survey',
   vmStepMosaic: 'vm-step-mosaic',
   vmStepElectrodes: 'vm-step-electrodes',
+  // ── ⏱️ the video feature's waits (R48) — every one a `<Progress>` root ─────
+  vmProgress: 'vm-progress', //              the build. All 7 phases carry an ETA since the backend
+  //                                         wave; `-eta` is NEVER empty (R48.4).
+  vmOpening: 'vm-opening', //                the document read, shown only past the 400 ms grace
+  vmAttaching: 'vm-attaching', //            ⭐ R48.10 — "is a build already running?" is IN FLIGHT.
+  //                                         The idle `vm-build` button must NOT be on screen while
+  //                                         this is: pressing it there earns a 409.
+  vmFindMeaProgress: 'vm-find-mea-progress', // the recording scan (a job since R48): the walk, then
+  //                                         one HDF5 open per file, counted in its message
   vmToMosaic: 'vm-to-mosaic', //             the forward button on each step — the pipeline walked
   vmToElectrodes: 'vm-to-electrodes',
   vmToRegions: 'vm-to-regions',
@@ -468,6 +564,17 @@ export const TID = {
   orientationVerdict: 'orientation-verdict', // the winner sentence, pointing at its card
   orientationWinnerBadge: 'orientation-winner-badge', // the quiet badge on the test winner's card
   orientationSettledBadge: 'orientation-settled-badge', // …and on the settled seating's card
+  // ── ⏱️ the orientation step's three waits (R48) ─────────────────────────────
+  orientationTestProgress: 'orientation-test-progress', // ⭐ MINUTES of work whose entire progress
+  //                                         UI used to be the button's own label. A `<Progress>`
+  //                                         root with a real overall pct, an ETA and a Stop.
+  orientationTestError: 'orientation-test-error', // R48.9 — a run that FAILED or was stopped says
+  //                                         so; before this the button just became pressable again
+  orientationFootprintProgress: 'orientation-footprint-progress', // R48.10 — the whole rail is
+  //                                         empty until the footprint lands, which read as a
+  //                                         broken step. Indeterminate: a folder walk (R48.9).
+  orientationApplyProgress: 'orientation-apply-progress', // "Use this seating" re-runs the ENTIRE
+  //                                         recording scan before saving — a job now, with a Stop
 
   // ── ⭐ R47 · the work frame — picture left, tools right, nothing else scrolls ──
   vmRail: 'vm-rail', //                      the tool rail; the ONE scroller on a picture step
@@ -477,6 +584,13 @@ export const TID = {
   outputsClose: 'outputs-close',
   outputsPanel: 'outputs-panel', //          R44's browse-and-copy panel, wherever it is mounted
   outputRow: 'output-row', //                data-name; one per file actually on disk
+  outputsEmpty: 'outputs-empty', //          ⛔ R48.10: the EMPTY project. Never rendered while the
+  //                                         listing is in flight — that is `outputsListing`.
+  outputsListing: 'outputs-listing', //      ⏱️ the listing IN FLIGHT (after R48.1's 400 ms grace)
+  outputsCopyProgress: 'outputs-copy-progress', // ⏱️ R48 — the copy OUT: bytes, the file in flight,
+  //                                         an ETA and a Stop (root; `-bar`/`-pct`/`-eta`/`-stop`)
+  outputsCopyError: 'outputs-copy-error', // 🔴 a failed copy must not look like a successful one
+  outputsCopied: 'outputs-copied', //        "Copied into …" — only ever after one actually landed
 
   // ── 4 · Regions — where a fixed-field calcium recording sits (R46) ────────
   // ⭐ The deliverable: a located rectangle NAMES THE ELECTRODES UNDER IT, which is what pairs an
@@ -489,15 +603,35 @@ export const TID = {
   regionsPickFiles: 'regions-pick-files', // the native multi-select — several recordings, located
   //                                         one after another through the one lease
   regionsNoDialog: 'regions-no-dialog', //   the one-line "no file dialog in this mode" note (R38)
-  regionsQueue: 'regions-queue', //          the queue readout: "Placing 2 of 6 — 4 waiting"
-  regionsQueueStop: 'regions-queue-stop', // "Stop after this one" — drains what is still waiting
+  regionsQueue: 'regions-queue', //          the whole several-at-once readout: the bar below plus
+  //                                         the drain button. Text: "Placing 2 of 6 · 4 waiting —
+  //                                         <file>" (R48.6 names the file in the machine at last).
+  regionsBatch: 'regions-batch', //          ⏱️ the WHOLE-BATCH `<Progress>` root (R48.3). Its
+  //                                         `-eta` is composed CLIENT-SIDE — the median of what is
+  //                                         placed × what is waiting — because the server has no
+  //                                         concept of a batch and there is no other source for
+  //                                         it. Its `-stop` stops the run outright (R48.7).
+  //                                         Rendered INSTEAD of `regionsProgress`, never beside it.
+  regionsQueueStop: 'regions-queue-stop', // "Stop after this one" — drains what is still waiting;
+  //                                         the gentler half, beside the bar's own Stop
+  regionsQueueStopped: 'regions-queue-stopped', // 🔴 R48.9 — a run he STOPPED says what it left
+  //                                         undone ("2 went through; 3 never started"). Before
+  //                                         this, "stopped" and "finished" looked identical.
   regionsQueueFails: 'regions-queue-fails', // ⛔ R46.7 — every refused file with its sentence,
   //                                         verbatim; outlives the queue it happened in
   regionsQueueFail: 'regions-queue-fail', // one refused file's line
-  regionsProgress: 'regions-progress', //    the job block (bar + phase + cancel)
-  regionsPhase: 'regions-phase',
-  regionsEta: 'regions-eta',
-  regionsCancel: 'regions-cancel',
+  regionsProgress: 'regions-progress', //    ⏱️ ONE recording: locate / re-locate / snap. A
+  //                                         `<Progress>` root (R48.2) — bar `-bar`, time `-eta`,
+  //                                         Stop `-stop`. ⭐ A SNAP IS INDETERMINATE (R48.9/H9): a
+  //                                         ~1 s gesture gets the travelling sliver, never a bar.
+  regionsPhase: 'regions-progress', //       the phase now sits in the bar's own row; assert on the
+  //                                         root's text (it holds phase AND message)
+  regionsEta: 'regions-progress-eta', //     ⭐ R48.4 — NEVER EMPTY. It was an always-`''` `<span>`.
+  regionsCancel: 'regions-progress-stop',
+  regionsBusy: 'regions-busy', //            ⭐ R48.6 — ONE sentence naming what Camea is busy with,
+  //                                         for the eleven controls that grey out together
+  regionRunning: 'region-running', //        the chip on the ROW in the machine; the row also
+  //                                         carries data-running (R48.6 — identity, not time)
   regionsError: 'regions-error', //          the refusal, VERBATIM (no mosaic / no electrode map /
   //                                         could not be placed) — never trimmed to a code
   regionsLoadError: 'regions-load-error',

@@ -25,7 +25,22 @@ from typing import Any, Callable
 
 import numpy as np
 
-PHASES = ("decode", "zoom", "match", "electrodes", "write")
+#: phase -> (start_pct, end_pct) of the WHOLE locate job. ⭐ **R48.5: `pct` IS OVERALL.** Every
+#: phase here used to report its own 0→100, so the bar snapped back to zero five times in one run
+#: and any ETA read off it counted upward inside each phase. The shape is `pipeline._SPAN`'s.
+#:
+#: The weights are apportioned from what each phase actually does on a survey-sized mosaic: `copy`
+#: is a byte copy of the recording (skipped when it is already the project's — see
+#: `routes._adopt_plan`), `decode` is a forward pass over that same file, and `match` is a handful
+#: of whole-plane FFT correlations against the mosaic. ⚠️ `match` is the one that moves: when the
+#: recording's lattice cannot be measured, `locate.locate` searches thirteen scales instead of one
+#: and this phase becomes the whole job. That is the R48.11 cliff — the ETA is supposed to revise
+#: upward there, and `locate` puts the mode in the message so the jump is explained.
+SPAN: dict[str, tuple[float, float]] = {
+    "copy": (0, 15), "decode": (15, 45), "zoom": (45, 55), "match": (55, 94),
+    "electrodes": (94, 97), "write": (97, 100),
+}
+PHASES = tuple(SPAN)
 
 DEFAULT_STILL_FRAMES = 24
 """How many frames are sampled to build the stills.
@@ -41,10 +56,55 @@ FFTs allocate). Below ~12 the median is visibly noisy; above ~32 nothing measura
 STATUS_UNCONFIRMED, STATUS_CONFIRMED = "unconfirmed", "confirmed"
 
 
+def span_for(*, copying: bool) -> dict[str, tuple[float, float]]:
+    """The span table this run should use. ⭐ **TWO TABLES, and the choice is known at submit
+    time**: whether the recording still has to be copied into the project is worth 15 % of the
+    job, and one table used for both would make a re-locate — which copies nothing — report an ETA
+    around half the truth for its whole life. The mosaic solver keeps two tables for exactly this
+    reason: a GPU-calibrated one told a CPU user *"873 s left"* when 368 s remained
+    (`core.jobs.Progress`).
+    """
+    if copying:
+        return dict(SPAN)
+    lo = SPAN["copy"][1]
+    return {p: (round((a - lo) * 100.0 / (100.0 - lo), 1),
+                round((b - lo) * 100.0 / (100.0 - lo), 1))
+            for p, (a, b) in SPAN.items() if p != "copy"}
+
+
+def emitter(report: Callable[..., None] | None, *,
+            span: dict[str, tuple[float, float]] | None = None,
+            t0: float | None = None) -> Callable[..., None]:
+    """`emit(phase, frac, message)` — a phase-local 0..1 becomes this job's OVERALL pct, and the
+    ETA follows from that overall fraction (R48.3/R48.5). The pattern is `pipeline._emitter`'s.
+
+    ⛔ **Never hand `eta_from_fraction` a phase-local fraction** — it is the whole reason this
+    function exists rather than five `say()` calls with a local percentage in them.
+
+    `t0` is the JOB's start, not the phase's: the route creates one emitter before the copy phase
+    and hands it down, so the clock the estimate divides by covers everything the user has waited.
+    """
+    from camea.core import jobs as core_jobs
+
+    table = SPAN if span is None else span
+    started = time.monotonic() if t0 is None else float(t0)
+    names = list(table)
+
+    def emit(phase: str, frac: float, message: str = "", *, estimate: bool = True) -> None:
+        lo, hi = table[phase]
+        pct = lo + (hi - lo) * min(1.0, max(0.0, float(frac)))
+        eta = (core_jobs.eta_from_fraction(time.monotonic() - started, pct / 100.0)
+               if estimate else None)
+        core_jobs.say(report, phase, names.index(phase), len(names), pct, message, eta)
+
+    return emit
+
+
 # =================================================================================================
 # Reading the recording
 # =================================================================================================
 def stills_from_video(path: str | Path, *, n_frames: int = DEFAULT_STILL_FRAMES,
+                      emit: Callable[..., None] | None = None,
                       report: Callable[..., None] | None = None,
                       cancel: Any = None) -> tuple[dict, Any]:
     """`({kind: still}, VideoInfo)` — one forward pass, three pictures.
@@ -58,6 +118,7 @@ def stills_from_video(path: str | Path, *, n_frames: int = DEFAULT_STILL_FRAMES,
 
     from .video import probe, read_frames_at
 
+    say = emit or emitter(report)
     info = probe(path)
     want = locate.sample_indices(info.n_frames or 0, n_frames)
     if not want:
@@ -71,10 +132,16 @@ def stills_from_video(path: str | Path, *, n_frames: int = DEFAULT_STILL_FRAMES,
         frames.append(np.asarray(gray, np.float32))
 
     def prog(done: int, total: int) -> None:
-        core_jobs.say(report, "decode", 0, len(PHASES), 100.0 * done / max(1, total),
-                      f"reading the recording ({done}/{total} frames)")
+        # ⏱️ The countable unit is a SAMPLED FRAME. `sample_indices` spreads the wanted frames
+        # evenly, and the pass pays for every frame in between with `grab()`, so an even count is
+        # an even share of the decode — the fraction is honest, not just monotone.
+        say("decode", done / max(1, total), f"reading the recording ({done}/{total} frames)")
 
-    read_frames_at(path, want, consume, progress=prog)
+    # ⚠️ `cancel` goes DOWN, not just into `consume`. The sampled indices are spread across the
+    # whole recording, so between two of them the pass grabs thousands of frames with no boundary
+    # of its own — on a long recording that is seconds at a time of a Stop button that does
+    # nothing. `read_frames_at` polls it inside the skip loop (R48.7).
+    read_frames_at(path, want, consume, progress=prog, cancel=cancel)
     if not frames:
         from .video import VideoError
         raise VideoError(f"{info.name} decoded no frames — the stream may be truncated")
@@ -100,8 +167,13 @@ def region_id(video_path: str | Path, existing: set[str] | None = None) -> str:
 
 def locate_region(doc: dict, out_dir: Path, basename: str, video_path: str | Path, *,
                   name: str | None = None, rid: str | None = None,
+                  emit: Callable[..., None] | None = None,
                   report: Callable[..., None] | None = None, cancel: Any = None) -> dict:
-    """Place one fixed-field recording on this project's built mosaic. -> the region record."""
+    """Place one fixed-field recording on this project's built mosaic. -> the region record.
+
+    `emit` is the route's own `emitter()` when a copy phase ran before this one, so the ETA
+    divides by the whole wait rather than by the part that starts here.
+    """
     from camea.core import electrodegrid
     from camea.core import jobs as core_jobs
     from camea.core import locate
@@ -109,9 +181,10 @@ def locate_region(doc: dict, out_dir: Path, basename: str, video_path: str | Pat
     from . import canvas as vcanvas
 
     out_dir = Path(out_dir)
-    stills, info = stills_from_video(video_path, report=report, cancel=cancel)
+    say = emit or emitter(report)
+    stills, info = stills_from_video(video_path, emit=say, cancel=cancel)
 
-    core_jobs.say(report, "zoom", 1, len(PHASES), 0.0, "reading the mosaic")
+    say("zoom", 0.0, "reading the mosaic")
     arr, valid = vcanvas.read_mosaic(doc, out_dir)
     core_jobs.check_cancelled(cancel, "locate region")
 
@@ -127,7 +200,7 @@ def locate_region(doc: dict, out_dir: Path, basename: str, video_path: str | Pat
     a1 = emap.get("a1")
     a2 = emap.get("a2")
     if not (pitch_mosaic > 0 and isinstance(a1, (list, tuple)) and isinstance(a2, (list, tuple))):
-        core_jobs.say(report, "zoom", 1, len(PHASES), 30.0, "measuring the mosaic's lattice")
+        say("zoom", 0.3, "measuring the mosaic's lattice")
         try:
             v1, v2, _snr = electrodegrid.lattice_axes(arr, valid)
             a1, a2 = list(v1), list(v2)
@@ -136,7 +209,7 @@ def locate_region(doc: dict, out_dir: Path, basename: str, video_path: str | Pat
         except Exception:                                          # noqa: BLE001
             a1 = a2 = None
 
-    core_jobs.say(report, "zoom", 1, len(PHASES), 70.0, "measuring the recording's lattice")
+    say("zoom", 0.7, "measuring the recording's lattice")
     # ⭐ ALL the stills go in, not just the median: `measure_zoom` requires two independent
     # projections to agree on the pitch before it will call the zoom MEASURED.
     zoom = locate.measure_zoom(stills, pitch_mosaic,
@@ -144,17 +217,21 @@ def locate_region(doc: dict, out_dir: Path, basename: str, video_path: str | Pat
 
     ref, refmask = locate.prepare_reference(arr, valid)
 
-    def prog(msg: str) -> None:
+    def prog(msg: str, done: int = 0, total: int = 0) -> None:
+        # ⏱️ The countable unit is a SEARCHED POSITION — `locate.locate` has always known `done`
+        # and `total` and used to format them into the message and throw them away, which is how
+        # the longest phase of this job reported `pct=0` throughout. This is also the cancel
+        # boundary: one whole-plane match is the shortest thing worth interrupting between.
         core_jobs.check_cancelled(cancel, "locate region")
-        core_jobs.say(report, "match", 2, len(PHASES), 0.0, msg)
+        say("match", (done / total) if total else 0.0, msg)
 
     lattice = (a1, a2) if (a1 is not None and a2 is not None) else None
     loc = locate.locate(ref, refmask, stills, zoom, lattice=lattice, progress=prog)
 
-    core_jobs.say(report, "electrodes", 3, len(PHASES), 0.0, "naming the electrodes")
+    say("electrodes", 0.0, "naming the electrodes")
     cells = electrodes_under(doc, out_dir, loc.x, loc.y, loc.w, loc.h, payload=emap or None)
 
-    core_jobs.say(report, "write", 4, len(PHASES), 0.0, "writing the region")
+    say("write", 0.0, "writing the region")
     # 🔴 NOT uniquified against the existing regions. The id is a hash of the video's path in
     # the project, and `_adopt_video` deliberately does not copy the same file twice — so
     # re-locating a recording must REPLACE its region, not add a second one pointing at the same
@@ -196,13 +273,25 @@ def resnap_region(doc: dict, out_dir: Path, region: dict, at: tuple[float, float
 
     out_dir = Path(out_dir)
     still_path = out_dir / str(region.get("still") or "")
+    # ⏱️ **NO ETA, BUT THE BAR STILL HAS TO MOVE.** Two steps, neither with a countable unit inside
+    # it, so there is nothing honest to extrapolate from and `eta_s` stays None throughout (R48.4 —
+    # the client says *"working out how long this will take…"*, which for a ~1 s gesture is the
+    # truth). The two steps do NOT cost the same, though: the region's still is one small PNG and
+    # the second step reads the WHOLE mosaic back before it searches. So the span below, and
+    # `pct` that is overall across both (R48.5).
+    # ⛔ Do NOT collapse this to `pct=0.0` for both. `Progress.pct` cannot say "indeterminate" —
+    # `design/primitives/Progress` treats any number as determinate and floors the width at 2 %, so
+    # a job that emits 0 twice renders as a bar parked at 2 %, which is the exact shape R48.9
+    # forbids and reads as a hang. Only a `null` pct on the wire would buy a spinner, and there is
+    # no `null` to send.
     core_jobs.say(report, "decode", 0, 2, 0.0, "reading the recording's picture")
     still = read_still(still_path)
 
-    core_jobs.say(report, "match", 1, 2, 0.0, "matching where you dropped it")
+    core_jobs.say(report, "match", 1, 2, 8.0, "reading the mosaic")
     arr, valid = vcanvas.read_mosaic(doc, out_dir)
     ref, refmask = locate.prepare_reference(arr, valid)
     core_jobs.check_cancelled(cancel, "snap region")
+    core_jobs.say(report, "match", 1, 2, 75.0, "matching where you dropped it")
 
     # the still on disk is ALREADY at mosaic scale (see `write_still`), so it goes in at 1.0
     tpl, tmsk = locate.prepare_template(still, 1.0)
@@ -393,6 +482,6 @@ def _atomic_write(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
-__all__ = ["DEFAULT_STILL_FRAMES", "PHASES", "STATUS_CONFIRMED", "STATUS_UNCONFIRMED",
-           "electrodes_under", "load_map", "locate_region", "read_still", "region_id",
-           "resnap_region", "stills_from_video", "write_region_files", "write_still"]
+__all__ = ["DEFAULT_STILL_FRAMES", "PHASES", "SPAN", "STATUS_CONFIRMED", "STATUS_UNCONFIRMED",
+           "electrodes_under", "emitter", "load_map", "locate_region", "read_still", "region_id",
+           "resnap_region", "span_for", "stills_from_video", "write_region_files", "write_still"]

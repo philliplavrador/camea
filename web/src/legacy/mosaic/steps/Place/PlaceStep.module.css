@@ -41,70 +41,14 @@
 }
 
 /* ── progress ─────────────────────────────────────────────────────────── */
+/* ⛔ The bar, its well, the phase, the ETA, the message and the log tail all lived here as a
+   hand-rolled copy. They are `design/primitives/Progress` now — THE one bar (R48.2). What is left is
+   the Panel wrapper that holds it. */
 .progress {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-card);
   margin-bottom: 18px;
-}
-
-.barWell {
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-inset);
-  overflow: hidden;
-  margin-bottom: 10px;
-}
-
-.bar {
-  height: 100%;
-  border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
-  /* R8.5 — the bar GLIDES; it does not step. */
-  transition: width var(--dur) var(--ease);
-}
-
-.progressRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.phase {
-  font-family: var(--font-mono);
-  font-size: var(--fs-readout);
-  color: var(--text-dim);
-  text-transform: lowercase;
-}
-
-.eta {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-readout-lg);
-  font-weight: 600;
-  color: var(--data);
-  font-variant-numeric: tabular-nums;
-}
-
-.msg {
-  margin-top: 8px;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  color: var(--text-faint);
-}
-
-.log {
-  margin: 10px 0 0;
-  padding: 8px 10px;
-  background: var(--bg-inset);
-  border-radius: var(--radius);
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  line-height: 1.5;
-  color: var(--text-dim);
-  white-space: pre-wrap;
-  max-height: 140px;
-  overflow: auto;
 }
 
 /* ── worklist ─────────────────────────────────────────────────────────── */

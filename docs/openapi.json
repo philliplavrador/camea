@@ -191,7 +191,7 @@
           "core"
         ],
         "summary": "Post Datasets At",
-        "description": "\u2b50 *\"Look at THIS folder.\"* A POST, not a GET: a Windows path in a query string is an\nencoding trap.\n\n\u26d4 **NOTHING IS REMEMBERED AND NOTHING IS RECOMMENDED.** This replaced `POST /api/datasets/scan`\n+ `GET /api/datasets` on 2026-07-25. There is no root registry, no depth-3 walk on every launch,\nand no list of datasets the app went looking for: the user names one folder and is told what is\nin it. Either it *is* an acquisition (`is_dataset: true`, one entry), or it directly contains\nsome and he picks which \u2014 a disambiguation of his own typing, not a suggestion.\n\n\u26d4 Nothing here recognises a dataset by name. A folder is a dataset iff it has a `log.txt` and at\nleast one `NNN.xml`. That is the whole rule.",
+        "description": "\u2b50 *\"Look at THIS folder.\"* -> **202 `JobRef`**. Poll `GET /api/jobs/{id}`; `result` is a\n`DatasetScanResult`. A POST, not a GET: a Windows path in a query string is an encoding trap.\n\n\u26d4 **NOTHING IS REMEMBERED AND NOTHING IS RECOMMENDED.** This replaced `POST /api/datasets/scan`\n+ `GET /api/datasets` on 2026-07-25. There is no root registry, no depth-3 walk on every launch,\nand no list of datasets the app went looking for: the user names one folder and is told what is\nin it. Either it *is* an acquisition (`is_dataset: true`, one entry), or it directly contains\nsome and he picks which \u2014 a disambiguation of his own typing, not a suggestion.\n\n\u26d4 Nothing here recognises a dataset by name. A folder is a dataset iff it has a `log.txt` and at\nleast one `NNN.xml`. That is the whole rule.\n\n\u23f1\ufe0f **IT IS A JOB BECAUSE IT IS TWO WAITS, NOT ONE (R48).** A tree walk of unbounded breadth, and\nthen ~0.2 s of `log.txt` + XML for every acquisition it turned up; on a folder of thirty this is\nsix seconds behind one static word. R48.9 says a directory walk has no denominator until it\nreturns, so the walk **counts up** and the opens that follow get the bar and the estimate.\n\n\u26a0\ufe0f *\"No such directory\"* is still refused **here**, on the request thread, so a mistyped path is\na 400 the client can act on rather than a job that fails a moment later \u2014 the same reasoning\nthat keeps `mixed_shape` in front of the open job.",
         "operationId": "post_datasets_at_api_datasets_at_post",
         "requestBody": {
           "content": {
@@ -204,12 +204,12 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatasetListResponse"
+                  "$ref": "#/components/schemas/JobRef"
                 }
               }
             }
@@ -1223,7 +1223,7 @@
           "core"
         ],
         "summary": "Post Copy Outputs",
-        "description": "\u2b50 **THE ONE WAY WORK LEAVES CAMEA** (R44) \u2014 copy the chosen outputs into a folder the user\nnames, right now, while looking at them.\n\n\ud83d\udd34 **THE THREE REFUSALS, IN ORDER, BEFORE A SINGLE BYTE IS WRITTEN:**\n  1. `refuse_write(dest)` \u2014 \u26d4 never onto the evidence. A destination inside `data/`, inside a\n     raw acquisition folder, or inside one on the way up is refused, exactly as every other\n     write in the app is. (The **repo** is *not* refused here: root `output/` has always been a\n     legitimate place to put an export, and this is an export.)\n  2. Every name is resolved through `_output_file` \u2014 so a name that is not this project's\n     output cannot be copied out of it.\n  3. \u26d4 **Nothing at the destination is overwritten.** A clash refuses the whole request and\n     names the files, rather than half-copying and destroying one of his. The destination is\n     his folder; this route does not get to be the reason something in it is gone.\n\nA copy is not a move: the project keeps its outputs. That is the point \u2014 the store stays the\nhome, and what leaves is a copy the user asked for.",
+        "description": "\u2b50 **THE ONE WAY WORK LEAVES CAMEA** (R44) \u2014 copy the chosen outputs into a folder the user\nnames, right now, while looking at them. -> **202 `JobRef`**; `result` is a `CopyOutputsResult`.\n\n\ud83d\udd34 **THE THREE REFUSALS, IN ORDER, BEFORE A SINGLE BYTE IS WRITTEN:**\n  1. `refuse_write(dest)` \u2014 \u26d4 never onto the evidence. A destination inside `data/`, inside a\n     raw acquisition folder, or inside one on the way up is refused, exactly as every other\n     write in the app is. (The **repo** is *not* refused here: root `output/` has always been a\n     legitimate place to put an export, and this is an export.)\n  2. Every name is resolved through `_output_file` \u2014 so a name that is not this project's\n     output cannot be copied out of it.\n  3. \u26d4 **Nothing at the destination is overwritten.** A clash refuses the whole request and\n     names the files, rather than half-copying and destroying one of his. The destination is\n     his folder; this route does not get to be the reason something in it is gone.\n\nA copy is not a move: the project keeps its outputs. That is the point \u2014 the store stays the\nhome, and what leaves is a copy the user asked for.\n\n\u23f1\ufe0f **THE THREE REFUSALS STAY ON THE REQUEST THREAD; ONLY THE BYTES BECOME A JOB (R48).** A clash\nis still a 409 on the request that asked for it and still refuses the WHOLE request \u2014 it is not\na job that copies half of them and then thinks better of it. What moved is the copying, which is\nwhole 16-bit mosaics and used to be a request that simply did not come back: the bar counts\n**bytes**, the message names the file in flight, and Stop lands between chunks (R48.7).",
         "operationId": "post_copy_outputs_api_projects__analysis_id__outputs_copy_post",
         "parameters": [
           {
@@ -1247,12 +1247,12 @@
           }
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CopyOutputsResponse"
+                  "$ref": "#/components/schemas/JobRef"
                 }
               }
             }
@@ -1433,7 +1433,7 @@
           "core"
         ],
         "summary": "Post Document Load",
-        "description": "*\"Load a project\u2026\"* \u2014 and it **must work COLD**, with no session open. That is the whole point:\nthe app remembers nothing between launches, so this file is its only memory. Save -> quit ->\nload restores the session whole, and nothing else does.\n\nThe server bootstraps a session from the file's own `data_dir` when one is not given, then\nre-reads the file **against that session's scope**, so the range guard actually runs against the\nsession the document belongs to.",
+        "description": "*\"Load a project\u2026\"* -> **202 `JobRef`**; `result` is a `LoadDocumentResult`. It **must work\nCOLD**, with no session open. That is the whole point: the app remembers nothing between\nlaunches, so this file is its only memory. Save -> quit -> load restores the session whole, and\nnothing else does.\n\nThe server bootstraps a session from the file's own `data_dir` when one is not given, then\nre-reads the file **against that session's scope**, so the range guard actually runs against the\nsession the document belongs to.\n\n\u23f1\ufe0f **IT IS A JOB, AND UNTIL 2026-08-16 IT WAS NOT (R48).** It runs the *same* `FrameStore.load`\nas the open job thirty lines up \u2014 ~5 s and 340 MiB \u2014 and it ran it on the request thread with no\njob, no bar, no estimate and no way to stop it: the request simply hung with nothing on screen.\nIt now reports the same seven `OPEN_PHASES`, off the same frame counter, through the same\nreporter, so the two openings cannot drift into two different answers to *\"how long\"*.\n\n\u26a0\ufe0f **EVERY REFUSAL STILL HAPPENS HERE, ON THE REQUEST THREAD** \u2014 the missing file, the document\nthat names no dataset, the dataset that is not on this machine, and (the important one) the\n**range guard**, which needs only the dataset's identity and not a single pixel. So a document\nfor the wrong acquisition is still `409 range_mismatch` on the request that asked for it, and\nnot a job that fails five seconds later. Same reasoning as `mixed_shape` in front of the open.",
         "operationId": "post_document_load_api_documents_load_post",
         "requestBody": {
           "content": {
@@ -1446,12 +1446,12 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LoadDocumentResponse"
+                  "$ref": "#/components/schemas/JobRef"
                 }
               }
             }
@@ -1567,6 +1567,28 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JobListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/jobs/running": {
+      "get": {
+        "tags": [
+          "core"
+        ],
+        "summary": "Get Running Jobs",
+        "description": "\u23f1\ufe0f **What the top strip polls (BEHAVIOUR R48.8)** \u2014 every live job, oldest first, slimmed.\n\n\u26a0\ufe0f **Declared BEFORE `/api/jobs/{job_id}`, and it must stay there.** FastAPI matches routes in\ndeclaration order, so the parameterised route would otherwise swallow `running` as a job id and\nanswer 404.\n\n\u26a0\ufe0f Do not \"simplify\" this into `GET /api/jobs` with a filter: that route serialises every job in\nhistory including finished ones whose `result` embeds a whole document. See `Job.to_brief`.",
+        "operationId": "get_running_jobs_api_jobs_running_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunningJobsResponse"
                 }
               }
             }
@@ -3042,7 +3064,7 @@
     "/api/videomosaic/mea/attach": {
       "post": {
         "summary": "Post Mea Attach",
-        "description": "Find the recordings that belong to a project \u2014 and, on `confirm`, remember them.\n\n\u2b50 Two-step ON PURPOSE. Without `confirm` this only *reports* what it found, so the user sees\nthe actual paths before anything is written. Attaching the wrong plate would pair one culture's\nvoltages with another culture's neurons \u2014 silently, and in a dataset meant to be ground truth.",
+        "description": "Find the recordings that belong to a project \u2014 and, on `confirm`, remember them.\n**202 `JobRef`**; the attachment comes back as the job's `MeaAttachResult`.\n\n\u2b50 Two-step ON PURPOSE. Without `confirm` this only *reports* what it found, so the user sees\nthe actual paths before anything is written. Attaching the wrong plate would pair one culture's\nvoltages with another culture's neurons \u2014 silently, and in a dataset meant to be ground truth.\n\n\u2b50 **A JOB SINCE 2026-08-16 (R48).** It walks a directory tree and then opens every\n`data.raw.h5` it found through HDF5 \u2014 an unbounded number of unbounded opens, previously on the\nrequest thread with no bar, no time, no Stop and no timeout. Worse, *\"Use this seating\"* is the\nsame call with `confirm`, so confirming re-ran the entire scan with the screen frozen behind it.\n\n\u26a0\ufe0f **The cheap refusals stay synchronous** \u2014 a folder that does not exist is still a 404 the\nPOST answers. Only what the scan itself can discover (nothing found; nothing readable; two\nchips in one folder) becomes the job's failure, because none of it is knowable until the walk\nhas run.",
         "operationId": "post_mea_attach_api_videomosaic_mea_attach_post",
         "requestBody": {
           "content": {
@@ -3055,12 +3077,12 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MeaAttachment"
+                  "$ref": "#/components/schemas/JobRef"
                 }
               }
             }
@@ -4949,7 +4971,7 @@
         "title": "CopyOutputsRequest",
         "description": "`POST /api/projects/{id}/outputs/copy` \u2014 **the one way work leaves Camea.**\n\n\u26d4 The destination is refused (409) inside a dataset or inside `data/`, exactly as every other\npath the app writes to is. \u26d4 A file already at the destination is **refused, never overwritten**\n\u2014 the user's folder is his, and this route is not allowed to be the reason something in it is\ngone."
       },
-      "CopyOutputsResponse": {
+      "CopyOutputsResult": {
         "properties": {
           "copied": {
             "items": {
@@ -4962,13 +4984,26 @@
           "dest": {
             "type": "string",
             "title": "Dest"
+          },
+          "kind": {
+            "type": "string",
+            "const": "outputs_copy",
+            "title": "Kind",
+            "default": "outputs_copy"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes",
+            "description": "Total bytes copied. What the bar was counting.",
+            "default": 0
           }
         },
         "type": "object",
         "required": [
           "dest"
         ],
-        "title": "CopyOutputsResponse"
+        "title": "CopyOutputsResult",
+        "description": "`Job.result` when `kind == \"outputs_copy\"` \u2014 the copy has landed.\n\n\u2b50 **The copy is a JOB (BEHAVIOUR R48).** It is the one way work leaves Camea (R44) and it moves\nwhole 16-bit mosaics; the bar counts BYTES and names the file in flight. \u26d4 The three refusals\nstill run **before** the job is submitted, so a clash is still a 409 on the request that asked\nfor it and still refuses the WHOLE request \u2014 never a job that half-copies and then fails."
       },
       "CreateAnalysisRequest": {
         "properties": {
@@ -5105,7 +5140,7 @@
         "title": "DatasetDetail",
         "description": "Everything the browser can say about a dataset **without loading a pixel**."
       },
-      "DatasetListResponse": {
+      "DatasetScanResult": {
         "properties": {
           "path": {
             "type": "string",
@@ -5132,6 +5167,12 @@
             "type": "array",
             "title": "Skipped",
             "description": "Folders that looked like a dataset but could not be read."
+          },
+          "kind": {
+            "type": "string",
+            "const": "dataset_scan",
+            "title": "Kind",
+            "default": "dataset_scan"
           }
         },
         "type": "object",
@@ -5139,8 +5180,8 @@
           "path",
           "datasets"
         ],
-        "title": "DatasetListResponse",
-        "description": "What is at ONE folder the user just named. \u26d4 Not a registry \u2014 nothing here was remembered\nor scanned on the app's initiative."
+        "title": "DatasetScanResult",
+        "description": "`Job.result` when `kind == \"dataset_scan\"` \u2014 what `POST /api/datasets/at` found.\n\n\u2b50 **The scan is a JOB (BEHAVIOUR R48).** It walks a directory tree of unbounded breadth and then\npays ~0.2 s opening every acquisition it found; behind a synchronous request that was one static\nword on screen for as long as it took. The walk has no denominator (R48.9), so it counts up \u2014\n*\"14 datasets so far\"* \u2014 and the opens that follow are a real bar with a real estimate."
       },
       "DatasetSummary": {
         "properties": {
@@ -6662,6 +6703,12 @@
             ],
             "title": "State"
           },
+          "said_as": {
+            "type": "string",
+            "title": "Said As",
+            "description": "\u2b50 BEHAVIOUR R48.6 \u2014 what this job is doing, in plain words, for the bar's label and for a busy refusal that has to name it (\"copying a recording in\"). Never empty: a submit site that passed no label gets a humanized kind.",
+            "default": ""
+          },
           "phase": {
             "anyOf": [
               {
@@ -6786,6 +6833,15 @@
                     "$ref": "#/components/schemas/OpenJobResult"
                   },
                   {
+                    "$ref": "#/components/schemas/DatasetScanResult"
+                  },
+                  {
+                    "$ref": "#/components/schemas/LoadDocumentResult"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CopyOutputsResult"
+                  },
+                  {
                     "$ref": "#/components/schemas/BuildResult"
                   },
                   {
@@ -6810,6 +6866,9 @@
                     "$ref": "#/components/schemas/OrientationTestResult"
                   },
                   {
+                    "$ref": "#/components/schemas/MeaAttachResult"
+                  },
+                  {
                     "$ref": "#/components/schemas/MeaCopyResult"
                   },
                   {
@@ -6820,13 +6879,17 @@
                   "propertyName": "kind",
                   "mapping": {
                     "build": "#/components/schemas/BuildResult",
+                    "dataset_scan": "#/components/schemas/DatasetScanResult",
+                    "document_load": "#/components/schemas/LoadDocumentResult",
                     "electrode_map": "#/components/schemas/ElectrodeMapResult",
                     "export": "#/components/schemas/ExportResult",
                     "locate_region": "#/components/schemas/LocateRegionResult",
+                    "mea_attach": "#/components/schemas/MeaAttachResult",
                     "mea_copy": "#/components/schemas/MeaCopyResult",
                     "mea_envelope": "#/components/schemas/MeaEnvelopeResult",
                     "mea_orientation": "#/components/schemas/OrientationTestResult",
                     "open": "#/components/schemas/OpenJobResult",
+                    "outputs_copy": "#/components/schemas/CopyOutputsResult",
                     "recheck": "#/components/schemas/RecheckResult",
                     "recompute": "#/components/schemas/RecomputeResult",
                     "videomosaic_build": "#/components/schemas/VideoMosaicBuildResult"
@@ -6977,7 +7040,7 @@
         "title": "LoadDocumentRequest",
         "description": "`POST /api/documents/load` \u2014 the Load screen's *\"Load a project\u2026\"*, which must be reachable\n**cold** (no session). The server bootstraps a session from the file's own `data_dir`, then\nre-reads the file so the range guard actually runs against the session it belongs to."
       },
-      "LoadDocumentResponse": {
+      "LoadDocumentResult": {
         "properties": {
           "doc": {
             "$ref": "#/components/schemas/Document"
@@ -7011,13 +7074,20 @@
             ],
             "title": "Migrated From",
             "description": "The old schema_version, if the file was migrated on the way in."
+          },
+          "kind": {
+            "type": "string",
+            "const": "document_load",
+            "title": "Kind",
+            "default": "document_load"
           }
         },
         "type": "object",
         "required": [
           "doc"
         ],
-        "title": "LoadDocumentResponse"
+        "title": "LoadDocumentResult",
+        "description": "`Job.result` when `kind == \"document_load\"`.\n\n\u2b50 **Loading a project is a JOB (BEHAVIOUR R48).** It runs the same `FrameStore.load` the open\njob does \u2014 ~5 s and 340 MiB \u2014 and until 2026-08-16 it ran it on the request thread with no job,\nno bar and no way to stop it: the starkest asymmetry in the app, because the identical work\nthirty lines away had all three. It reports the same seven `OPEN_PHASES`."
       },
       "LocateRegionRequest": {
         "properties": {
@@ -7529,6 +7599,36 @@
           "analysis_id"
         ],
         "title": "MeaAttachRequest"
+      },
+      "MeaAttachResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "mea_attach",
+            "title": "Kind",
+            "default": "mea_attach"
+          },
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "title": "Confirmed",
+            "description": "True when this run also SAVED the attachment onto the project (`confirm`). False = it only reported what it found, which is the two-step's first half."
+          },
+          "attachment": {
+            "$ref": "#/components/schemas/MeaAttachment"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "confirmed",
+          "attachment"
+        ],
+        "title": "MeaAttachResult",
+        "description": "`job.result` of a `mea_attach` job \u2014 what the scan found, and whether it was saved.\n\n\u2b50 **`POST /api/videomosaic/mea/attach` became a job on 2026-08-16 (R48).** It walks a\ndirectory tree and then opens every `data.raw.h5` under it through HDF5 \u2014 an unbounded number\nof unbounded reads that used to run on the request thread with no bar, no estimate and no way\nto stop it, and that *\"Use this seating\"* re-ran in full behind a frozen screen. `attachment`\nis byte for byte what the route used to return; a caller reads it where it used to read the\nresponse body."
       },
       "MeaAttachment": {
         "properties": {
@@ -10974,6 +11074,123 @@
           "gap_s"
         ],
         "title": "RunnerUpSplit"
+      },
+      "RunningJob": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "failed",
+              "cancelled"
+            ],
+            "title": "State"
+          },
+          "said_as": {
+            "type": "string",
+            "title": "Said As",
+            "description": "What it is doing, in plain words (R48.6). Never empty."
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "pct": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pct"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "elapsed_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsed S"
+          },
+          "eta_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eta S",
+            "description": "Seconds remaining, or null. May JUMP UP."
+          },
+          "cancellable": {
+            "type": "boolean",
+            "title": "Cancellable",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "kind",
+          "state",
+          "said_as"
+        ],
+        "title": "RunningJob",
+        "description": "One live job, slimmed for the top strip (BEHAVIOUR R48.8).\n\n\u26a0\ufe0f **Deliberately NOT `Job`.** The strip polls from every screen in the app, continuously, and\n`GET /api/jobs` serialises every job in history \u2014 including finished ones whose `result` embeds\nan entire document that is then re-validated through the discriminated union on each call. This\nshape carries no `result`, no `log_tail` and no traceback so the strip stays cheap."
+      },
+      "RunningJobsResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/RunningJob"
+            },
+            "type": "array",
+            "title": "Jobs",
+            "description": "Only queued/running jobs, OLDEST FIRST so a new one does not shove the one being read down the screen."
+          }
+        },
+        "type": "object",
+        "required": [
+          "jobs"
+        ],
+        "title": "RunningJobsResponse"
       },
       "SaveDocumentRequest": {
         "properties": {

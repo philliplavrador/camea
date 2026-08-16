@@ -1,6 +1,23 @@
 // Pure receipt formatters for the videomosaic feature — display only, unit-free of any dataset.
 // (The container's fps/n_frames are CLAIMS, good for a receipt, never for arithmetic — VideoSource.)
 
+import type { JobProgress } from '../../api';
+
+/**
+ * ⏱️ The phase line `<Progress>` shows beside the label (R48) — the job's phase with `n/total`
+ * appended when it counts its phases, and `starting…` in the gap between the 202 and the first
+ * narration, which is a real wait and must not read as a blank.
+ *
+ * ⛔ Not an ETA and not a percentage: `pct` is OVERALL across the whole job (R48.5) and lives on
+ * `Progress.pct`. This is only the name of what is happening right now.
+ */
+export function phaseOf(job: JobProgress): string | null {
+  if (job.phase == null) return job.state === 'queued' || job.state === 'running' ? 'starting…' : null;
+  return job.phaseIndex != null && job.nPhases != null
+    ? `${job.phase} · ${job.phaseIndex + 1}/${job.nPhases}`
+    : job.phase;
+}
+
 /** `83.4 → "1m 23s"` · `47 → "47 s"` · `4000 → "1h 06m"`. Clamped at zero. */
 export function fmtDuration(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));

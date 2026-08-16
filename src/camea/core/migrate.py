@@ -39,9 +39,12 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from camea.core.jobs import eta_from_counts
 from camea.core.project import (
     MARKER,
     Project,
@@ -89,25 +92,109 @@ def _legacy_draft_folders() -> list[str]:
         return []
 
 
-def migrate_to_store(legacy_folders: list[str]) -> MigrationReport:
+def _own_bytes(pr: Project) -> int:
+    """How many bytes of this folder are **Camea's** — the denominator the migration divides by.
+
+    ⛔ Deliberately `own_entries()` and not the folder: a thesis PDF the user keeps beside his mosaic
+    is not going anywhere, so counting it would make the bar promise work that will never happen.
+    """
+    total = 0
+    for entry in pr.own_entries():
+        try:
+            if entry.is_dir():
+                total += sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
+            elif entry.is_file():
+                total += entry.stat().st_size
+        except OSError:
+            pass                                        # unreadable is not un-migratable
+    return total
+
+
+def _human_bytes(n: int) -> str:
+    if n >= 1024 ** 3:
+        return f"{n / 1024 ** 3:.1f} GB"
+    if n >= 1024 ** 2:
+        return f"{n / 1024 ** 2:.0f} MB"
+    return f"{n / 1024:.0f} KB"
+
+
+def _console(line: str) -> None:
+    """⚠️ Wrapped, and **ASCII only** at the call sites: a launch is not failable, and that includes
+    a closed stdout in a frozen build *and* a cp1252 console that cannot render an em dash. (The
+    lines the API sends travel as JSON and are under no such restriction.)"""
+    try:
+        print(line, flush=True)
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
+def migrate_to_store(legacy_folders: list[str],
+                     progress: Callable[[str], None] | None = None) -> MigrationReport:
     """Move every pre-R44 project into the store. -> what happened. **Never raises.**
 
     `legacy_folders` is the old `settings.projects` list; R43's drafts are found here rather than
     passed in, because nothing outside this module should still know that directory existed.
+
+    ⏱️ **IT NARRATES ITSELF TO THE CONSOLE (BEHAVIOUR R48), AND THAT IS THE HALF-MEASURE IT IS.**
+    This runs *inside* `create_app()`, so the server accepts no connection until it returns — and a
+    multi-GB `shutil.move` across drives can hold that for minutes with no HTTP surface in existence
+    to serve a bar. Until it moves behind a startup event, the console is the only place a waiting
+    human can be told anything, so it is told: the count, the bytes, and an estimate.
+
+    ⏱️ **The countable unit is BYTES OF CAMEA'S OWN FILES**, summed up front across every project
+    that will actually move. ⚠️ It advances **per project**, because `shutil.move` has no callback —
+    so a single large project cannot anchor an estimate at all (2 % is never reached until it is
+    100 % done) and prints its size instead of a countdown. That is honest; it is not sufficient,
+    and the fix is the startup event, not a fake number.
+
+    `progress` takes one line of plain text. It defaults to printing.
     """
     report = MigrationReport()
+    say = _console if progress is None else progress
     seen: set[str] = set()
 
+    # --- pass 1: WHAT is moving, and HOW BIG is it -------------------------------------------
+    # ⭐ The filtering here is exactly `_migrate_one`'s first two early returns (not a project;
+    # already home), lifted so the work can be counted before it starts. Anything this pass cannot
+    # judge is kept and handed to `_migrate_one`, which owns every refusal and every `failed` entry.
+    todo: list[tuple[Path, int]] = []
     for folder in [*legacy_folders, *_legacy_draft_folders()]:
         key = folder.rstrip("/").lower()
         if key in seen:
             continue
         seen.add(key)
+        pth = Path(folder)
         try:
-            _migrate_one(Path(folder), report)
-        except Exception as e:                          # noqa: BLE001 — a launch is not failable
-            report.failed.append({"path": _fwd(folder), "reason": f"{type(e).__name__}: {e}"})
+            pr = Project(pth)
+            if not pr.is_project() or in_store(pth):
+                continue
+            todo.append((pth, _own_bytes(pr)))
+        except Exception:                               # noqa: BLE001 — a launch is not failable
+            todo.append((pth, 0))                       # let `_migrate_one` produce the real reason
 
+    if not todo:
+        return report                                   # ⭐ every launch after the first: silent
+
+    # --- pass 2: move them, saying so ---------------------------------------------------------
+    total = sum(b for _, b in todo)
+    t0 = time.monotonic()
+    done = 0
+    say(f"Camea: bringing {len(todo)} project(s) home into its own store "
+        f"({_human_bytes(total)}). The app starts when this finishes.")
+
+    for i, (pth, nbytes) in enumerate(todo):
+        eta = eta_from_counts(time.monotonic() - t0, done, total)
+        left = f", about {int(eta)} s left" if eta is not None else ""
+        say(f"  [{i + 1}/{len(todo)}] {int(100 * done / total) if total else 100}% - "
+            f"moving {pth.name} ({_human_bytes(nbytes)}){left}")
+        try:
+            _migrate_one(pth, report)
+        except Exception as e:                          # noqa: BLE001 — a launch is not failable
+            report.failed.append({"path": _fwd(pth), "reason": f"{type(e).__name__}: {e}"})
+        done += nbytes
+
+    say(f"Camea: {len(report.migrated)} project(s) came home, {len(report.failed)} did not, "
+        f"in {time.monotonic() - t0:.1f} s.")
     return report
 
 

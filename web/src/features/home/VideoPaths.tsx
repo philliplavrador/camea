@@ -19,6 +19,8 @@ import { probeVideo, pickOpenFilePath } from '../../api';
 import type { VideoSource } from '../../api';
 import { Button } from '../../design/primitives/Button';
 import { Help } from '../../design/primitives/Help';
+import { Progress } from '../../design/primitives/Progress';
+import { useDelayedFlag } from '../../design/primitives/useDelayedFlag';
 import { fmtDuration, fmtBytes, fmtFps } from '../videomosaic/format';
 import { normalisePath, forSubmit } from './pathText';
 import paths from './ProjectPaths.module.css';
@@ -45,6 +47,12 @@ export function VideoPaths({ onReady, onCreate, busy }: VideoPathsProps) {
   const [source, setSource] = useState<VideoSource | null>(null);
 
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // R48.1 — arm the waiting UI only once the wait is long enough to be worth reporting. Both of
+  // these are usually invisible; the point is that a slow mount stops being indistinguishable from
+  // a dead button.
+  const probeWait = useDelayedFlag(probing);
+  const createWait = useDelayedFlag(!!busy);
 
   useEffect(() => {
     onReady(source ? { videoPath: source.path, videoName: source.name } : null);
@@ -133,7 +141,20 @@ export function VideoPaths({ onReady, onCreate, busy }: VideoPathsProps) {
             Browse…
           </Button>
         </div>
-        {probing && <div className={styles.probing}>probing…</div>}
+        {/* ⏱️ R48.1 — the probe is usually well under the 400 ms grace on a local disk and shows
+            NOTHING. On a slow mount or a spun-down drive it is seconds of decoding a real frame out
+            of an 800 MB file, and it used to be the lowercase word "probing…" with no way out.
+            R48.9: a decode has no denominator we can read, so this is the sliver, not a bar. */}
+        {probeWait && (
+          <Progress
+            compact
+            className={styles.probing}
+            data-testid="np-video-probing"
+            label="Opening the video to check it decodes"
+            pct={null}
+            unstoppableWhy="reading one frame — it cannot be interrupted"
+          />
+        )}
         {probeError && (
           <div className={styles.error} role="alert" data-testid="video-probe-error">
             {probeError}
@@ -146,6 +167,19 @@ export function VideoPaths({ onReady, onCreate, busy }: VideoPathsProps) {
         <div className={styles.error} role="alert" data-testid="np-create-error">
           {createError}
         </div>
+      )}
+
+      {/* R48.1/R48.9 — creating the project copies the video into it. The copy itself reports as a
+          job in the strip (R48.8); this covers the request that sets it up, which is sub-second
+          locally and can be several seconds off a share. */}
+      {createWait && (
+        <Progress
+          compact
+          data-testid="np-create-progress"
+          label="Setting up the project"
+          pct={null}
+          unstoppableWhy="this one finishes on its own"
+        />
       )}
 
       <div className={paths.actions}>

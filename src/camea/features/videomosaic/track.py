@@ -97,7 +97,14 @@ class _BackgroundSampler:
 def track(path: str, info: VideoInfo, cfg: VideoConfig, *,
           progress: Callable[[int, int], None] | None = None,
           cancel=None) -> TrackResult:
-    """Track the whole video. `progress(frames_done, frames_expected)` fires every ~100 frames."""
+    """Track the whole video. `progress(frames_done, frames_expected)` fires every ~100 frames.
+
+    ⏱️ `frames_expected` starts at the container's claim and is **revised upward as the stream
+    approaches it** — see the loop. The caller may divide the two, but must not treat a ratio of 1.0
+    as "finished": only the final `progress(n_read, n_read)`, after the loop ends, means that.
+    ⚠️ The ratio is **monotone by construction** but the denominator is not the container's claim
+    once it has been revised — say so in the sentence (`pipeline.track_progress` prints `~`).
+    """
     n_hint = max(1, info.n_frames)
     # Container counts lie in BOTH directions (video.py: "never for arithmetic"). Undercount is
     # handled by the growth path below; overcount must not become a multi-GB allocation off a
@@ -176,6 +183,7 @@ def track(path: str, info: VideoInfo, cfg: VideoConfig, *,
         seg_first = seg_last = -1
 
     n_read = 0
+    n_expect = n_hint                                # the denominator the bar divides by
     for i, gray in iter_gray(path):
         if i >= len(pos):                            # the container lied by >50 %; grow
             grow = len(pos) // 2 + 64
@@ -189,7 +197,22 @@ def track(path: str, info: VideoInfo, cfg: VideoConfig, *,
         if i % 64 == 0:
             check_cancelled(cancel, "video tracking")
         if progress is not None and i % 100 == 0:
-            progress(i, max(n_hint, i + 1))
+            # The container undercounts as well as overcounts (this module's header: the count
+            # "lies in BOTH directions"), so the denominator is a high-water mark, never pinned to
+            # `i` — a denominator equal to its numerator reads as "finished" for however much
+            # longer the stream runs, and the ETA it feeds reads zero.
+            #
+            # 🔴 IT IS RAISED ON EVERY TICK, NOT ONLY WHEN `i` OVERTAKES IT (R48.5). Growing only
+            # once overtaken looks equivalent and is not: the claim is caught up with at ~1.00, the
+            # step then drops the ratio to ~0.95, and it climbs back — a SAWTOOTH that runs for the
+            # rest of the video. Simulated on a 16,098-frame stream whose header claims 1,600, that
+            # is 33 backwards moves of up to 2.6 points of the whole bar, each one an ETA that
+            # counts up. Raising it every tick makes the ratio `i / (1.05·i + 64)` — strictly
+            # increasing in `i`, and equal to `i / n_hint` at the crossover, so the switch from the
+            # container's claim to our own estimate is not even visible. It converges on ~95 %
+            # rather than 100 %; the post-loop `progress(n_read, n_read)` is what closes the span.
+            n_expect = max(n_expect, i + i // 20 + 64)
+            progress(i, n_expect)
 
         small = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
         if prev is not None and small.shape != prev[1].shape:

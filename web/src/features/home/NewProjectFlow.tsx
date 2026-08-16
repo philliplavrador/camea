@@ -46,7 +46,7 @@
 // click path for a task that has a Data step — the two would race for the same project.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   getDataset,
@@ -55,10 +55,12 @@ import {
   createMeaProject,
   createVideoProject,
   startVideoBuild,
+  useJob,
+  useStopJob,
 } from '../../api';
 import type { AnalysisSummary } from '../../api';
 import { useToast } from '../../app';
-import { Button, Card, LiveWarning } from '../../design';
+import { Button, Card, LiveWarning, Progress } from '../../design';
 // ⭐ **THE SAME COMPONENT THE PROJECT'S OWN "+ Add recordings" MOUNTS** — one tick-list, two mount
 // points. ⚠️ This is a feature importing another feature's file, which the app otherwise forbids;
 // it is allowed here for the one reason the rule exists to protect: `NewProjectFlow` is *about* the
@@ -177,6 +179,19 @@ export function NewProjectFlow() {
   const [choice, setChoice] = useState<Choice | null>(null);
   const [videoChoice, setVideoChoice] = useState<VideoChoice | null>(null);
   const [creating, setCreating] = useState<string | null>(null); // progress message while creating
+  /**
+   * ⭐ ⏱️ **THE FIRST THING A NEW USER EVER WAITS ON (BEHAVIOUR R48).** Creating a project from a
+   * dataset loads its whole frame stack — tens of seconds on a real one — and this screen used to
+   * render `j.phase ?? j.message` and drop `j.pct` and `j.eta_s` on the floor, both of which were
+   * already on the wire and already being polled. Watching the job with `useJob` gets the ticking
+   * countdown (R8) and a Stop for free.
+   */
+  const [createJobId, setCreateJobId] = useState<string | null>(null);
+  const createJob = useJob(createJobId);
+  const stopJob = useStopJob();
+  // Set when HE pressed Stop, so the rejection that follows is reported as his decision rather than
+  // as a failure the app is apologising for (R48.9 — a wait that ends says how it ended).
+  const stoppedRef = useRef(false);
   // The Files step's chosen paths, and the refusal that has to stay next to the tick-list rather
   // than fly past on a toast — the fix for it is one untick away.
   const [meaPaths, setMeaPaths] = useState<string[]>([]);
@@ -204,28 +219,44 @@ export function NewProjectFlow() {
 
   async function onCreate(): Promise<void> {
     if (creating || !choice) return;
-    setCreating('reading dataset…');
+    stoppedRef.current = false;
+    setCreating('Reading the dataset');
     try {
       const detail = await getDataset(choice.datasetKey);
       const trials = mosaicTrials(detail.summary.shapes ?? [], detail.blocks ?? []);
       if (!trials || trials.length === 0) {
         throw new Error('this dataset has no square (N×N) frames to build a mosaic from.');
       }
-      setCreating('opening session…');
-      const sess = await openSessionAndWait(
-        { dataset_key: choice.datasetKey, trials },
-        { onProgress: (j) => setCreating(j.phase ?? j.message ?? 'opening…') },
-      );
-      setCreating('creating project…');
-      const project = await createAnalysis({
-        session_id: sess.session_id,
-        feature: task,
-        name: name.trim() || detail.summary.name || 'Untitled project',
-        trials,
-      });
-      navigate(`/project/${project.analysis_id}`);
+      setCreating('Opening the dataset');
+      try {
+        const sess = await openSessionAndWait(
+          { dataset_key: choice.datasetKey, trials },
+          {
+            onProgress: (j) => {
+              setCreateJobId(j.job_id);
+              setCreating(j.said_as || 'Opening the dataset');
+            },
+          },
+        );
+        setCreateJobId(null);
+        setCreating('Creating the project');
+        const project = await createAnalysis({
+          session_id: sess.session_id,
+          feature: task,
+          name: name.trim() || detail.summary.name || 'Untitled project',
+          trials,
+        });
+        navigate(`/project/${project.analysis_id}`);
+      } finally {
+        setCreateJobId(null);
+      }
     } catch (e) {
       setCreating(null);
+      // R48.9 — his own Stop is not a failure. Say what happened, in the right tone.
+      if (stoppedRef.current) {
+        toast.push('Stopped — no project was created.', { tone: 'default' });
+        return;
+      }
       toast.push(
         `Could not create the project: ${e instanceof Error ? e.message : String(e)}`,
         { tone: 'danger' },
@@ -239,7 +270,7 @@ export function NewProjectFlow() {
    *  `VideoPaths` shows the backend's reason INLINE, with the typed path kept. */
   async function onCreateVideo(): Promise<void> {
     if (creating || !videoChoice) return;
-    setCreating('creating project…');
+    setCreating('Creating the project');
     try {
       const project = await createVideoProject({
         name: name.trim() || videoChoice.videoName || 'Untitled project',
@@ -262,7 +293,7 @@ export function NewProjectFlow() {
    */
   async function createNow(make: (name: string) => Promise<{ analysis_id: string }>): Promise<void> {
     if (creating) return;
-    setCreating('creating project…');
+    setCreating('Creating the project');
     try {
       const project = await make(name.trim());
       navigate(`/project/${project.analysis_id}`);
@@ -292,7 +323,7 @@ export function NewProjectFlow() {
    */
   async function onCreateMea(): Promise<void> {
     if (creating) return;
-    setCreating(meaPaths.length > 0 ? 'creating project…' : 'creating empty project…');
+    setCreating(meaPaths.length > 0 ? 'Creating the project' : 'Creating an empty project');
     setMeaError(null);
     try {
       const project = await createMeaProject(name.trim(), meaPaths);
@@ -325,9 +356,29 @@ export function NewProjectFlow() {
         </ol>
       </header>
 
+      {/* ⏱️ R48 — the wait that used to be one word. ⚠️ No `useDelayedFlag` grace here on purpose:
+          the step panel is REPLACED while creating, so 400 ms of nothing would be a blank screen,
+          not a spared flash. (R48.1's grace protects content that is still on screen.) */}
       {creating && (
         <div className={styles.creating} data-testid="np-creating">
-          {creating}
+          <Progress
+            data-testid="np-progress"
+            label={createJobId ? createJob.job?.said_as || creating : creating}
+            pct={createJobId ? createJob.pct : null}
+            etaText={createJobId ? createJob.etaText : null}
+            elapsedText={createJobId ? createJob.elapsedText : null}
+            phase={createJobId ? createJob.phase : null}
+            message={createJobId ? createJob.message : null}
+            onStop={
+              createJobId && !createJob.isTerminal && (createJob.job?.cancellable ?? true)
+                ? () => {
+                    stoppedRef.current = true;
+                    void stopJob(createJobId);
+                  }
+                : undefined
+            }
+            unstoppableWhy={createJobId ? undefined : 'this step cannot be stopped once it starts'}
+          />
         </div>
       )}
 

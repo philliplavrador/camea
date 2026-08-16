@@ -12,9 +12,11 @@
 // `EXCLUDED_TRIALS` block on re-save (BEHAVIOUR R2.4) — the front end never resurrects dataset knowledge.
 
 import { api, unwrap } from './client';
+import { pollJobUntilDone, type JobWatch } from './jobs';
 import type {
   Document,
   DocumentResponse,
+  JobRef,
   SaveDocumentRequest,
   SaveResult,
   LoadDocumentRequest,
@@ -79,12 +81,41 @@ export async function saveDocumentAs(path: string, doc: Document): Promise<SaveR
 }
 
 /**
- * `Load a project…` (`POST /api/documents/load`). Works COLD — with no session open, the server
- * bootstraps one from the file's own `data_dir`, then re-reads the file against that session's scope so
- * the range guard runs against the session it belongs to.
+ * Submit the load (`POST /api/documents/load` → **202 `JobRef`**, kind `document_load`). Use this
+ * when the screen drives the bar itself with `useJob`; `loadDocument` below waits for you.
+ *
+ * ⏱️ **It became a job on 2026-08-16 (BEHAVIOUR R48).** It runs the *same* `FrameStore.load` the open
+ * job does — ~5 s and 340 MiB — and it ran that on the request thread with no bar, no estimate and no
+ * way to stop it. It now reports the same seven open phases, off the same counter.
+ *
+ * 🔴 **EVERY REFUSAL IS STILL SYNCHRONOUS** and still throws from THIS call: the missing file (404),
+ * a document that names no dataset (400), a dataset not on this machine (404), and — the one that
+ * matters — the **range guard** (`409 range_mismatch`), which needs the dataset's identity and not a
+ * single pixel. A document for the wrong acquisition is refused by the request that asked for it.
  */
-export async function loadDocument(req: LoadDocumentRequest): Promise<LoadDocumentResponse> {
+export async function startDocumentLoad(req: LoadDocumentRequest): Promise<JobRef> {
   return unwrap(await api.POST('/api/documents/load', { body: req }));
+}
+
+/**
+ * `Load a project…` — submit the load and wait for the document. Works COLD — with no session open,
+ * the server bootstraps one from the file's own `data_dir`, then re-reads the file against that
+ * session's scope so the range guard runs against the session it belongs to.
+ *
+ * `onProgress` fires on every poll so the Load screen can paint the open phases with a `<Progress>`
+ * (R48) instead of hanging on a request that does not come back.
+ */
+export async function loadDocument(
+  req: LoadDocumentRequest,
+  opts: JobWatch = {},
+): Promise<LoadDocumentResponse> {
+  const ref = await startDocumentLoad(req);
+  const job = await pollJobUntilDone(ref.job_id, { onUpdate: opts.onProgress, signal: opts.signal });
+  const result = job.result;
+  if (!result || result.kind !== 'document_load') {
+    throw new Error('loading the project finished without a document');
+  }
+  return result;
 }
 
 /** Structural validation without writing (`POST /api/documents/validate`). No trial number is special. */

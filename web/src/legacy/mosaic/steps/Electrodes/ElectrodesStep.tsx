@@ -32,7 +32,7 @@ import {
   type ElectrodeMapPayload,
   type MosaicDocument,
 } from '../../../../api';
-import { Button, Help, LiveWarning, Panel, cx } from '../../../../design';
+import { Button, Help, LiveWarning, Panel, Progress, cx } from '../../../../design';
 import { useSweepStore } from '../../store';
 import { useDocument } from '../../../../store/documentStore';
 import { CoverageChoice } from '../../../../features/electrodes/CoverageChoice';
@@ -349,26 +349,20 @@ export function ElectrodesStep({ tileSrc }: ElectrodesStepProps) {
         {running && (
           <div data-testid="electrodes-progress">
             <Panel title="Mapping">
-              <div className={styles.barWell}>
-                <div
-                  className={styles.bar}
-                  style={{ transform: `scaleX(${Math.max(2, Math.min(100, job.pct ?? 0)) / 100})` }}
-                />
-              </div>
-              <div className={styles.progressRow}>
-                <span className={styles.phase} data-testid="electrodes-phase">
-                  {job.phase ?? 'starting…'}
-                </span>
-                <span className={styles.eta}>{job.etaText ?? ''}</span>
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => void cancelMap()}
-                  data-testid="electrodes-cancel"
-                >
-                  Cancel
-                </Button>
-              </div>
+              {/* ⏱️ R48.2 — THE one bar. The ETA span here used to be permanently empty (R48.4's
+                  founding bug); the backend fills it now, and where it cannot the primitive says
+                  "working out how long this will take…" with the elapsed clock beside it. */}
+              <Progress
+                data-testid="electrodes-mapping"
+                label={job.job?.said_as || 'Fitting the electrode lattice to this mosaic'}
+                pct={job.pct}
+                etaText={job.etaText}
+                elapsedText={job.elapsedText}
+                phase={job.phase ?? 'starting…'}
+                message={job.message}
+                onStop={(job.job?.cancellable ?? true) ? () => void cancelMap() : undefined}
+                stopLabel="Cancel"
+              />
             </Panel>
           </div>
         )}

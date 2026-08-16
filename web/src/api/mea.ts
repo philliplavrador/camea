@@ -13,6 +13,7 @@
 //     consulting it — see the note on `ElectrodeTracePayload` in types.ts.
 
 import { api, unwrap } from './client';
+import { type JobWatch, pollJobUntilDone } from './jobs';
 import type { components } from './schema';
 import type {
   ElectrodeTracePayload,
@@ -40,12 +41,24 @@ export async function getMea(analysisId: string): Promise<MeaAttachment> {
  * ⭐ **TWO-STEP ON PURPOSE.** `confirm: false` (the default) discovers and reports only — nothing is
  * written, and the caller shows the user the paths it found. `confirm: true` saves the attachment.
  * Pass `meaDir` to override the search with a folder the user picked.
+ *
+ * ⏱️ **A JOB SINCE 2026-08-16 (R48).** The route answers **202 `JobRef`** now: it walks a directory
+ * tree and then opens every `data.raw.h5` under it through HDF5 — an unbounded number of unbounded
+ * reads that used to sit on the request thread with no bar, no time and no Stop, and that
+ * *"Use this seating"* re-ran in full behind a frozen screen. This wrapper submits and waits, so the
+ * caller still just gets its `MeaAttachment`; pass `watch.onProgress` to draw the bar (the
+ * `job_id` for a Stop arrives on the first call — R48.7).
+ *
+ * ⚠️ The cheap refusals are still synchronous (a folder that does not exist is a 404 the POST
+ * answers). What only the scan can discover — nothing found, nothing readable, two chips in one
+ * folder — comes back as the job's failure, i.e. a rejected promise with the server's sentence.
  */
 export async function attachMea(
   analysisId: string,
   opts: { meaDir?: string; confirm?: boolean; orientation?: MeaOrientation } = {},
+  watch: JobWatch = {},
 ): Promise<MeaAttachment> {
-  return unwrap(
+  const ref: JobRef = unwrap(
     await api.POST('/api/videomosaic/mea/attach', {
       body: {
         analysis_id: analysisId,
@@ -55,6 +68,15 @@ export async function attachMea(
       },
     }),
   );
+  const job = await pollJobUntilDone(ref.job_id, {
+    onUpdate: watch.onProgress,
+    signal: watch.signal,
+  });
+  const result = job.result;
+  if (!result || result.kind !== 'mea_attach') {
+    throw new Error('the recording scan finished without saying what it found');
+  }
+  return result.attachment;
 }
 
 /**

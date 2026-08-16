@@ -79,12 +79,17 @@ def _create(client, tmp_path, videosynth, name: str = "seating") -> dict:
     return r.json()
 
 
-def _attach(client, tmp_path, measynth, aid: str) -> None:
+def _attach(client, tmp_path, measynth, aid: str) -> dict:
+    """⭐ Attaching is a JOB since R48 (it opens every h5 it finds) — 202 + a poll, and the
+    attachment that used to be the response body is now `result.attachment`."""
     measynth.write_session(tmp_path / "MEA")
     r = client.post("/api/videomosaic/mea/attach",
                     json={"analysis_id": aid, "mea_dir": str(tmp_path / "MEA"),
                           "confirm": True})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
+    res = run_job(client, r.json()["job_id"])["result"]
+    assert res["kind"] == "mea_attach" and res["confirmed"] is True
+    return res["attachment"]
 
 
 def _plant(folder: Path, *, grid: bool = True, regions: list[dict] | None = None) -> None:

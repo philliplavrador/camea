@@ -129,8 +129,8 @@ export interface paths {
         put?: never;
         /**
          * Post Datasets At
-         * @description ⭐ *"Look at THIS folder."* A POST, not a GET: a Windows path in a query string is an
-         *     encoding trap.
+         * @description ⭐ *"Look at THIS folder."* -> **202 `JobRef`**. Poll `GET /api/jobs/{id}`; `result` is a
+         *     `DatasetScanResult`. A POST, not a GET: a Windows path in a query string is an encoding trap.
          *
          *     ⛔ **NOTHING IS REMEMBERED AND NOTHING IS RECOMMENDED.** This replaced `POST /api/datasets/scan`
          *     + `GET /api/datasets` on 2026-07-25. There is no root registry, no depth-3 walk on every launch,
@@ -140,6 +140,15 @@ export interface paths {
          *
          *     ⛔ Nothing here recognises a dataset by name. A folder is a dataset iff it has a `log.txt` and at
          *     least one `NNN.xml`. That is the whole rule.
+         *
+         *     ⏱️ **IT IS A JOB BECAUSE IT IS TWO WAITS, NOT ONE (R48).** A tree walk of unbounded breadth, and
+         *     then ~0.2 s of `log.txt` + XML for every acquisition it turned up; on a folder of thirty this is
+         *     six seconds behind one static word. R48.9 says a directory walk has no denominator until it
+         *     returns, so the walk **counts up** and the opens that follow get the bar and the estimate.
+         *
+         *     ⚠️ *"No such directory"* is still refused **here**, on the request thread, so a mistyped path is
+         *     a 400 the client can act on rather than a job that fails a moment later — the same reasoning
+         *     that keeps `mixed_shape` in front of the open job.
          */
         post: operations["post_datasets_at_api_datasets_at_post"];
         delete?: never;
@@ -555,7 +564,7 @@ export interface paths {
         /**
          * Post Copy Outputs
          * @description ⭐ **THE ONE WAY WORK LEAVES CAMEA** (R44) — copy the chosen outputs into a folder the user
-         *     names, right now, while looking at them.
+         *     names, right now, while looking at them. -> **202 `JobRef`**; `result` is a `CopyOutputsResult`.
          *
          *     🔴 **THE THREE REFUSALS, IN ORDER, BEFORE A SINGLE BYTE IS WRITTEN:**
          *       1. `refuse_write(dest)` — ⛔ never onto the evidence. A destination inside `data/`, inside a
@@ -570,6 +579,12 @@ export interface paths {
          *
          *     A copy is not a move: the project keeps its outputs. That is the point — the store stays the
          *     home, and what leaves is a copy the user asked for.
+         *
+         *     ⏱️ **THE THREE REFUSALS STAY ON THE REQUEST THREAD; ONLY THE BYTES BECOME A JOB (R48).** A clash
+         *     is still a 409 on the request that asked for it and still refuses the WHOLE request — it is not
+         *     a job that copies half of them and then thinks better of it. What moved is the copying, which is
+         *     whole 16-bit mosaics and used to be a request that simply did not come back: the bar counts
+         *     **bytes**, the message names the file in flight, and Stop lands between chunks (R48.7).
          */
         post: operations["post_copy_outputs_api_projects__analysis_id__outputs_copy_post"];
         delete?: never;
@@ -646,13 +661,26 @@ export interface paths {
         put?: never;
         /**
          * Post Document Load
-         * @description *"Load a project…"* — and it **must work COLD**, with no session open. That is the whole point:
-         *     the app remembers nothing between launches, so this file is its only memory. Save -> quit ->
-         *     load restores the session whole, and nothing else does.
+         * @description *"Load a project…"* -> **202 `JobRef`**; `result` is a `LoadDocumentResult`. It **must work
+         *     COLD**, with no session open. That is the whole point: the app remembers nothing between
+         *     launches, so this file is its only memory. Save -> quit -> load restores the session whole, and
+         *     nothing else does.
          *
          *     The server bootstraps a session from the file's own `data_dir` when one is not given, then
          *     re-reads the file **against that session's scope**, so the range guard actually runs against the
          *     session the document belongs to.
+         *
+         *     ⏱️ **IT IS A JOB, AND UNTIL 2026-08-16 IT WAS NOT (R48).** It runs the *same* `FrameStore.load`
+         *     as the open job thirty lines up — ~5 s and 340 MiB — and it ran it on the request thread with no
+         *     job, no bar, no estimate and no way to stop it: the request simply hung with nothing on screen.
+         *     It now reports the same seven `OPEN_PHASES`, off the same frame counter, through the same
+         *     reporter, so the two openings cannot drift into two different answers to *"how long"*.
+         *
+         *     ⚠️ **EVERY REFUSAL STILL HAPPENS HERE, ON THE REQUEST THREAD** — the missing file, the document
+         *     that names no dataset, the dataset that is not on this machine, and (the important one) the
+         *     **range guard**, which needs only the dataset's identity and not a single pixel. So a document
+         *     for the wrong acquisition is still `409 range_mismatch` on the request that asked for it, and
+         *     not a job that fails five seconds later. Same reasoning as `mixed_shape` in front of the open.
          */
         post: operations["post_document_load_api_documents_load_post"];
         delete?: never;
@@ -716,6 +744,33 @@ export interface paths {
         };
         /** Get Jobs */
         get: operations["get_jobs_api_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/jobs/running": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Running Jobs
+         * @description ⏱️ **What the top strip polls (BEHAVIOUR R48.8)** — every live job, oldest first, slimmed.
+         *
+         *     ⚠️ **Declared BEFORE `/api/jobs/{job_id}`, and it must stay there.** FastAPI matches routes in
+         *     declaration order, so the parameterised route would otherwise swallow `running` as a job id and
+         *     answer 404.
+         *
+         *     ⚠️ Do not "simplify" this into `GET /api/jobs` with a filter: that route serialises every job in
+         *     history including finished ones whose `result` embeds a whole document. See `Job.to_brief`.
+         */
+        get: operations["get_running_jobs_api_jobs_running_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1691,10 +1746,21 @@ export interface paths {
         /**
          * Post Mea Attach
          * @description Find the recordings that belong to a project — and, on `confirm`, remember them.
+         *     **202 `JobRef`**; the attachment comes back as the job's `MeaAttachResult`.
          *
          *     ⭐ Two-step ON PURPOSE. Without `confirm` this only *reports* what it found, so the user sees
          *     the actual paths before anything is written. Attaching the wrong plate would pair one culture's
          *     voltages with another culture's neurons — silently, and in a dataset meant to be ground truth.
+         *
+         *     ⭐ **A JOB SINCE 2026-08-16 (R48).** It walks a directory tree and then opens every
+         *     `data.raw.h5` it found through HDF5 — an unbounded number of unbounded opens, previously on the
+         *     request thread with no bar, no time, no Stop and no timeout. Worse, *"Use this seating"* is the
+         *     same call with `confirm`, so confirming re-ran the entire scan with the screen frozen behind it.
+         *
+         *     ⚠️ **The cheap refusals stay synchronous** — a folder that does not exist is still a 404 the
+         *     POST answers. Only what the scan itself can discover (nothing found; nothing readable; two
+         *     chips in one folder) becomes the job's failure, because none of it is knowable until the walk
+         *     has run.
          */
         post: operations["post_mea_attach_api_videomosaic_mea_attach_post"];
         delete?: never;
@@ -2561,8 +2627,16 @@ export interface components {
              */
             dest: string;
         };
-        /** CopyOutputsResponse */
-        CopyOutputsResponse: {
+        /**
+         * CopyOutputsResult
+         * @description `Job.result` when `kind == "outputs_copy"` — the copy has landed.
+         *
+         *     ⭐ **The copy is a JOB (BEHAVIOUR R48).** It is the one way work leaves Camea (R44) and it moves
+         *     whole 16-bit mosaics; the bar counts BYTES and names the file in flight. ⛔ The three refusals
+         *     still run **before** the job is submitted, so a clash is still a 409 on the request that asked
+         *     for it and still refuses the WHOLE request — never a job that half-copies and then fails.
+         */
+        CopyOutputsResult: {
             /**
              * Copied
              * @description The full paths written.
@@ -2570,6 +2644,17 @@ export interface components {
             copied?: string[];
             /** Dest */
             dest: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "outputs_copy";
+            /**
+             * Bytes
+             * @description Total bytes copied. What the bar was counting.
+             * @default 0
+             */
+            bytes: number;
         };
         /**
          * CreateAnalysisRequest
@@ -2668,11 +2753,15 @@ export interface components {
             blocks: components["schemas"]["SnapshotBlock"][];
         };
         /**
-         * DatasetListResponse
-         * @description What is at ONE folder the user just named. ⛔ Not a registry — nothing here was remembered
-         *     or scanned on the app's initiative.
+         * DatasetScanResult
+         * @description `Job.result` when `kind == "dataset_scan"` — what `POST /api/datasets/at` found.
+         *
+         *     ⭐ **The scan is a JOB (BEHAVIOUR R48).** It walks a directory tree of unbounded breadth and then
+         *     pays ~0.2 s opening every acquisition it found; behind a synchronous request that was one static
+         *     word on screen for as long as it took. The walk has no denominator (R48.9), so it counts up —
+         *     *"14 datasets so far"* — and the opens that follow are a real bar with a real estimate.
          */
-        DatasetListResponse: {
+        DatasetScanResult: {
             /**
              * Path
              * @description The folder that was looked at, resolved.
@@ -2691,6 +2780,11 @@ export interface components {
              * @description Folders that looked like a dataset but could not be read.
              */
             skipped?: string[];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "dataset_scan";
         };
         /**
          * DatasetSummary
@@ -3544,6 +3638,12 @@ export interface components {
              * @enum {string}
              */
             state: "queued" | "running" | "done" | "failed" | "cancelled";
+            /**
+             * Said As
+             * @description ⭐ BEHAVIOUR R48.6 — what this job is doing, in plain words, for the bar's label and for a busy refusal that has to name it ("copying a recording in"). Never empty: a submit site that passed no label gets a humanized kind.
+             * @default
+             */
+            said_as: string;
             /** Phase */
             phase?: string | null;
             /** Phase Index */
@@ -3582,7 +3682,7 @@ export interface components {
              * Result
              * @description null until state == 'done'. Discriminated on `kind`.
              */
-            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"] | components["schemas"]["OrientationTestResult"] | components["schemas"]["MeaCopyResult"] | components["schemas"]["MeaEnvelopeResult"]) | null;
+            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["DatasetScanResult"] | components["schemas"]["LoadDocumentResult"] | components["schemas"]["CopyOutputsResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"] | components["schemas"]["OrientationTestResult"] | components["schemas"]["MeaAttachResult"] | components["schemas"]["MeaCopyResult"] | components["schemas"]["MeaEnvelopeResult"]) | null;
             /** @description Set iff state == 'failed'. */
             error?: components["schemas"]["JobError"] | null;
         };
@@ -3635,8 +3735,16 @@ export interface components {
             /** Session Id */
             session_id?: string | null;
         };
-        /** LoadDocumentResponse */
-        LoadDocumentResponse: {
+        /**
+         * LoadDocumentResult
+         * @description `Job.result` when `kind == "document_load"`.
+         *
+         *     ⭐ **Loading a project is a JOB (BEHAVIOUR R48).** It runs the same `FrameStore.load` the open
+         *     job does — ~5 s and 340 MiB — and until 2026-08-16 it ran it on the request thread with no job,
+         *     no bar and no way to stop it: the starkest asymmetry in the app, because the identical work
+         *     thirty lines away had all three. It reports the same seven `OPEN_PHASES`.
+         */
+        LoadDocumentResult: {
             doc: components["schemas"]["Document"];
             /** @description Set when the load had to open the dataset itself. */
             session?: components["schemas"]["SessionResponse"] | null;
@@ -3647,6 +3755,11 @@ export interface components {
              * @description The old schema_version, if the file was migrated on the way in.
              */
             migrated_from?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "document_load";
         };
         /**
          * LocateRegionRequest
@@ -3903,6 +4016,32 @@ export interface components {
              */
             confirm: boolean;
             orientation?: components["schemas"]["MeaOrientation"] | null;
+        };
+        /**
+         * MeaAttachResult
+         * @description `job.result` of a `mea_attach` job — what the scan found, and whether it was saved.
+         *
+         *     ⭐ **`POST /api/videomosaic/mea/attach` became a job on 2026-08-16 (R48).** It walks a
+         *     directory tree and then opens every `data.raw.h5` under it through HDF5 — an unbounded number
+         *     of unbounded reads that used to run on the request thread with no bar, no estimate and no way
+         *     to stop it, and that *"Use this seating"* re-ran in full behind a frozen screen. `attachment`
+         *     is byte for byte what the route used to return; a caller reads it where it used to read the
+         *     response body.
+         */
+        MeaAttachResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "mea_attach";
+            /** Analysis Id */
+            analysis_id: string;
+            /**
+             * Confirmed
+             * @description True when this run also SAVED the attachment onto the project (`confirm`). False = it only reported what it found, which is the two-step's first half.
+             */
+            confirmed: boolean;
+            attachment: components["schemas"]["MeaAttachment"];
         };
         /**
          * MeaAttachment
@@ -5834,6 +5973,57 @@ export interface components {
             gap_s: number;
         };
         /**
+         * RunningJob
+         * @description One live job, slimmed for the top strip (BEHAVIOUR R48.8).
+         *
+         *     ⚠️ **Deliberately NOT `Job`.** The strip polls from every screen in the app, continuously, and
+         *     `GET /api/jobs` serialises every job in history — including finished ones whose `result` embeds
+         *     an entire document that is then re-validated through the discriminated union on each call. This
+         *     shape carries no `result`, no `log_tail` and no traceback so the strip stays cheap.
+         */
+        RunningJob: {
+            /** Job Id */
+            job_id: string;
+            /** Kind */
+            kind: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "queued" | "running" | "done" | "failed" | "cancelled";
+            /**
+             * Said As
+             * @description What it is doing, in plain words (R48.6). Never empty.
+             */
+            said_as: string;
+            /** Phase */
+            phase?: string | null;
+            /** Pct */
+            pct?: number | null;
+            /** Message */
+            message?: string | null;
+            /** Elapsed S */
+            elapsed_s?: number | null;
+            /**
+             * Eta S
+             * @description Seconds remaining, or null. May JUMP UP.
+             */
+            eta_s?: number | null;
+            /**
+             * Cancellable
+             * @default true
+             */
+            cancellable: boolean;
+        };
+        /** RunningJobsResponse */
+        RunningJobsResponse: {
+            /**
+             * Jobs
+             * @description Only queued/running jobs, OLDEST FIRST so a new one does not shove the one being read down the screen.
+             */
+            jobs: components["schemas"]["RunningJob"][];
+        };
+        /**
          * SaveDocumentRequest
          * @description `PUT /api/analyses/{analysis_id}/document` (into the workspace) or
          *     `POST /api/documents/save-as` (a file the user names — `Save…`, reachable from EVERY screen).
@@ -6868,12 +7058,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatasetListResponse"];
+                    "application/json": components["schemas"]["JobRef"];
                 };
             };
             /** @description Validation Error */
@@ -7568,12 +7758,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CopyOutputsResponse"];
+                    "application/json": components["schemas"]["JobRef"];
                 };
             };
             /** @description Validation Error */
@@ -7704,12 +7894,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["LoadDocumentResponse"];
+                    "application/json": components["schemas"]["JobRef"];
                 };
             };
             /** @description Validation Error */
@@ -7805,6 +7995,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobListResponse"];
+                };
+            };
+        };
+    };
+    get_running_jobs_api_jobs_running_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunningJobsResponse"];
                 };
             };
         };
@@ -8962,12 +9172,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MeaAttachment"];
+                    "application/json": components["schemas"]["JobRef"];
                 };
             };
             /** @description Validation Error */

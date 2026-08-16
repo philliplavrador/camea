@@ -1,12 +1,10 @@
 /* FEATURE GATE — a minimal wait line, and a friendly card for the three ways an id can fail
    (listing failed · not found · a feature this build does not know). */
 
+/* ⏱️ R48 — this held one centred sentence; it holds the ONE bar now, so it is a container and
+   nothing else (centring would drag the bar's own baseline row out of true). */
 .loading {
-  padding: 48px 0;
-  text-align: center;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: var(--fs-readout);
+  padding: 48px 24px;
 }
 
 .gate {

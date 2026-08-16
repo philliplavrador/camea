@@ -703,7 +703,11 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(byId(page, TID.regionsQueue)).toBeVisible({ timeout: SHORT });
     await expect(byId(page, TID.regionsQueue)).toContainText('Placing 1 of 3');
     await expect(byId(page, TID.regionsQueue)).toContainText('2 waiting');
-    await expect(byId(page, TID.regionsProgress)).toBeVisible();
+    // ⏱️ R48.3 — the run's bar is the WHOLE-BATCH one, and it is the only one: a per-file bar
+    // beside it would be a second answer to one question (the R48.8 discipline, one layer in).
+    // This asserted `regionsProgress` while that was the only bar there was.
+    await expect(byId(page, TID.regionsBatch)).toBeVisible();
+    await expect(byId(page, TID.regionsProgress)).toHaveCount(0);
     expect(stub.locates).toHaveLength(1);
     expect(String(stub.locates[0].path)).toMatch(/one\.avi$/);
 

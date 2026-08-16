@@ -146,6 +146,12 @@
   color: var(--text-dim);
 }
 
+/* ⏱️ R48 — spacing only; the bars themselves are `design/primitives/Progress`. */
+.listing,
+.copyProgress {
+  margin: 4px 0;
+}
+
 .copied {
   margin: 0;
   font-size: var(--fs-sm);

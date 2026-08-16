@@ -77,12 +77,37 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-__all__ = ["FIT_STEPS", "MAXWELL", "DeviceSpec", "GridConfig", "GridMap", "NoGridFound",
-           "fit_grid", "full_payload", "lattice_axes", "load_map_file", "measure_lattice",
-           "write_map_files"]
+__all__ = ["FIT_SPAN", "FIT_STEPS", "MAXWELL", "DeviceSpec", "GridConfig", "GridMap",
+           "NoGridFound", "fit_grid", "full_payload", "lattice_axes", "load_map_file",
+           "measure_lattice", "write_map_files"]
 
 #: The progress messages `fit_grid` emits, in order — callers map them to honest percentages.
+#: 🔴 **ADD A STEP HERE AND YOU MUST ADD IT TO `FIT_SPAN` TOO.** A caller looks its weight up by
+#: name, and a name that is not in the table falls back to 0 — which snaps the bar BACKWARDS to the
+#: start of the fit mid-run, the one thing R48.5 exists to stop. The two are kept in step by
+#: `tests/unit/test_electrodegrid.py`.
 FIT_STEPS = ("high-pass", "lattice fit", "array mask", "pad detection", "indexing", "assembling")
+
+#: step -> (start_fraction, end_fraction) of the whole fit. ⭐ **MEASURED, because the six are
+#: nowhere near equal** and a caller dividing by six drew a bar that crawled through `indexing` and
+#: then jumped a third of its length in one frame (BEHAVIOUR R48.5 — `pct` is overall).
+#: Timed 2026-08-16 on the synthetic 220 x 120 lattice `tests/unit/test_electrodegrid.lattice_image`
+#: builds (1879 x 3224 px, 2.02 s total): 6.2 / 16.7 / 17.8 / 12.1 / 38.6 / 8.6 %. A real survey
+#: mosaic is bigger in pixels than in pads, which shifts weight towards the two pixel-bound steps —
+#: so treat these as the shape of the cost, not as a promise about any one image.
+#:
+#: ⚠️ `indexing` (`_grow`) gets NO SUB-PROGRESS on purpose even though it is the biggest slice: it is
+#: a heap-driven region grow with no upfront count — the frontier is discovered as it goes — so any
+#: denominator would be invented. Its name is shown and its share of the bar is honest; per R48.9
+#: that is what a step with no countable unit is allowed to do, and the whole fit is only ~6 s.
+FIT_SPAN: dict[str, tuple[float, float]] = {
+    "high-pass":     (0.00, 0.06),
+    "lattice fit":   (0.06, 0.23),
+    "array mask":    (0.23, 0.41),
+    "pad detection": (0.41, 0.53),
+    "indexing":      (0.53, 0.92),
+    "assembling":    (0.92, 1.00),
+}
 
 
 def full_payload(gm: "GridMap", *, canvas_offset: tuple[float, float] = (0.0, 0.0),

@@ -9,7 +9,7 @@ import {
   type BlankScanBlock,
 } from '../../../../api';
 import { useToast } from '../../../../app';
-import { Button, cx } from '../../../../design';
+import { Button, Progress, cx, useDelayedFlag } from '../../../../design';
 import { patchWorkingDoc } from '../mutate';
 import { FactsStrip, Fact } from '../Fact';
 import type { ScreenStepProps } from '../types';
@@ -55,6 +55,13 @@ export function ScreenStep({ onNavigate }: ScreenStepProps) {
   const toast = useToast();
 
   const [proposal, setProposal] = useState<BlankProposal | null>(null);
+  /**
+   * ⏱️ R48.10 — **an in-flight scan and an empty answer are different states.** The empty grid used
+   * to double as the waiting state (`proposal ? 'Nothing recommended.' : 'Scanning…'`), so "still
+   * working" and "finished, found nothing" were the same screen — and a scan that FAILED was a third
+   * state wearing the first one's clothes forever (R48.9).
+   */
+  const [scan, setScan] = useState<'idle' | 'scanning' | 'done' | 'failed'>('idle');
   const passSplit = doc?.pass_split ?? null;
 
   const sessionState = useSession(sessionId);
@@ -66,12 +73,18 @@ export function ScreenStep({ onNavigate }: ScreenStepProps) {
   useEffect(() => {
     if (!sessionId || order.length === 0) return;
     let cancelled = false;
+    setScan('scanning');
     proposeScreen({ session_id: sessionId, trials: order, pass_split: passSplit }).then(
       (p) => {
-        if (!cancelled) setProposal(p);
+        if (cancelled) return;
+        setProposal(p);
+        setScan('done');
       },
       () => {
-        /* no proposal is a soft failure — the step still lets the user exclude by hand */
+        // No proposal is a soft failure — the step still lets the user exclude by hand. But it is
+        // SAID (R48.9); a wait that ends badly and shows the same words as one still running is the
+        // bug this ruling was written against.
+        if (!cancelled) setScan('failed');
       },
     );
     return () => {
@@ -186,6 +199,8 @@ export function ScreenStep({ onNavigate }: ScreenStepProps) {
         .join('\n\n')
     : '';
   const proposed = proposal?.proposed ?? [];
+  // R48.1 — the 400 ms grace. A scan that answers in 80 ms must not flash a bar on the way past.
+  const scanning = useDelayedFlag(scan === 'scanning');
 
   return (
     <div className={shell.pane}>
@@ -214,7 +229,31 @@ export function ScreenStep({ onNavigate }: ScreenStepProps) {
 
       <div className={styles.grid} data-testid="screen-grid">
         {proposed.length === 0 ? (
-          <div className={shell.muted}>{proposal ? 'Nothing recommended.' : 'Scanning…'}</div>
+          // R48.1 — nothing under the 400 ms grace; R48.10 — after it, three DIFFERENT sentences for
+          // three different states, never one that covers for the others.
+          // ⛔ `idle` counts as "not answered yet", NOT as the empty answer. The scan is fired from an
+          // effect, so the first paint of this step is always `idle` — rendering the empty answer
+          // there flashes a confident, wrong "Nothing recommended." before the request has even left,
+          // which is precisely the falsehood R48.10 forbids. It also covers the step mounted with no
+          // session at all, where nothing has been screened and nothing may be claimed about it.
+          scan === 'scanning' || scan === 'idle' ? (
+            scanning ? (
+              <Progress
+                data-testid="screen-scan-progress"
+                label="Looking for near-featureless frames"
+                pct={null}
+                // R48.7 — one request with nothing to poll; say so rather than show a dead button.
+                unstoppableWhy="this scan cannot be stopped once it starts"
+              />
+            ) : null
+          ) : scan === 'failed' ? (
+            <div className={shell.muted} data-testid="screen-scan-failed">
+              Camea could not screen these frames, so nothing is recommended. You can still exclude
+              by hand in the sweep.
+            </div>
+          ) : (
+            <div className={shell.muted}>Nothing recommended.</div>
+          )
         ) : (
           proposed.map((t) => {
             const choice = choiceOf(t);

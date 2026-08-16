@@ -154,6 +154,12 @@
   font-size: 13px;
   text-align: center;
 }
+
+/* ⏱️ R48 — the folder read's bar. Same padding as `.state`, but NOT centred: `<Progress>` lays its
+   own line out (label · time · stop) and centring pulls that row out of true. */
+.reading {
+  padding: 24px 12px;
+}
 .error {
   color: var(--danger);
   font-family: var(--font-mono);

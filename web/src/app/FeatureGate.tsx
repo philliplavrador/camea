@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { getProject } from '../api';
 import type { AnalysisSummary } from '../api';
-import { Button, Card } from '../design';
+import { Button, Card, Progress, useDelayedFlag } from '../design';
 // ⭐ RETIRED, STILL MOUNTED (2026-08-11): the SNAPSHOT builder moved to `src/legacy/mosaic` and is
 // no longer offered on the New-project screen — but a project already built with it must still
 // open, so this gate keeps dispatching `feature === 'mosaic'` to it. ⛔ Do not remove this arm.
@@ -31,6 +31,10 @@ type GateState =
 export function FeatureGate() {
   const { id } = useParams<{ id: string }>();
   const [state, setState] = useState<GateState>({ status: 'loading' });
+  // ⏱️ R48.1 — one round trip, usually well under the 400 ms grace; a bar that flashed on every
+  // project click would be worse than none. R48.9 — the read is a single request with no denominator
+  // and nothing to poll, so it is the travelling sliver, not a filling bar.
+  const opening = useDelayedFlag(state.status === 'loading');
 
   useEffect(() => {
     let live = true;
@@ -59,7 +63,17 @@ export function FeatureGate() {
   }, [id]);
 
   if (state.status === 'loading') {
-    return <p className={styles.loading}>Opening project…</p>;
+    return opening ? (
+      <div className={styles.loading}>
+        <Progress
+          data-testid="gate-progress"
+          label="Opening the project"
+          pct={null}
+          // R48.7 — one request with nothing to poll; the reason, not a dead button.
+          unstoppableWhy="opening a project cannot be stopped once it starts"
+        />
+      </div>
+    ) : null;
   }
   if (state.status === 'error') {
     return <GateCard title="Could not open the project" body={state.message} />;

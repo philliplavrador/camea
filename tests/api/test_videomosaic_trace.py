@@ -65,9 +65,11 @@ def _project(client, tmp_path, videosynth, mod, *, seconds: float,
     mea_dir = tmp_path / "MEA"
     mod.write_recording(mea_dir / "P0000" / "Network" / "000010" / "data.raw.h5",
                         n_samples=int(round(seconds * mod.FS_HZ)))
+    # ⭐ Attaching is a JOB since R48 (it opens every h5 it finds) — 202 + a poll.
     r = client.post("/api/videomosaic/mea/attach",
                     json={"analysis_id": aid, "mea_dir": str(mea_dir), "confirm": True})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
+    assert run_job(client, r.json()["job_id"])["result"]["kind"] == "mea_attach"
 
     # The grid, straight into the saved document — the disk is the interface these routes read
     # (the same staging move `test_mea_orientation.py` uses, for the same reason).

@@ -1350,6 +1350,101 @@ instant. A layout that separates them does not make the judgement harder; it mak
 
 ---
 
+### R48 — ⭐ EVERY WAIT SHOWS A BAR AND SAYS HOW LONG IS LEFT *(2026-08-16)*
+**His words:** *"everywhere where there's gonna be like some sort of loading or waiting period, make
+sure there's like some sort of progress bar with an ETA, like everywhere in the app."* And, when
+offered a way out for the cases where Camea cannot estimate: *"i find it hard you cannot figure out
+an ETA at all, so try."* And on cancelling: *"i dont see why not every action is stoppable."*
+
+**This is a UNIVERSAL rule, not a screen's rule.** It binds every feature that exists and every
+feature that does not exist yet. A new slow thing that ships without a bar is unfinished, and so is
+one whose bar has an empty time slot.
+
+**What it cost to not have it.** Sixty waiting sites were surveyed on 2026-08-16. **Exactly two of
+them produced an ETA** (the snapshot build, and the video build's `track` phase — 46 % of one run).
+Four screens rendered an ETA slot that was *always empty*. The one-minute end-to-end read of an MEA
+recording had its percentage **already on the wire and already fetched every 2 s by both trace
+panels, and both discarded it** to render the bare word `Reading…`. There were **five hand-rolled
+progress bars** in four stylesheets, three heights and two animation properties, and one of their own
+CSS comments admitted the drift. Nothing in the app carried `role="progressbar"`.
+
+**Statements that can fail:**
+
+- R48.1 **A wait longer than `WAIT_GRACE_MS` (400 ms) shows a `<Progress>`.** Under it, nothing —
+  a bar that flashes on every click is worse than no bar. The grace is a *delay before appearing*,
+  never a delay before starting the work. `useDelayedFlag` owns it; do not re-time it per screen.
+- R48.2 🔴 **THERE IS ONE BAR AND IT IS `design/primitives/Progress`.** Not a sixth copy, not a
+  local `.module.css` with a `width` transition in it. It carries `role="progressbar"` with
+  `aria-valuenow`/`aria-valuemin`/`aria-valuemax` when determinate and `aria-busy` when not. Height
+  is `--progress-h`, never a hard-coded `8px`. *(The five it replaced: `PlaceStep`,
+  `VideoMosaicFeature`, `ElectrodesStep`, `RecomputePanel`, and `RegionsStep` borrowing
+  `VideoMosaicFeature`'s module across a feature boundary.)*
+- R48.3 ⭐ **AN ETA IS THE DEFAULT. "Camea cannot say" is a claim that must be argued.** Nearly every
+  wait in this app has a countable unit sitting in the loop already — bytes copied, frames decoded,
+  samples read, tiles rendered, links registered, positions searched, files opened. **Find it and
+  divide.** `eta_from_fraction(elapsed, frac)` in `core/jobs.py` is the one estimator; a site that
+  cannot use it must say why in a comment at the call site, and the reason must be one of the ones
+  listed under R48.9.
+- R48.4 **A missing estimate is SAID, never left blank.** While a job is running with no anchor yet,
+  the time slot reads `working out how long this will take…` and the elapsed clock runs beside it.
+  An empty `<span>` where a time should be is the bug this ruling was written against. *(v1 had this
+  as `estimating…` and the React port silently dropped it; the resulting gap is 3 m 40 s long on the
+  CPU build path.)*
+- R48.5 🔴 **`pct` IS OVERALL, ACROSS THE WHOLE JOB.** A phase that reports its own 0→100 makes the
+  bar snap backwards at every phase boundary and makes any ETA derived from it count *up*. Weight the
+  phases against measured spans — `pipeline._SPAN` is the pattern that gets it right. *(Four jobs
+  violated this: both electrode maps, the region jobs, and the orientation test.)*
+- R48.6 **The bar names what is being waited for, in his words, not in a kind string.** `Job.label` /
+  `Job.said_as` carry it; every `submit_*` passes a `label`. `mea_envelope` is not a sentence —
+  *"reading the recording end to end"* is.
+- R48.7 ⭐ **STOPPABLE UNLESS IT GENUINELY IS NOT, and where it is not, the bar says so.** He asked
+  why not everything. The honest answer is that a `shutil.rmtree` and a native file dialog have
+  nothing to poll — so those say *"this one cannot be stopped once it starts"* rather than showing a
+  button that does nothing. Everything with a loop gets `check_cancelled()` at its natural boundary
+  and a Stop button. ⛔ **Never render a Stop that is not wired.**
+- R48.8 **Anything running is visible from anywhere.** A thin strip under the top bar (`RunningStrip`)
+  shows every live job with its label, its bar and its time, so walking away from the panel that
+  started the work does not lose sight of it. It is the *same* numbers as the inline bar, never a
+  second estimate.
+- R48.9 🔴 **A WAIT THAT ENDS MUST SAY THAT IT ENDED — including when it ends badly.** All three MEA
+  pollers stopped silently on *"nothing is running and it is still not ready"*, which is a real state
+  (an ActivityScan recording stores no continuous trace, so `start_envelope` returns `built: False`
+  and `ready` never comes true). A countdown that reaches zero and then vanishes with no sentence is
+  **worse** than the bare `Reading…` it replaced. The four accepted reasons an ETA may be absent, and
+  nothing else: an **unbounded directory walk** (no denominator exists until it returns — show a
+  count-up, *"14 recordings so far"*, never a bar), a **`rmtree`** (no callback), a **human** (a
+  native dialog), and a **genuinely silent phase of an uninterruptible kernel** (R8b — show elapsed).
+- R48.10 ⛔ **NEVER STATE A FALSEHOOD WHILE LOADING.** `RecordingShelf` rendered the heading
+  `0 recordings` for the whole time the list was in flight — a confident, wrong count that then
+  swapped. An in-flight fetch and an empty result are different states and must look different.
+  *(Same shape at `OutputsPanel`, `OrientationStep`'s footprint rail, and both trace panels' blank
+  body on a pad click.)*
+- R48.11 **An ETA may jump, and a bar may stall — honestly.** R8.3/R8.4 govern: clamp at zero, never
+  render a negative, take the server's upward revision. A region locate whose lattice zoom refuses
+  goes from 3 searched positions to 39; the ETA is *supposed* to jump there, and the message says
+  which mode is running.
+
+⚠️ **R48b — R8b STILL STANDS. This ruling does NOT license a server-side ETA heartbeat.** It looks
+like the way to satisfy R48.4 and it is not: the estimator is `eta = elapsed·(100−pct)/pct`, so
+re-emitting during a pinned-`pct` phase makes the ETA count **UP**. R48.4 is satisfied by the
+*client* — the elapsed clock and the `working out how long this will take…` text — which needs no new
+server message. §6.9 is unchanged.
+
+⛔ **What this ruling does NOT ask for, so nobody helpfully adds it:** no bar on the sweep's `Space`
+(R21's prefetch already hides it behind the 1 s fade — perceived latency is ~0 ms, and it is the
+most-repeated wait in the app); no bar on the autosave indicator (R29's `Saving…` dot is correctly
+invisible); no bar on a ~30 ms NCC score or a 0.5 s pad read (the dim-and-badge `previous` pattern in
+`MeaTrace` is already better than a bar and is the house answer for sub-second interactive reads);
+and no bar behind the full-resolution mosaic `<img>` (keeping the dimmed preview underneath beats a
+number).
+
+*Backed by `web/tests/e2e/progress-eta.spec.ts` (R48.1–R48.4, R48.8–R48.10) in the **live** lane, and
+by `web/src/api/jobs.test.ts` + `web/src/design/primitives/Progress.test.tsx` for the arithmetic and
+the ARIA. ⚠️ `place-eta.spec.ts` proves R8 but sits on `RETIRED_SNAPSHOT_SPECS` and does **not** run
+by default — do not extend it and call a thing tested.*
+
+---
+
 ## 2. THE SIX STEPS
 
 The step header is a progress indicator, not a menu (R4.2). The exact gate is in R4.3.

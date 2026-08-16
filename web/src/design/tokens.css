@@ -94,6 +94,11 @@
   --radius-pill: 999px;
   --step: 8px;
   --topbar-h: 52px;
+  /* the ONE progress bar's height (BEHAVIOUR R48.2). It was hard-coded 8px in three modules and 5px
+     in a fourth; that is what a missing token looks like. `-thin` is the compact bar, in a row. */
+  --progress-h: 8px;
+  --progress-h-thin: 5px;
+  --runstrip-h: 30px;
   --statusbar-h: 28px;
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 20px rgba(0, 0, 0, 0.35);

@@ -32,6 +32,39 @@ from camea.core import jobs
 
 PHASES = ("render", "fit", "write")
 
+#: phase -> (start_pct, end_pct). 🔴 **`pct` IS OVERALL, ACROSS THE WHOLE JOB (R48.5)** — and this
+#: stage is the ruling's own example of getting it wrong. Every phase used to report its own scale:
+#: render emitted `0.0`, fit crawled 0 -> 83, and then write emitted `0.0` again, so the last thing
+#: the user saw before the map appeared was the bar snapping back to empty.
+#:
+#: The weights are what this stage has been measured at, not guesses about it: `fit_grid` takes
+#: **~6 s** on the real 5319 x 7356 mosaic (`utils/knowledge/electrodes.md` — 6.1 s on the video
+#: mosaic, 5.9 s on P003693), a `feather` `render_mosaic` **~1.1 s**, and writing the JSON + CSV of
+#: 26,400 cells is well under a second. ⛔ These are the algorithm's proportions, not any dataset's:
+#: the fit dominates because it FFTs and matched-filters a 39 Mpx canvas, whatever produced it.
+_SPAN = {"render": (0.0, 15.0), "fit": (15.0, 97.0), "write": (97.0, 100.0)}
+
+
+def _emitter(report: Callable | None, t0: float) -> Callable[[str, float, str], None]:
+    """`emit(phase, frac, message)` — maps a phase-local 0..1 into that phase's slice of the whole
+    job and derives the ETA from **the overall pct** (R48.3/R48.5).
+
+    ⚠️ `frac` is 0..1 and `Progress.pct` is 0-100. That conversion lives HERE and nowhere else — a
+    fraction handed straight to `Progress.pct` freezes the UI bar at its floor, which this stage has
+    already done once.
+
+    ⛔ Nothing here runs on a timer. With `pct` pinned, a clock-driven re-emit makes the ETA count
+    *up* — that is R8b, and R48b did not lift it. Call this only where the counter moved.
+    """
+    def emit(phase: str, frac: float, message: str) -> None:
+        lo, hi = _SPAN[phase]
+        pct = lo + (hi - lo) * min(1.0, max(0.0, float(frac)))
+        # ⚠️ `phase_index` stays 0-based here: the UI renders `phaseIndex + 1`.
+        jobs.say(report, phase, PHASES.index(phase), len(PHASES), pct, message,
+                 jobs.eta_from_fraction(time.monotonic() - t0, pct / 100.0))
+
+    return emit
+
 
 def positions_stamp(doc: dict, *, include_unverified: bool = True) -> str:
     """Checksum of the placed positions a map is computed FROM. 2 dp — the precision the
@@ -71,10 +104,15 @@ def map_electrodes(
 
     out_dir = Path(out_dir)
     positions = mdoc.positions(doc, include_unverified=include_unverified)
+    emit = _emitter(report, time.monotonic())
 
-    jobs.say(report, "render", 0, len(PHASES), 0.0, "rendering the mosaic")
+    emit("render", 0.0, "rendering the mosaic")
+    # ⏱️ The countable unit of the render is TILES — `render_mosaic`'s sink already scrapes
+    # `rendered k/N` out of the compositor's stdout, and passing nothing here threw it away.
     img, cov = mexport.render_mosaic(
-        frames, positions, mode="feather", flat=True, cancel=cancel)
+        frames, positions, mode="feather", flat=True, cancel=cancel,
+        report=(lambda pct, *_: emit("render", float(pct) / 100.0, "rendering the mosaic"))
+        if report is not None else None)
 
     # the canvas↔world tie: engine.render subtracts the elementwise min over the tiles it
     # actually drew — recompute it over the SAME filtered position set the render used
@@ -86,10 +124,13 @@ def map_electrodes(
 
     def fit_progress(msg: str) -> None:
         jobs.check_cancelled(cancel, "electrode map")
-        steps = electrodegrid.FIT_STEPS
-        idx = steps.index(msg) if msg in steps else 0
-        # ⚠️ `Progress.pct` is 0-100, not 0-1 — a fraction here freezes the UI bar at its floor
-        jobs.say(report, "fit", 1, len(PHASES), 100.0 * idx / len(steps), msg)
+        # ⏱️ The six fit steps are NOT equal cost — `electrodegrid.FIT_SPAN` is the measured shape,
+        # and dividing by six is what made this bar crawl through `indexing` and then leap (R48.5).
+        # ⛔ ONE copy of that measurement, and it is the engine's: the videomosaic electrode map
+        # reads the same table. `fit_grid` announces a step BEFORE running it, so the step's own `lo`
+        # is how far the fit has actually got.
+        lo, _hi = electrodegrid.FIT_SPAN.get(msg, (0.0, 0.0))
+        emit("fit", lo, msg)
 
     # ⭐ R45.8. The device spec goes in for BOTH coverage modes — it is what buys the µm scale
     # (17.5 µm over the pitch this image measures). Only `enforce_shape` is conditional: the
@@ -100,7 +141,9 @@ def map_electrodes(
                                 device=electrodegrid.MAXWELL,
                                 enforce_shape=(array_coverage == "full"))
 
-    jobs.say(report, "write", 2, len(PHASES), 0.0, "writing the electrode table")
+    # the last boundary a stop can be taken at: everything after this writes files (R48.7)
+    jobs.check_cancelled(cancel, "electrode map")
+    emit("write", 0.0, "writing the electrode table")
     built_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     # canvas px -> document world px (the viewer's own space)
     payload = electrodegrid.full_payload(
@@ -117,6 +160,7 @@ def map_electrodes(
 
     names = {"map": f"{basename}-electrodes.json", "csv": f"{basename}-electrodes.csv"}
     electrodegrid.write_map_files(payload, out_dir / names["map"], out_dir / names["csv"])
+    emit("write", 1.0, f"wrote {names['map']} and {names['csv']}")
 
     # R45.8: the DOCUMENT keeps the block, so a reopened project still knows whether `1-1` is the
     # chip's corner or only the imaged region's, and the panel can say "whole chip · +1 col

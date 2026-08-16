@@ -21,17 +21,8 @@
   color: var(--text-faint);
 }
 
-.meter {
-  height: 5px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-inset);
-  overflow: hidden;
-  margin: 8px 0 0;
-}
-
-.meterFill {
-  height: 100%;
-  border-radius: var(--radius-pill);
-  background: var(--anchored);
-  transition: width var(--dur-fast) var(--ease);
+/* ⛔ The 5 px solid-green meter that used to live here is gone: there is ONE bar and it is
+   `design/primitives/Progress` (R48.2). All this class does now is space it off the button. */
+.progress {
+  margin-top: 8px;
 }

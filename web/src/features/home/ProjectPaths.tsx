@@ -15,10 +15,12 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from 'react';
-import { datasetsAt, getSettings } from '../../api';
+import { datasetsAt, getSettings, useJob, useStopJob } from '../../api';
 import type { DatasetSummary } from '../../api';
 import { Button } from '../../design/primitives/Button';
 import { Help } from '../../design/primitives/Help';
+import { Progress } from '../../design/primitives/Progress';
+import { useDelayedFlag } from '../../design/primitives/useDelayedFlag';
 import { cx } from '../../design/cx';
 import { FolderPicker } from '../../core/picker/FolderPicker';
 import { PathField } from './PathField';
@@ -43,6 +45,14 @@ export function ProjectPaths({ onReady, onCreate, busy }: ProjectPathsProps) {
   const [dataset, setDataset] = useState<DatasetSummary | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
   const [browsingFrom, setBrowsingFrom] = useState(false);
+  // ⏱️ R48 — the scan reports in two stages and the bar renders both: a count-up with NO denominator
+  // while the tree is walked (R48.9 — so `pct` stays null and the bar is a travelling sliver, never a
+  // filling one), then a real percentage and a real estimate over the opens.
+  const [scanRunning, setScanRunning] = useState(false);
+  const [scanJobId, setScanJobId] = useState<string | null>(null);
+  const scanJob = useJob(scanJobId);
+  const stopJob = useStopJob();
+  const scanning = useDelayedFlag(scanRunning);
 
   // The paths he has used before — the only thing offered back, and only ever paths.
   useEffect(() => {
@@ -66,7 +76,16 @@ export function ProjectPaths({ onReady, onCreate, busy }: ProjectPathsProps) {
   /** ⚠️ Throws on failure ON PURPOSE — PathField shows the backend's message inline and KEEPS the
    *  typed text. A toast here would throw away what he wrote. */
   const lookAt = useCallback(async (path: string) => {
-    const body = await datasetsAt(path);
+    setScanRunning(true);
+    let body;
+    try {
+      // ⏱️ The scan is a JOB (R48) because it is two waits, not one: a directory walk of unbounded
+      // breadth, then ~0.2 s of `log.txt` + XML per acquisition it turned up.
+      body = await datasetsAt(path, { onProgress: (j) => setScanJobId(j.job_id) });
+    } finally {
+      setScanRunning(false);
+      setScanJobId(null);
+    }
     if (body.datasets.length === 0) {
       throw new Error(
         'no dataset in that folder — a dataset is a folder with a log.txt beside NNN.xml frames.',
@@ -94,6 +113,26 @@ export function ProjectPaths({ onReady, onCreate, busy }: ProjectPathsProps) {
           onBrowse={() => setBrowsingFrom(true)}
           data-testid="from-field"
         />
+
+        {scanning && (
+          <Progress
+            className={styles.scan}
+            data-testid="from-scan-progress"
+            label={scanJob.job?.said_as || 'Looking through that folder'}
+            // Stage 1 has no denominator, so `pct` is null and the message carries the count-up
+            // ("14 datasets so far"); stage 2 sends a real percentage and the bar fills (R48.9).
+            pct={scanJob.pct}
+            etaText={scanJob.etaText}
+            elapsedText={scanJob.elapsedText}
+            phase={scanJob.phase}
+            message={scanJob.message}
+            onStop={
+              scanJobId && !scanJob.isTerminal && (scanJob.job?.cancellable ?? true)
+                ? () => void stopJob(scanJobId)
+                : undefined
+            }
+          />
+        )}
 
         {found.length > 1 && !dataset && (
           <div className={styles.choose} data-testid="dataset-choices">

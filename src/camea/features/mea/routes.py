@@ -926,9 +926,13 @@ def get_mea_channel_trace(analysis_id: str, recording_id: str,
                 if env is None:
                     raise ApiError(
                         409, "refused",
-                        "Camea has not finished reading this recording end to end yet, so it "
-                        "cannot show you the whole of it at once. It is a one-off job of about a "
-                        "minute per recording.",
+                        # ⚠️ Kept byte-identical with `web/src/core/trace/wholeRecording.ts ::
+                        # NOT_READ_YET` and with videomosaic's copy of this refusal. ⛔ It must not
+                        # promise a minute: `read_turn` reads one recording at a time, so the fifth
+                        # of a backfill waits for the four in front of it (R48).
+                        "Camea has not read this recording end to end yet, so it cannot show "
+                        "you the whole of it at once. It is a one-off job per recording, and "
+                        "Camea reads one recording at a time.",
                         {"recording_id": recording_id, "needs": "envelope"},
                     )
                 got = env.window(channel, start, end, max_points)

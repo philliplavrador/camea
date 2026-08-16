@@ -49,8 +49,9 @@ cannot even load.
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 import numpy as np
 from fastapi import APIRouter, HTTPException
@@ -89,7 +90,14 @@ from camea.api.schemas import (
 from camea.core import dataset as core_dataset
 from camea.core import document as core_document
 from camea.core.frames import TEXTURE_MEASURE, FrameStore
-from camea.core.jobs import JOBS, Busy, Progress, check_cancelled, report_adapter
+from camea.core.jobs import (
+    JOBS,
+    Busy,
+    Progress,
+    check_cancelled,
+    eta_from_counts,
+    report_adapter,
+)
 from camea.core.workspace import DatasetIsReadOnly, app_state_dir, refuse_write, safe_basename
 
 # =================================================================================================
@@ -701,6 +709,7 @@ def post_build(body: BuildStartRequest) -> dict:
                 "cache_dir": cache_dir,
             },
             exclusive="gpu",
+            label="placing the tiles",
         )
     except Busy as e:
         raise ApiError(409, "busy", str(e) or "a job already holds the GPU") from e
@@ -954,6 +963,42 @@ def _anchor_field(doc: dict) -> dict[int, tuple[float, float]]:
     return out
 
 
+def _target_eta(n: int) -> Callable[[int], float | None]:
+    """⏱️ The per-target ETA both anchor loops below share (R48.3). `eta(i)` = seconds left with `i`
+    targets finished, or `None` while it is too early to say.
+
+    `recheck` and `recompute` are the same loop — one `match_anchor(mode="global")` per target,
+    against an anchor set that is **fixed for the whole run** — so the countable unit is obvious
+    (**targets**) and every target after the first costs the same.
+
+    ⚠️ **The first target is not like the others, and timing from it poisons the whole estimate.**
+    It is the one that pays for the reference composite the rest reuse (`solve`'s incremental cache
+    builds it once), so a rate measured from target 0 charges all ~300 of them for a warm-up exactly
+    one of them paid and the first number on screen opens far too high. Anchor the clock *after* the
+    first target and divide by the targets that ran under the warm cache.
+
+    ⛔ **The estimator's 2 % floor stays.** It is tempting to pass `min_fraction=0.0` and put a number
+    on screen at target 2 instead of target 7 — one warm target looks like a fair sample when the
+    anchor set is fixed. **It is not, and `match_anchor` says so itself:** a *refused* target (a blank,
+    from `doc.blank_scan`) returns before a single pixel is matched, and a repeat call is *memoised* to
+    ~1 ms. Either one landing at target 1 is the whole estimate. Driven, n = 300, target 1 refused: the
+    first ETA reads **1.5 s**, then 159 s, 211 s, 237 s, 252 s — it **counts up by 180x**, which is the
+    exact failure R48/R8b exist to prevent. With the floor the slot stays blank for ~6 targets (~7 s of
+    a ~5 min run) and R48.4's *"working out how long this will take…"* covers it honestly.
+    """
+    t_warm = 0.0
+
+    def eta(i: int) -> float | None:
+        nonlocal t_warm
+        if i == 1:
+            t_warm = time.monotonic()
+        if i < 2:
+            return None
+        return eta_from_counts(time.monotonic() - t_warm, i - 1, n - 1)
+
+    return eta
+
+
 @router.post("/recheck", response_model=JobRef, status_code=202)
 def post_recheck(body: RecheckRequest) -> dict:
     """`POST /api/mosaic/recheck` -> **202 `JobRef`**. It is N x ~1 s, so it never blocks.
@@ -996,11 +1041,12 @@ def post_recheck(body: RecheckRequest) -> dict:
         rows: list[dict] = []
         cleared: list[int] = []
         n = len(targets)
+        eta = _target_eta(n)
         for i, t in enumerate(targets):
             check_cancelled(cancel, "recheck")
             report(Progress(phase="recheck", phase_index=i + 1, n_phases=max(1, n),
                             pct=(100.0 * i / n if n else 100.0),
-                            message=f"trial {t} ({i + 1}/{n})"))
+                            message=f"trial {t} ({i + 1}/{n})", eta_s=eta(i)))
 
             anchors = sorted(a for a in field if a != t)
             res = solve.match_anchor(s.frames, t, anchors, dict(field),
@@ -1040,7 +1086,8 @@ def post_recheck(body: RecheckRequest) -> dict:
     # interactive `_need_gpu_free()` above only refuses to START while a lease is held; the lease is
     # what stops the reverse race — a build starting mid-recheck.
     try:
-        job = JOBS.submit_thread("recheck", fn, exclusive="gpu")
+        job = JOBS.submit_thread("recheck", fn, exclusive="gpu",
+                                 label="re-checking every stale tile")
     except Busy as e:
         raise ApiError(409, "busy", str(e) or "a job already holds the GPU") from e
     return {"job_id": job.job_id, "kind": "recheck"}
@@ -1103,11 +1150,12 @@ def post_recompute(body: RecomputeRequest) -> dict:
         placed: dict[int, tuple[float, float]] = {}
         n_unmeasurable = 0
         n = len(targets)
+        eta = _target_eta(n)
         for i, t in enumerate(targets):
             check_cancelled(cancel, "recompute")
             report(Progress(phase="recompute", phase_index=i + 1, n_phases=max(1, n),
                             pct=(100.0 * i / n if n else 100.0),
-                            message=f"trial {t} ({i + 1}/{n})"))
+                            message=f"trial {t} ({i + 1}/{n})", eta_s=eta(i)))
 
             res = solve.match_anchor(s.frames, t, anchors, dict(field),
                                      mode="global", refuse=refuse)
@@ -1135,7 +1183,8 @@ def post_recompute(body: RecomputeRequest) -> dict:
     # ⭐ HOLDS THE `gpu` LEASE, exactly as `build`, `export` and `recheck` do — it fires a GPU
     # `match_anchor` per target.
     try:
-        job = JOBS.submit_thread("recompute", fn, exclusive="gpu")
+        job = JOBS.submit_thread("recompute", fn, exclusive="gpu",
+                                 label="placing the rest against your anchors")
     except Busy as e:
         raise ApiError(409, "busy", str(e) or "a job already holds the GPU") from e
     return {"job_id": job.job_id, "kind": "recompute"}
@@ -1206,7 +1255,8 @@ def post_export(body: ExportRequest) -> dict:
         )
 
     try:
-        job = JOBS.submit_thread("export", fn, exclusive="gpu")
+        job = JOBS.submit_thread("export", fn, exclusive="gpu",
+                                 label="exporting the mosaic")
     except Busy as e:
         raise ApiError(409, "busy", str(e) or "a job already holds the GPU") from e
     return {"job_id": job.job_id, "kind": "export"}
@@ -1284,7 +1334,8 @@ def post_electrodes_map(body: ElectrodeMapRequest) -> dict:
         return {"kind": "electrode_map", "analysis_id": analysis_id, **result}
 
     try:
-        job = JOBS.submit_thread("electrode_map", fn, exclusive="gpu")
+        job = JOBS.submit_thread("electrode_map", fn, exclusive="gpu",
+                                 label="mapping the electrode grid")
     except Busy as e:
         raise ApiError(409, "busy", str(e) or "a job already holds the GPU") from e
     return {"job_id": job.job_id, "kind": "electrode_map"}

@@ -69,17 +69,26 @@
 }
 
 /* ── the several-at-once queue ─────────────────────────────────────────────── */
-
-.queueLine {
-  font: 600 var(--fs-readout) / 1.4 var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--data);
-}
+/* ⛔ `.queueLine` is GONE with R48: "Placing 2 of 5 — 3 waiting" was the whole readout, with no
+   bar, no time and no name for the file in the machine. All four now come off `<Progress>`. */
 
 .queueActions {
   margin-top: 6px;
   display: flex;
   justify-content: flex-end;
+}
+
+/* ⭐ R48.6 — ONE SENTENCE for the eleven controls that grey out together. It sits with the bar at
+   the top of the rail and names the work in the backend's own words (`said_as`), so the top strip
+   and this line never disagree about what Camea is doing. */
+.busyNote {
+  margin: 0;
+  padding: 7px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+  color: var(--text-soft);
+  font: 500 var(--fs-small) / 1.45 var(--font-sans);
 }
 
 /* Each refused file with its sentence, verbatim — a list, because there may be several. */
@@ -143,6 +152,14 @@
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-card));
 }
 
+/* ⭐ R48.6 — the row in the machine. Scrolled far from the bar at the top of the rail, THIS is the
+   only thing that says which recording the wait belongs to; the accent edge reads at a glance and
+   the chip beside the name says it in words. */
+.itemRunning {
+  border-left-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
 .name {
   flex: 1;
   min-width: 0;
@@ -186,6 +203,13 @@
 .chipOk {
   color: var(--anchored);
   background: color-mix(in srgb, var(--anchored) 16%, transparent);
+}
+
+/* The recording Camea is working on right now (R48.6) — chrome reporting on itself, so the accent,
+   the same one the bar uses. */
+.chipRunning {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 /* R46.10 · R47.7 — the row a rebuild invalidated, in the app's warning colour, on the page. */

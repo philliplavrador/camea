@@ -179,6 +179,12 @@ class Job(Res):
     job_id: str
     kind: JobKind
     state: JobState
+    said_as: str = Field(
+        default="",
+        description="⭐ BEHAVIOUR R48.6 — what this job is doing, in plain words, for the bar's "
+        'label and for a busy refusal that has to name it ("copying a recording in"). Never empty: '
+        "a submit site that passed no label gets a humanized kind.",
+    )
     phase: str | None = None
     phase_index: int | None = None
     n_phases: int | None = None
@@ -206,6 +212,34 @@ class Job(Res):
 
 class JobListResponse(Res):
     jobs: list[Job] = Field(description="Newest first.")
+
+
+class RunningJob(Res):
+    """One live job, slimmed for the top strip (BEHAVIOUR R48.8).
+
+    ⚠️ **Deliberately NOT `Job`.** The strip polls from every screen in the app, continuously, and
+    `GET /api/jobs` serialises every job in history — including finished ones whose `result` embeds
+    an entire document that is then re-validated through the discriminated union on each call. This
+    shape carries no `result`, no `log_tail` and no traceback so the strip stays cheap.
+    """
+
+    job_id: str
+    kind: JobKind
+    state: JobState
+    said_as: str = Field(description="What it is doing, in plain words (R48.6). Never empty.")
+    phase: str | None = None
+    pct: float | None = Field(default=None, ge=0.0, le=100.0)
+    message: str | None = None
+    elapsed_s: float | None = None
+    eta_s: float | None = Field(default=None, description="Seconds remaining, or null. May JUMP UP.")
+    cancellable: bool = True
+
+
+class RunningJobsResponse(Res):
+    jobs: list[RunningJob] = Field(
+        description="Only queued/running jobs, OLDEST FIRST so a new one does not shove the one "
+        "being read down the screen."
+    )
 
 
 # =================================================================================================
@@ -375,6 +409,18 @@ class DatasetListResponse(Res):
     skipped: list[str] = Field(
         default_factory=list, description="Folders that looked like a dataset but could not be read."
     )
+
+
+class DatasetScanResult(DatasetListResponse):
+    """`Job.result` when `kind == "dataset_scan"` — what `POST /api/datasets/at` found.
+
+    ⭐ **The scan is a JOB (BEHAVIOUR R48).** It walks a directory tree of unbounded breadth and then
+    pays ~0.2 s opening every acquisition it found; behind a synchronous request that was one static
+    word on screen for as long as it took. The walk has no denominator (R48.9), so it counts up —
+    *"14 datasets so far"* — and the opens that follow are a real bar with a real estimate.
+    """
+
+    kind: Literal["dataset_scan"] = "dataset_scan"
 
 
 class DatasetAtRequest(Req):
@@ -745,6 +791,19 @@ class CopyOutputsResponse(Res):
     dest: str
 
 
+class CopyOutputsResult(CopyOutputsResponse):
+    """`Job.result` when `kind == "outputs_copy"` — the copy has landed.
+
+    ⭐ **The copy is a JOB (BEHAVIOUR R48).** It is the one way work leaves Camea (R44) and it moves
+    whole 16-bit mosaics; the bar counts BYTES and names the file in flight. ⛔ The three refusals
+    still run **before** the job is submitted, so a clash is still a 409 on the request that asked
+    for it and still refuses the WHOLE request — never a job that half-copies and then fails.
+    """
+
+    kind: Literal["outputs_copy"] = "outputs_copy"
+    bytes: int = Field(default=0, description="Total bytes copied. What the bar was counting.")
+
+
 # =================================================================================================
 # DOCUMENTS — save / load / autosave.  CORE envelope; the FEATURE owns the payload.
 # =================================================================================================
@@ -909,6 +968,18 @@ class LoadDocumentResponse(Res):
     migrated_from: str | None = Field(
         default=None, description="The old schema_version, if the file was migrated on the way in."
     )
+
+
+class LoadDocumentResult(LoadDocumentResponse):
+    """`Job.result` when `kind == "document_load"`.
+
+    ⭐ **Loading a project is a JOB (BEHAVIOUR R48).** It runs the same `FrameStore.load` the open
+    job does — ~5 s and 340 MiB — and until 2026-08-16 it ran it on the request thread with no job,
+    no bar and no way to stop it: the starkest asymmetry in the app, because the identical work
+    thirty lines away had all three. It reports the same seven `OPEN_PHASES`.
+    """
+
+    kind: Literal["document_load"] = "document_load"
 
 
 class DocumentProblem(Res):
@@ -2385,6 +2456,25 @@ class MeaAttachRequest(Req):
     orientation: MeaOrientation | None = None
 
 
+class MeaAttachResult(Res):
+    """`job.result` of a `mea_attach` job — what the scan found, and whether it was saved.
+
+    ⭐ **`POST /api/videomosaic/mea/attach` became a job on 2026-08-16 (R48).** It walks a
+    directory tree and then opens every `data.raw.h5` under it through HDF5 — an unbounded number
+    of unbounded reads that used to run on the request thread with no bar, no estimate and no way
+    to stop it, and that *"Use this seating"* re-ran in full behind a frozen screen. `attachment`
+    is byte for byte what the route used to return; a caller reads it where it used to read the
+    response body.
+    """
+
+    kind: Literal["mea_attach"] = "mea_attach"
+    analysis_id: str
+    confirmed: bool = Field(
+        description="True when this run also SAVED the attachment onto the project (`confirm`). "
+        "False = it only reported what it found, which is the two-step's first half.")
+    attachment: MeaAttachment
+
+
 class MeaFootprintRegion(Res):
     """How many of one located region's pads a seating actually covers — pure geometry."""
 
@@ -3235,9 +3325,10 @@ class MeaChannelTrace(Res):
 # of an `any`. **A new feature adds a member here, and nowhere else.**
 
 JobResult = Annotated[
-    Union[OpenJobResult, BuildResult, ExportResult, RecheckResult, RecomputeResult,
+    Union[OpenJobResult, DatasetScanResult, LoadDocumentResult, CopyOutputsResult,
+          BuildResult, ExportResult, RecheckResult, RecomputeResult,
           VideoMosaicBuildResult, ElectrodeMapResult, LocateRegionResult,
-          OrientationTestResult, MeaCopyResult, MeaEnvelopeResult],
+          OrientationTestResult, MeaAttachResult, MeaCopyResult, MeaEnvelopeResult],
     Field(discriminator="kind"),
 ]
 
@@ -3299,6 +3390,7 @@ __all__ = [
     "ElectrodeMapResult",
     "ElectrodeTracePayload",
     "MeaAttachRequest",
+    "MeaAttachResult",
     "MeaAttachment",
     "MeaFootprintPayload",
     "MeaFootprintRegion",
@@ -3341,6 +3433,7 @@ __all__ = [
     "AnalysisRef",
     "DatasetSummary",
     "DatasetListResponse",
+    "DatasetScanResult",
     "DatasetAtRequest",
     "TrialMeta",
     "DatasetDetail",
@@ -3367,6 +3460,7 @@ __all__ = [
     "OutputListResponse",
     "CopyOutputsRequest",
     "CopyOutputsResponse",
+    "CopyOutputsResult",
     "CreateAnalysisRequest",
     # documents
     "AppStamp",
@@ -3381,6 +3475,7 @@ __all__ = [
     "AutosaveRequest",
     "LoadDocumentRequest",
     "LoadDocumentResponse",
+    "LoadDocumentResult",
     "DocumentProblem",
     "ValidateDocumentRequest",
     "ValidationReport",

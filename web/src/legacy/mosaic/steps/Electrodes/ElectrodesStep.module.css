@@ -110,45 +110,10 @@
   background: var(--accent);
 }
 
-/* ── the map job (mirrors the videomosaic/Place progress block) ───────────── */
-.barWell {
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--bg-inset);
-  overflow: hidden;
-  margin-bottom: 10px;
-}
-
-.bar {
-  height: 100%;
-  width: 100%;
-  border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
-  transform-origin: left;
-  transition: transform var(--dur) var(--ease);
-}
-
-.progressRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.phase {
-  font-family: var(--font-mono);
-  font-size: var(--fs-readout);
-  color: var(--text-dim);
-  text-transform: lowercase;
-}
-
-.eta {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: var(--fs-readout);
-  font-weight: 600;
-  color: var(--data);
-  font-variant-numeric: tabular-nums;
-}
+/* ── the map job ──────────────────────────────────────────────────────────
+   ⛔ The bar that "mirrored the videomosaic/Place progress block" is deleted: mirroring was the
+   problem. There is ONE bar and it is `design/primitives/Progress` (R48.2) — this one was 8 px and
+   animated `scaleX` where Place was 8 px and animated `width`, and its ETA span was always empty. */
 
 /* The Map button sits UNDER the coverage question (R45.8) — it is the answer's consequence. */
 .mapRow {

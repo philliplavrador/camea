@@ -27,6 +27,10 @@ const ID = 'e2e-seating';
 const BUILT_AT = '2026-08-15T09:00:00Z';
 const CANVAS = { w: 1200, h: 900 };
 const OJOB = 'e2e-seating-job';
+/** ⏱️ R48 — `POST /mea/attach` answers **202 `JobRef`** since 2026-08-16; the attachment comes back
+ *  as the job's `MeaAttachResult`. This stub used to fulfil the attachment straight off the POST,
+ *  which now leaves the client polling `/api/jobs/undefined` and "Use this seating" never landing. */
+const AJOB = 'e2e-seating-attach-job';
 
 /** A 1×1 PNG, so the preview `<img>`s (stage and card thumbnails) genuinely LOAD. */
 const PNG = Buffer.from(
@@ -368,8 +372,23 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
     };
     stub.attaches.push(body as unknown as Record<string, unknown>);
     if (body.orientation) stub.orientation = body.orientation;
-    await json(route, attachment());
+    // ⏱️ R48 — 202 and a job id; the attachment is the job's result, below.
+    await json(route, { job_id: AJOB, kind: 'mea_attach', state: 'queued' }, 202);
   });
+  await page.route(new RegExp(`${ROUTES.jobs}/${AJOB}$`), (r) =>
+    json(r, {
+      job_id: AJOB,
+      kind: 'mea_attach',
+      state: 'done',
+      pct: 100,
+      result: {
+        kind: 'mea_attach',
+        analysis_id: ID,
+        confirmed: true,
+        attachment: attachment(),
+      },
+    }),
+  );
 
   await page.route(new RegExp(`${vm}/mea/orientation$`), (r) =>
     json(r, { job_id: OJOB, kind: 'mea_orientation', state: 'queued' }, 202),

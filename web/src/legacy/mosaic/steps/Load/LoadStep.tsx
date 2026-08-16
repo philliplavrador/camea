@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useSweepStore, counts as computeCounts } from '../../store';
-import { pickDirectory } from '../../../../api';
+import { pickDirectory, useJob, useStopJob } from '../../../../api';
 import { useToast } from '../../../../app';
-import { Button, Help } from '../../../../design';
+import { Button, Help, Progress, useDelayedFlag } from '../../../../design';
 import type { LoadStepProps } from '../types';
 import shell from '../step.module.css';
 import styles from './LoadStep.module.css';
@@ -28,7 +28,7 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
  * ⛔ There is NO `#load-result`: opening a directory NAVIGATES (R4.5/§6.6); it never reveals a result
  * block in place.
  */
-export function LoadStep({ onOpenDirectory, onLoadProject, openPhase }: LoadStepProps) {
+export function LoadStep({ onOpenDirectory, onLoadProject, openPhase, openJobId }: LoadStepProps) {
   const doc = useSweepStore((s) => s.doc);
   const order = useSweepStore((s) => s.order);
   const toast = useToast();
@@ -37,6 +37,11 @@ export function LoadStep({ onOpenDirectory, onLoadProject, openPhase }: LoadStep
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<string | null>(null);
 
+  // ⏱️ R48 — the open job's percentage and estimate were on the wire and this screen rendered one
+  // line of phase text. `useJob` owns the ticking countdown (R8); nothing is re-timed here.
+  const openJob = useJob(openJobId ?? null);
+  const stopJob = useStopJob();
+
   // Seed the directory field from the opened dataset once, without fighting the user's typing.
   useEffect(() => {
     if (doc?.data_dir && dir === '') setDir(doc.data_dir);
@@ -44,6 +49,9 @@ export function LoadStep({ onOpenDirectory, onLoadProject, openPhase }: LoadStep
 
   const excluded = doc ? computeCounts(doc.tiles, order).excluded : 0;
   const activePhase = openPhase ?? phase;
+  // R48.1 — the pre-job round trips (reading the project, reading the dataset) are usually fast;
+  // show nothing under the 400 ms grace rather than flashing a bar past him.
+  const showPhaseBar = useDelayedFlag(activePhase != null && !openJobId);
 
   async function browse() {
     const picked = await pickDirectory({ start: dir || doc?.data_dir || null });
@@ -147,7 +155,32 @@ export function LoadStep({ onOpenDirectory, onLoadProject, openPhase }: LoadStep
       </div>
 
       <div className={styles.phase} data-testid="load-phase" aria-live="polite">
-        {activePhase}
+        {openJobId ? (
+          <Progress
+            data-testid="load-progress"
+            label={openJob.job?.said_as || 'Opening the dataset'}
+            pct={openJob.pct}
+            etaText={openJob.etaText}
+            elapsedText={openJob.elapsedText}
+            phase={openJob.phase}
+            message={openJob.message}
+            onStop={
+              !openJob.isTerminal && (openJob.job?.cancellable ?? true)
+                ? () => void stopJob(openJobId)
+                : undefined
+            }
+          />
+        ) : showPhaseBar && activePhase ? (
+          // No job yet — a plain round trip. The bar is honest about having no denominator (R48.9):
+          // the travelling sliver, and the time slot says so rather than sitting empty (R48.4).
+          <Progress
+            data-testid="load-progress"
+            label={activePhase}
+            pct={null}
+            // R48.7 — no job behind this leg, so nothing to cancel; the reason, not a dead button.
+            unstoppableWhy="this step cannot be stopped once it starts"
+          />
+        ) : null}
       </div>
 
       <h2 className={shell.h2}>

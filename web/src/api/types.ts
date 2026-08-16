@@ -23,6 +23,9 @@ export type JobRef = Schemas['JobRef'];
 export type JobError = Schemas['JobError'];
 export type JobListResponse = Schemas['JobListResponse'];
 export type JobCancelResponse = Schemas['JobCancelResponse'];
+/** One live job, slimmed for the top strip (BEHAVIOUR R48.8). No `result`, no `log_tail`. */
+export type RunningJob = Schemas['RunningJob'];
+export type RunningJobsResponse = Schemas['RunningJobsResponse'];
 /** The five lifecycle states a job moves through. */
 export type JobState = Job['state'];
 export type OpenJobResult = Schemas['OpenJobResult'];
@@ -35,7 +38,16 @@ export type RecomputeResult = Schemas['RecomputeResult'];
 
 // ── Datasets / browser ────────────────────────────────────────────────────────
 export type DatasetSummary = Schemas['DatasetSummary'];
-export type DatasetListResponse = Schemas['DatasetListResponse'];
+/**
+ * What looking at a folder found — `Job.result` when `kind === 'dataset_scan'`.
+ *
+ * ⚠️ **`DatasetListResponse` is gone from the generated contract** (R48, 2026-08-16):
+ * `POST /api/datasets/at` answers 202 `JobRef` now, so no route names the plain response any more
+ * and the generator stopped emitting it. The shape is unchanged — this subclasses it and adds
+ * `kind` — so the old name below still resolves and callers reading `.datasets` did not change.
+ */
+export type DatasetScanResult = Schemas['DatasetScanResult'];
+export type DatasetListResponse = DatasetScanResult;
 export type DatasetDetail = Schemas['DatasetDetail'];
 export type DatasetAtRequest = Schemas['DatasetAtRequest'];
 export type TrialMeta = Schemas['TrialMeta'];
@@ -76,7 +88,9 @@ export type SaveResult = Schemas['SaveResult'];
 export type SaveDocumentRequest = Schemas['SaveDocumentRequest'];
 export type AutosaveRequest = Schemas['AutosaveRequest'];
 export type LoadDocumentRequest = Schemas['LoadDocumentRequest'];
-export type LoadDocumentResponse = Schemas['LoadDocumentResponse'];
+/** `Job.result` when `kind === 'document_load'`. Same note as `DatasetScanResult` above (R48). */
+export type LoadDocumentResult = Schemas['LoadDocumentResult'];
+export type LoadDocumentResponse = LoadDocumentResult;
 export type ValidateDocumentRequest = Schemas['ValidateDocumentRequest'];
 export type ValidationReport = Schemas['ValidationReport'];
 export type DocumentProblem = Schemas['DocumentProblem'];
@@ -93,7 +107,12 @@ export type FailedMigration = Schemas['FailedMigration'];
 export type OutputEntry = Schemas['OutputEntry'];
 export type OutputListResponse = Schemas['OutputListResponse'];
 export type CopyOutputsRequest = Schemas['CopyOutputsRequest'];
-export type CopyOutputsResponse = Schemas['CopyOutputsResponse'];
+/**
+ * `Job.result` when `kind === 'outputs_copy'` — plus `bytes`, what the bar was counting. Same note
+ * as `DatasetScanResult` above (R48): the plain response is no longer named by any route.
+ */
+export type CopyOutputsResult = Schemas['CopyOutputsResult'];
+export type CopyOutputsResponse = CopyOutputsResult;
 
 // ── Mosaic: run / gaps / screen ──────────────────────────────────────────────────
 export type RunDetectRequest = Schemas['RunDetectRequest'];

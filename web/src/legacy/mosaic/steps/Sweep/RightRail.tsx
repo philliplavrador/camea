@@ -3,11 +3,11 @@
 // Staleness panel (W8 — a re-check that is allowed to say NO, R25). Every number is a measurement; a
 // missing one is an em dash, never a fabricated zero.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSweepStore, fieldSignature } from '../../store';
-import { startRecheck, pollJobUntilDone } from '../../../../api';
-import type { RecheckResult, RecheckRow, MosaicDocument } from '../../../../api';
-import { Panel } from '../../../../design';
+import { startRecheck, useJob, useStopJob } from '../../../../api';
+import type { RecheckRow, MosaicDocument } from '../../../../api';
+import { Panel, Progress } from '../../../../design';
 import { RecomputePanel } from './RecomputePanel';
 import { fmtNcc, fmtMargin, fmtInt } from './format';
 import styles from './RightRail.module.css';
@@ -51,34 +51,66 @@ export function RightRail({ onGoToTrial }: RightRailProps) {
     () => (doc ? order.filter((t) => doc.tiles[String(t)]?.stale) : []),
     [doc, order],
   );
-  const [recheck, setRecheck] = useState<{ running: boolean; disagree: RecheckRow[] | null }>({
-    running: false,
-    disagree: null,
-  });
+  const [disagree, setDisagree] = useState<RecheckRow[] | null>(null);
+  const [recheckNote, setRecheckNote] = useState<string | null>(null);
+  // ⏱️ R48 — the re-check was a DISABLED BUTTON CAPTION and nothing else: it was polled with no
+  // `onUpdate`, so every one of its updates was discarded on arrival. 120 stale tiles is ~2 minutes
+  // behind the word "Re-checking…". `useJob` watches it instead, which is also where R8's ticking
+  // countdown comes from.
+  const [starting, setStarting] = useState(false);
+  const [recheckJobId, setRecheckJobId] = useState<string | null>(null);
+  const recheckJob = useJob(recheckJobId);
+  const recheckRunning = recheckJobId != null && !recheckJob.isTerminal;
+  const recheckBusy = starting || recheckRunning;
+  const stopJob = useStopJob();
+
+  /** R48.9 — the wait ends out loud: cleared flags applied, or a sentence saying why nothing moved. */
+  useEffect(() => {
+    if (!recheckJobId || !recheckJob.isTerminal) return;
+    const finished = recheckJob.job;
+    setRecheckJobId(null);
+    if (recheckJob.state === 'failed') {
+      setRecheckNote(
+        `The re-check failed${recheckJob.error?.message ? ` — ${recheckJob.error.message}` : '.'} Nothing was cleared.`,
+      );
+      return;
+    }
+    if (recheckJob.state !== 'done') {
+      setRecheckNote('The re-check was stopped — nothing was cleared.');
+      return;
+    }
+    const result = finished?.result;
+    if (!result || result.kind !== 'recheck') {
+      setRecheckNote('The re-check finished but returned nothing.');
+      return;
+    }
+    // R25/W8 — the re-check returns the flags it is ALLOWED to clear; apply them so the "N stale" panel
+    // and the dashed chips actually clear. Disagreeing tiles stay flagged ("go and look").
+    if (result.cleared.length > 0) useSweepStore.getState().clearStale(result.cleared);
+    setRecheckNote(null);
+    setDisagree(result.disagree);
+  }, [recheckJobId, recheckJob.isTerminal, recheckJob.state, recheckJob.job, recheckJob.error]);
 
   async function runRecheck(): Promise<void> {
     const cur = useSweepStore.getState().doc;
     const sid = useSweepStore.getState().sessionId;
-    if (!cur || !sid) return;
-    setRecheck({ running: true, disagree: null });
+    if (!cur || !sid || recheckBusy) return;
+    setDisagree(null);
+    setRecheckNote(null);
+    setStarting(true);
     try {
       const ref = await startRecheck({
         session_id: sid,
         doc: cur as MosaicDocument,
         tolerance_px: 5,
       });
-      const finished = await pollJobUntilDone(ref.job_id);
-      const result = finished.result;
-      const recheckResult =
-        result && result.kind === 'recheck' ? (result as RecheckResult) : null;
-      // R25/W8 — the re-check returns the flags it is ALLOWED to clear; apply them so the "N stale" panel
-      // and the dashed chips actually clear. Disagreeing tiles stay flagged ("go and look").
-      if (recheckResult && recheckResult.cleared.length > 0) {
-        useSweepStore.getState().clearStale(recheckResult.cleared);
-      }
-      setRecheck({ running: false, disagree: recheckResult ? recheckResult.disagree : [] });
-    } catch {
-      setRecheck({ running: false, disagree: [] });
+      setRecheckJobId(ref.job_id);
+    } catch (e) {
+      setRecheckNote(
+        `The re-check could not start — ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -173,19 +205,44 @@ export function RightRail({ onGoToTrial }: RightRailProps) {
               className={styles.smallBtn}
               data-testid="stale-recheck"
               onClick={() => void runRecheck()}
-              disabled={recheck.running}
+              disabled={recheckBusy}
             >
-              {recheck.running ? 'Re-checking…' : 'Re-check'}
+              Re-check
             </button>
-            {recheck.disagree != null && (
+            {recheckBusy && (
+              <Progress
+                className={styles.recheckProgress}
+                compact
+                data-testid="stale-recheck-progress"
+                label={recheckJob.job?.said_as || 'Re-checking the stale tiles'}
+                pct={recheckJob.pct}
+                etaText={recheckJob.etaText}
+                elapsedText={recheckJob.elapsedText}
+                phase={recheckJob.phase}
+                message={recheckJob.message}
+                onStop={
+                  recheckRunning && recheckJobId && (recheckJob.job?.cancellable ?? true)
+                    ? () => void stopJob(recheckJobId)
+                    : undefined
+                }
+              />
+            )}
+            {/* R48.9 — a re-check that ended badly says so, rather than leaving the tile list looking
+                as though it had answered. */}
+            {recheckNote && (
+              <p className={styles.staleLead} data-testid="stale-recheck-note">
+                {recheckNote}
+              </p>
+            )}
+            {!recheckBusy && !recheckNote && disagree != null && (
               <p className={styles.staleLead}>
-                {recheck.disagree.length === 0
+                {disagree.length === 0
                   ? 'All agree within 5 px.'
-                  : `${recheck.disagree.length} disagree by > 5 px — go and look:`}
+                  : `${disagree.length} disagree by > 5 px — go and look:`}
               </p>
             )}
             <div className={styles.staleList}>
-              {(recheck.disagree ? recheck.disagree.map((r) => r.trial) : staleTrials).map(
+              {(disagree ? disagree.map((r) => r.trial) : staleTrials).map(
                 (trial) => (
                   <button
                     key={trial}

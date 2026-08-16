@@ -28,7 +28,7 @@ import {
 import type { BuildConfig, BuildResult, MosaicDocument } from '../../../../api';
 import { useSweepStore } from '../../store';
 import { useDocument } from '../../../../store/documentStore';
-import { Button, Toggle, Help, Panel, LiveWarning, Badge } from '../../../../design';
+import { Button, Toggle, Help, Panel, Progress, LiveWarning, Badge } from '../../../../design';
 import type { WizardStepProps } from '../types';
 import shell from '../step.module.css';
 import styles from './PlaceStep.module.css';
@@ -270,6 +270,16 @@ export function PlaceStep({ onNavigate }: PlaceStepProps) {
     }
   }
 
+  // `register · 3/6` — the phase and how far through the phase list it is, as one string for the bar.
+  // Once the build is over, the screen is seeding the result onto the document: the job's last phase
+  // would be a stale reading of a run that has already finished.
+  const phaseText = running
+    ? (job.phase ?? 'starting…') +
+      (job.phaseIndex != null && job.nPhases != null
+        ? ` · ${job.phaseIndex + 1}/${job.nPhases}`
+        : '')
+    : 'seeding';
+
   const costText = gpu?.note
     ? gpu.note
     : gpu?.available
@@ -327,40 +337,29 @@ export function PlaceStep({ onNavigate }: PlaceStepProps) {
 
       {(running || busy) && (
         <Panel title="Building" className={styles.progress}>
-          <div className={styles.barWell}>
-            <div
-              className={styles.bar}
-              data-testid="place-progress-bar"
-              style={{ width: `${Math.max(2, Math.min(100, job.pct ?? 0))}%` }}
-            />
-          </div>
-          <div className={styles.progressRow}>
-            <span className={styles.phase} data-testid="place-phase">
-              {job.phase ?? (busy ? 'seeding' : 'starting…')}
-              {job.phaseIndex != null && job.nPhases != null
-                ? ` · ${job.phaseIndex + 1}/${job.nPhases}`
-                : ''}
-            </span>
-            {running && (
-              <span className={styles.eta} data-testid="place-eta">
-                {job.etaText ?? ''}
-              </span>
-            )}
-            {running && (
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => void cancel()}
-                data-testid="place-cancel"
-              >
-                Cancel
-              </Button>
-            )}
-          </div>
-          {job.message && <div className={styles.msg}>{job.message}</div>}
-          <pre className={styles.log} data-testid="place-log">
-            {(job.logTail.length ? job.logTail : ['…']).join('\n')}
-          </pre>
+          {/* ⏱️ THE ONE BAR (R48.2). Everything the hand-rolled block carried has a prop here: the
+              gliding width, the phase with its `3/6`, the ticking countdown (R8 — `useJob` owns the
+              clock), Cancel, the narration line and the 8-line log tail. The time slot is never empty
+              (R48.4): with no estimate yet it says so, with the elapsed clock beside it. */}
+          <Progress
+            data-testid="place-progress"
+            label={
+              running
+                ? job.job?.said_as || 'Placing the tiles'
+                : 'Seeding the build onto your document'
+            }
+            pct={running ? job.pct : null}
+            etaText={running ? job.etaText : null}
+            elapsedText={running ? job.elapsedText : null}
+            phase={phaseText}
+            message={running ? job.message : null}
+            // R48.7 — a Stop only where one is wired. The seeding round trip has no cancel, and says so
+            // rather than showing a button that does nothing.
+            onStop={running && (job.job?.cancellable ?? true) ? () => void cancel() : undefined}
+            stopLabel="Cancel"
+            unstoppableWhy={running ? undefined : 'seeding cannot be stopped once it starts'}
+            logTail={job.logTail.length ? job.logTail : ['…']}
+          />
         </Panel>
       )}
 

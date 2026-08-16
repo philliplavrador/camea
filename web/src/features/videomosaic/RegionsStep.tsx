@@ -41,6 +41,8 @@ import {
 import {
   cancelJob,
   deleteRegion,
+  formatElapsed,
+  formatEta,
   getRegions,
   locateRegion,
   outputUrl,
@@ -58,11 +60,16 @@ import type {
   RegionsPayload,
   VideoMosaicDocument,
 } from '../../api';
-import { Button, Help, Kbd, LiveWarning, Panel, cx } from '../../design';
-import { fmtSeconds, fmtWhen } from './format';
+import { Button, Help, Kbd, LiveWarning, Panel, Progress, cx } from '../../design';
+import { fmtSeconds, fmtWhen, phaseOf } from './format';
 import { forSubmit, normalisePath } from '../home/pathText';
 import { PreviewViewer, type FrameRequest, type ViewFrame } from './PreviewViewer';
 import { WorkFrame } from './WorkFrame';
+// ⛔ **NOT FOR A PROGRESS BAR ANY MORE (R48.2).** This module used to lend three of them — the
+// well, the bar, the phase/eta row — to this file across a feature's own boundary, and they are
+// deleted: every wait here is `design/primitives/Progress`. What is still borrowed is the camera's
+// own chrome (`zoomBtn` — the Fields switch sits INSIDE `PreviewViewer`'s zoom bar and has to look
+// like the buttons beside it) and the rail's action stack.
 import vm from './VideoMosaicFeature.module.css';
 import styles from './RegionsStep.module.css';
 
@@ -108,6 +115,21 @@ const basenameOf = (p: string): string => p.split(/[\\/]/).filter(Boolean).pop()
 interface QueueJob {
   label: string;
   start: () => Promise<JobRef>;
+  /** The row this item re-places, when it is a re-locate — so the LIST can mark the one running. */
+  regionId?: string;
+}
+
+/**
+ * The middle value of a list. ⭐ **THE WHOLE-BATCH ETA RESTS ON THIS** (R48.3): the median of the
+ * items already placed is what the ones still waiting are expected to cost. A MEDIAN, not a mean,
+ * because one 900 MB recording among five small ones would drag an average up for ever, while the
+ * median simply reports the ordinary file — and an ordinary file is what is waiting.
+ */
+function median(xs: number[]): number | null {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
 // ── props ─────────────────────────────────────────────────────────────────────────────────────
@@ -166,16 +188,49 @@ export function RegionsStep({
   // row appears as it lands (the ordinary refresh), and a refusal is recorded beside its file
   // name WITHOUT killing what is still waiting (R46.7: the sentence is about THAT file, verbatim).
   // "Stop after this one" drains the rest; the single-path box beside it is untouched (R38).
-  const [batch, setBatch] = useState<{ placing: number; total: number } | null>(null);
+  //
+  // ⏱️ **AND IT CARRIES THE CHEAPEST ETA IN THE APP (R48.3).** There is no backend concept of a
+  // batch — the server sees N unrelated locate jobs — so the whole-batch time can only be composed
+  // here, and it costs one subtraction: how long the placed items took, median, times the number
+  // still waiting, plus what the one in flight has left. `file` is on the state because the readout
+  // used to say *"Placing 2 of 5"* without ever naming WHICH recording was in the machine.
+  const [batch, setBatch] = useState<{
+    placing: number;
+    total: number;
+    file: string;
+    startedAt: number;
+  } | null>(null);
   const [batchFails, setBatchFails] = useState<{ file: string; message: string }[]>([]);
+  /** R48.9 — what a STOPPED run left behind, so the ending is said instead of merely happening. */
+  const [batchStopped, setBatchStopped] = useState<{ placed: number; dropped: number } | null>(null);
   const [stopAfter, setStopAfter] = useState(false);
   const [noDialog, setNoDialog] = useState(false);
   const batchQueueRef = useRef<QueueJob[]>([]);
   const batchActiveRef = useRef(false);
+  /** How many items of this run have FINISHED, however they finished — placed, refused or stopped. */
   const batchDoneRef = useRef(0);
+  /**
+   * 🔴 How many actually LANDED. `batchDoneRef` counts endings, not successes: a refused POST and a
+   * cancelled job both advance it. R48.9's sentence is a claim about the work — *"2 recordings went
+   * through"* — and counting a refusal as one is a falsehood at the exact moment the ruling asks for
+   * the truth, so the two numbers are kept apart.
+   */
+  const batchPlacedRef = useRef(0);
   const batchTotalRef = useRef(0);
   const batchCurrentRef = useRef('');
+  /** How long each PLACED item of this run took, ms — the denominator of the batch ETA (R48.3). */
+  const batchTimesRef = useRef<number[]>([]);
+  const batchItemStartRef = useRef(0);
+  /** When the whole run started, so the batch bar can show an elapsed clock too (R48.4). */
+  const batchRunStartRef = useRef(0);
   const stopRef = useRef(false);
+  /**
+   * ⭐ WHICH ROW IS IN THE MACHINE. A re-locate used to grey its own button out and say nothing
+   * else, so with the list scrolled the only sign of work was a button that had stopped responding
+   * (R48.6 — the missing thing here is identity, not time). Null for a fresh locate: there is no
+   * row yet.
+   */
+  const [activeRegionId, setActiveRegionId] = useState<string | null>(null);
   /** Something this step may not do while a job runs OR a queue is mid-walk. */
   const busy = running || batch != null;
 
@@ -253,17 +308,30 @@ export function RegionsStep({
   // ── the queue driver: POST the next item, or fold the tent ──────────────────────────────────
   const advanceBatch = useCallback(async () => {
     for (;;) {
-      if (stopRef.current) batchQueueRef.current = [];
+      if (stopRef.current && batchQueueRef.current.length > 0) {
+        // 🔴 R48.9 — the run ends and SAYS SO, including this ending: the files that never got
+        // their turn used to disappear without a word, and "stopped" looked exactly like "done".
+        setBatchStopped({ placed: batchPlacedRef.current, dropped: batchQueueRef.current.length });
+        batchQueueRef.current = [];
+      }
       const next = batchQueueRef.current.shift();
       if (!next) {
         batchActiveRef.current = false;
         stopRef.current = false;
         setStopAfter(false);
         setBatch(null);
+        setActiveRegionId(null);
         return;
       }
       batchCurrentRef.current = next.label;
-      setBatch({ placing: batchDoneRef.current + 1, total: batchTotalRef.current });
+      batchItemStartRef.current = Date.now();
+      setActiveRegionId(next.regionId ?? null);
+      setBatch({
+        placing: batchDoneRef.current + 1,
+        total: batchTotalRef.current,
+        file: next.label,
+        startedAt: batchItemStartRef.current,
+      });
       try {
         const ref = await next.start();
         setJobKind('batch');
@@ -272,6 +340,8 @@ export function RegionsStep({
       } catch (e) {
         // ⛔ R46.7 — the refusal is a sentence about THIS file, kept beside its name. The queue
         // is not the file: the loop carries straight on to the next one.
+        // ⏱️ Its duration is NOT recorded: a POST refused in 20 ms is not what placing a recording
+        // costs, and folding it into the median would halve the ETA of everything still waiting.
         batchDoneRef.current += 1;
         setBatchFails((f) => [...f, { file: next.label, message: errMsg(e) }]);
       }
@@ -283,11 +353,15 @@ export function RegionsStep({
       if (running || batchActiveRef.current || items.length === 0) return;
       batchQueueRef.current = [...items];
       batchDoneRef.current = 0;
+      batchPlacedRef.current = 0;
       batchTotalRef.current = items.length;
+      batchTimesRef.current = [];
+      batchRunStartRef.current = Date.now();
       batchActiveRef.current = true;
       stopRef.current = false;
       setStopAfter(false);
       setBatchFails([]);
+      setBatchStopped(null);
       setJobError(null);
       setBanner(null);
       void advanceBatch();
@@ -311,6 +385,14 @@ export function RegionsStep({
       } else {
         setJobError(msg);
       }
+    } else if (job.state === 'cancelled' && !inBatch) {
+      // 🔴 R48.9 — A WAIT THAT ENDS MUST SAY IT ENDED. A stopped locate used to leave the bar
+      // simply gone, with nothing on the page to distinguish "you stopped it" from "it worked".
+      setJobError(
+        kind === 'snap'
+          ? 'The snap was stopped. The rectangle is where you dropped it — snap it again when you are ready.'
+          : 'Placing the recording was stopped. Nothing was saved.',
+      );
     } else if (job.state === 'done') {
       const result = job.job?.result;
       if (result && result.kind === 'locate_region' && result.analysis_id === analysisId) {
@@ -344,7 +426,15 @@ export function RegionsStep({
     setJobKind(null);
     if (inBatch) {
       batchDoneRef.current += 1;
+      // ⏱️ R48.3 — one more measurement for the batch ETA. Only a run that actually happened: a
+      // cancelled item stopped early and is not what the ones still waiting will cost.
+      if (job.state === 'done' && batchItemStartRef.current > 0) {
+        batchPlacedRef.current += 1;
+        batchTimesRef.current.push(Date.now() - batchItemStartRef.current);
+      }
       void advanceBatch();
+    } else {
+      setActiveRegionId(null);
     }
   }, [
     jobId,
@@ -411,6 +501,9 @@ export function RegionsStep({
       if (busy) return;
       setJobError(null);
       setBanner(null);
+      // ⭐ The row is marked BEFORE the POST, not when the job's first poll lands: the gap is a
+      // real fraction of a second and it is the moment he is looking at the row he just clicked.
+      setActiveRegionId(r.id);
       try {
         const ref = await relocateRegion(analysisId, r.id);
         setJobKind('relocate');
@@ -418,6 +511,7 @@ export function RegionsStep({
       } catch (e) {
         // "map the electrodes first" / "the project's copy … is missing" — instructions, verbatim.
         setJobError(errMsg(e));
+        setActiveRegionId(null);
       }
     },
     [analysisId, busy],
@@ -431,6 +525,20 @@ export function RegionsStep({
       /* it already finished — a no-op, not an error to shout about */
     }
   }, [jobId]);
+
+  /**
+   * R48.7 — the batch bar's Stop stops the BATCH: the file in the machine is cancelled and the
+   * rest of the queue is dropped. *"Stop after this one"* beside it is the gentler half and stays,
+   * because letting the current placement finish is often what he actually wants.
+   */
+  const stopBatch = useCallback(async () => {
+    // ⛔ The queue is NOT emptied here. `advanceBatch` drains it when the cancelled job lands, and
+    // it is the one place that counts what never started for R48.9's sentence — clearing it first
+    // made that count zero and the ending silent again.
+    stopRef.current = true;
+    setStopAfter(true);
+    await cancel();
+  }, [cancel]);
 
   // ── snap: the drop is posted, never assumed ─────────────────────────────────────────────────
   const snap = useCallback(async () => {
@@ -446,12 +554,14 @@ export function RegionsStep({
     reachSentRef.current = reach;
     setJobError(null);
     setBanner(null);
+    setActiveRegionId(selected.id);
     try {
       const ref = await snapRegion(analysisId, selected.id, at.x, at.y, radius);
       setJobKind('snap');
       setJobId(ref.job_id);
     } catch (e) {
       setJobError(errMsg(e));
+      setActiveRegionId(null);
     }
   }, [analysisId, busy, drop, reach, selected]);
 
@@ -821,6 +931,49 @@ export function RegionsStep({
   // R46.10 — the rows a rebuild actually invalidated (derived server-side, per row).
   const staleRows = useMemo(() => list.filter((r) => r.stale), [list]);
 
+  // ── ⏱️ THE WHOLE-BATCH BAR AND ITS TIME (BEHAVIOUR R48.3) ────────────────────────────────────
+  // ⭐ **PURE CLIENT ARITHMETIC, AND IT HAS TO BE.** The server sees N unrelated locate jobs; only
+  // this screen knows they are one act, so only this screen can say how long the act has left. The
+  // three ingredients are already here: how many are placed, how long each of those took, and how
+  // far the one in flight has got.
+  //
+  // ⛔ Recomputed every render on purpose (no `useMemo`): it reads the wall clock, and `useJob`'s
+  // 1 Hz tick is what repaints it — the same clock the countdown itself runs on (R8.1).
+  // ⚠️ R48.11 — this ETA MAY JUMP. The first file's own projection stands in for the ones waiting
+  // until a real measurement exists, and a batch of one small file and four big ones will revise
+  // upward when the second lands. An honest correction beats a smooth lie (R8.4).
+  const batchView = ((): { pct: number; etaText: string | null; elapsedText: string | null } | null => {
+    if (!batch) return null;
+    const placed = batch.placing - 1;
+    const waiting = batch.total - batch.placing;
+    const itemElapsedS = Math.max(0, (Date.now() - batch.startedAt) / 1000);
+    // The item's own overall fraction, from its own job (R48.5 — the backend's `pct` is already
+    // overall across the copy + decode + zoom + match + write of THIS file).
+    const frac =
+      job.pct != null && Number.isFinite(job.pct) ? Math.min(1, Math.max(0, job.pct / 100)) : 0;
+    const medianS = (() => {
+      const m = median(batchTimesRef.current);
+      return m == null ? null : m / 1000;
+    })();
+    // What one item costs: measured if anything has finished, otherwise projected from the one
+    // running. Null on the first file until its bar has moved off zero — and then the time slot
+    // reads "working out how long this will take…", which is exactly true.
+    const perItemS = medianS ?? (frac > 0.02 ? itemElapsedS / frac : null);
+    const leftHereS =
+      frac > 0.02
+        ? (itemElapsedS * (1 - frac)) / frac
+        : medianS != null
+          ? Math.max(0, medianS - itemElapsedS)
+          : null;
+    const etaS =
+      leftHereS == null ? null : perItemS == null ? leftHereS : leftHereS + waiting * perItemS;
+    return {
+      pct: ((placed + frac) / Math.max(1, batch.total)) * 100,
+      etaText: formatEta(etaS),
+      elapsedText: formatElapsed((Date.now() - batchRunStartRef.current) / 1000),
+    };
+  })();
+
   return (
     <div className={styles.step} data-testid="regions-step">
       <WorkFrame
@@ -886,6 +1039,7 @@ export function RegionsStep({
                         startBatch(
                           staleRows.map((r) => ({
                             label: r.name || basenameOf(r.source?.name ?? r.id),
+                            regionId: r.id, // so the LIST can mark the row that is in the machine
                             start: () => relocateRegion(analysisId, r.id),
                           })),
                         )
@@ -922,55 +1076,57 @@ export function RegionsStep({
               </div>
             )}
 
-            {running && (
-              <div data-testid="regions-progress">
-                <Panel
-                  title={jobKind === 'snap' ? 'Snapping' : 'Locating recording'}
-                  className={vm.progress}
-                >
-                  <div className={vm.barWell}>
-                    <div
-                      className={vm.bar}
-                      style={{
-                        transform: `scaleX(${Math.max(2, Math.min(100, job.pct ?? 0)) / 100})`,
-                      }}
-                    />
-                  </div>
-                  <div className={vm.progressRow}>
-                    <span className={vm.phase} data-testid="regions-phase">
-                      {job.phase ?? 'starting…'}
-                      {job.phaseIndex != null && job.nPhases != null
-                        ? ` · ${job.phaseIndex + 1}/${job.nPhases}`
-                        : ''}
-                    </span>
-                    <span className={vm.eta} data-testid="regions-eta">
-                      {job.etaText ?? ''}
-                    </span>
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => void cancel()}
-                      data-testid="regions-cancel"
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                  {job.message && <div className={vm.msg}>{job.message}</div>}
-                </Panel>
-              </div>
+            {/* ⏱️ ONE recording in the machine, on its own (R48.2/R48.4). A batch draws the
+                whole-queue bar below INSTEAD of this one — two bars for one wait is two answers to
+                one question. The ETA slot was an always-empty `<span>` here; the primitive fills
+                it, and the backend now sends a real number to put in it. */}
+            {running && jobKind !== 'batch' && (
+              <Panel title={jobKind === 'snap' ? 'Snapping' : 'Locating recording'}>
+                <Progress
+                  label={job.job?.said_as || 'placing a recording'}
+                  // ⭐ R48.9/H9 — A SNAP IS A ONE-SECOND GESTURE AND GETS THE SLIVER, NOT A BAR.
+                  // Its two steps have nothing countable inside them, so its `pct` is two fixed
+                  // waypoints; drawn as a filling bar that reads as a hang, drawn as the
+                  // travelling sliver it reads as what it is.
+                  pct={jobKind === 'snap' ? null : job.pct}
+                  etaText={jobKind === 'snap' ? null : job.etaText}
+                  elapsedText={job.elapsedText}
+                  phase={phaseOf(job)}
+                  // ⚠️ R48.11 — the locate message names WHICH mode is running. When the lattice
+                  // cannot be measured the search goes from 3 scales to 39 and the ETA is supposed
+                  // to jump; the sentence beside it is what makes the jump readable.
+                  message={job.message}
+                  onStop={() => void cancel()}
+                  data-testid="regions-progress"
+                />
+              </Panel>
             )}
 
             {/* ⭐ THE QUEUE READOUT — visible whenever a several-at-once run is mid-walk. One job
-                at a time through the one lease; each landed row appears above as it lands. */}
+                at a time through the one lease; each landed row appears above as it lands.
+                ⏱️ **AND IT IS THE ONLY PLACE THE WHOLE-BATCH TIME CAN COME FROM (R48.3).** The
+                server has no idea these N jobs are one act, so the arithmetic is here: median of
+                what is placed × what is waiting, plus what is left of the file in the machine. */}
             {batch && (
-              <div data-testid="regions-queue">
-                <Panel title="Placing recordings" className={vm.progress}>
-                  <div className={styles.queueLine}>
-                    Placing {batch.placing} of {batch.total}
-                    {batch.total - batch.placing > 0
-                      ? ` — ${batch.total - batch.placing} waiting`
-                      : ''}
-                  </div>
+              <Panel title="Placing recordings">
+                {/* ⚠️ The bar keeps its OWN id: `<Progress>` composes `${id}-stop` for its button,
+                    and giving it `regions-queue` would collide with the drain button below. */}
+                <div data-testid="regions-queue">
+                  <Progress
+                    label={`Placing ${batch.placing} of ${batch.total}${
+                      batch.total - batch.placing > 0
+                        ? ` · ${batch.total - batch.placing} waiting`
+                        : ''
+                    } — ${batch.file}`}
+                    pct={batchView?.pct ?? null}
+                    etaText={batchView?.etaText ?? null}
+                    elapsedText={batchView?.elapsedText ?? null}
+                    phase={phaseOf(job)}
+                    message={job.message}
+                    onStop={() => void stopBatch()}
+                    stopLabel="Stop the batch"
+                    data-testid="regions-batch"
+                  />
                   <div className={styles.queueActions}>
                     <Button
                       variant="ghost"
@@ -985,7 +1141,34 @@ export function RegionsStep({
                       {stopAfter ? 'stopping after this one…' : 'Stop after this one'}
                     </Button>
                   </div>
-                </Panel>
+                </div>
+              </Panel>
+            )}
+
+            {/* ⭐ R48.6 — ONE SENTENCE NAMING WHAT CAMEA IS BUSY WITH. Eleven controls on this rail
+                grey out together while a job runs (the add box, Browse, Pick files, Locate, both
+                Delete and Locate-again on every row, Snap, the reach buttons, Confirm) and not one
+                of them said why. `said_as` is the backend's own words for the work in flight, so
+                the strip at the top of the window and this line always agree. */}
+            {busy && (
+              <p className={styles.busyNote} data-testid="regions-busy">
+                Camea is {job.job?.said_as || 'working on this project'} — the buttons below come
+                back when it finishes. Nothing you have done is lost.
+              </p>
+            )}
+
+            {/* 🔴 R48.9 — a run he STOPPED says what it left undone. Like the fails below it, this
+                outlives the queue that produced it and is cleared only when a new run starts. */}
+            {batchStopped && !batch && (
+              <div data-testid="regions-queue-stopped">
+                <LiveWarning variant="warn">
+                  <strong>Stopped.</strong> {batchStopped.placed} recording
+                  {batchStopped.placed === 1 ? '' : 's'} went through;{' '}
+                  <b>
+                    {batchStopped.dropped} never started
+                  </b>
+                  . Nothing was lost — pick them again whenever you like.
+                </LiveWarning>
               </div>
             )}
 
@@ -1043,6 +1226,10 @@ export function RegionsStep({
                 {list.map((r) => {
                   const e = r.electrodes ?? null;
                   const isSel = r.id === selectedId;
+                  // ⭐ R48.6 — IS THIS THE ROW IN THE MACHINE? With the list scrolled, a re-locate
+                  // used to show nothing but a button that had gone grey, and every other row's
+                  // button had gone grey with it. Now the row itself says so.
+                  const isRunning = busy && activeRegionId === r.id;
                   const when = fmtWhen(r.located_at);
                   const took = fmtSeconds(r.elapsed_ms);
                   return (
@@ -1052,11 +1239,13 @@ export function RegionsStep({
                         styles.item,
                         isSel && styles.itemSel,
                         r.status === 'confirmed' && styles.itemOk,
+                        isRunning && styles.itemRunning,
                       )}
                       data-testid="region-row"
                       data-region-id={r.id}
                       ref={isSel ? selRowRef : undefined}
                       data-selected={isSel || undefined}
+                      data-running={isRunning || undefined}
                       data-status={r.status}
                       onClick={() => select(r)}
                     >
@@ -1111,6 +1300,19 @@ export function RegionsStep({
                         >
                           {r.status}
                         </span>
+
+                        {/* ⏱️ R48.6 — the row that is being worked on says so, in the same place
+                            its state lives. The bar with the time is up on the rail; what was
+                            missing down here was IDENTITY. */}
+                        {isRunning && (
+                          <span
+                            className={cx(styles.chip, styles.chipRunning)}
+                            data-testid="region-running"
+                            title={job.job?.said_as || 'Camea is working on this recording'}
+                          >
+                            {jobKind === 'snap' ? 'snapping' : 'placing'}
+                          </span>
+                        )}
 
                         {/* R46.10 · R47.7 — WHICH rows the rebuild invalidated, said on the row
                             itself. A current-state warning, so it lives on the page, never
@@ -1174,14 +1376,18 @@ export function RegionsStep({
                           size="sm"
                           className={styles.again}
                           data-testid="region-locate-again"
-                          title="Search the whole mosaic again for this recording, using the project's own copy of its video"
+                          title={
+                            isRunning
+                              ? job.job?.said_as || 'Camea is placing this recording now'
+                              : "Search the whole mosaic again for this recording, using the project's own copy of its video"
+                          }
                           disabled={busy}
                           onClick={(ev) => {
                             ev.stopPropagation();
                             void relocate(r);
                           }}
                         >
-                          Locate again
+                          {isRunning ? 'Placing…' : 'Locate again'}
                         </Button>
                       </span>
 

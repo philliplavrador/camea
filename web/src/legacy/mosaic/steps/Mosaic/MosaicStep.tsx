@@ -22,10 +22,12 @@ import { Button } from '../../../../design/primitives/Button';
 import { Help } from '../../../../design/primitives/Help';
 import { LiveWarning } from '../../../../design/primitives/LiveWarning';
 import { cx } from '../../../../design/cx';
+import { Progress } from '../../../../design/primitives/Progress';
 import {
   startExport,
   getMachineEvidence,
-  pollJobUntilDone,
+  useJob,
+  useStopJob,
   type ExportRequest,
   type ExportResult,
   type MachineEvidenceResponse,
@@ -127,10 +129,21 @@ export function MosaicStep() {
   const [umPerPx, setUmPerPx] = useState('');
 
   // ── the export job ──
-  const [exporting, setExporting] = useState(false);
-  const [phase, setPhase] = useState<string | null>(null);
+  // ⏱️ R48 — the export is WATCHED, not just awaited. `onUpdate` used to read `message`/`phase` and
+  // throw `pct` and `eta_s` away; the backend now weights the phases into one overall percentage
+  // (R48.5) and estimates from it, and `useJob` gives the countdown its 1 Hz tick (R8).
+  const [starting, setStarting] = useState(false);
+  const [exportJobId, setExportJobId] = useState<string | null>(null);
+  const exportJob = useJob(exportJobId);
+  const exportRunning = exportJobId != null && !exportJob.isTerminal;
+  const exporting = starting || exportRunning;
+  const stopJob = useStopJob();
   const [result, setResult] = useState<ExportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // What refreshes the Outputs panel and busts its image cache: a value that CHANGES on every
+  // finished export. (It used to be the file count plus the phase string — and the phase was always
+  // null by the time a result existed, so two exports writing the same seven files never refreshed.)
+  const [exportedAt, setExportedAt] = useState<string | null>(null);
 
   // ── provenance evidence (derived from HISTORY, on the server) ──
   const [ev, setEv] = useState<MachineEvidenceResponse | null>(null);
@@ -198,8 +211,7 @@ export function MosaicStep() {
     if (!doc || !sessionId) return;
     setError(null);
     setResult(null);
-    setExporting(true);
-    setPhase('starting…');
+    setStarting(true);
     try {
       const req: ExportRequest = {
         session_id: sessionId,
@@ -211,19 +223,33 @@ export function MosaicStep() {
         ...(umValue != null ? { um_per_px: umValue } : {}),
       };
       const ref = await startExport(req);
-      const job = await pollJobUntilDone(ref.job_id, {
-        onUpdate: (j) => setPhase(j.message ?? j.phase ?? 'exporting…'),
-      });
-      const res = job.result;
-      if (res && res.kind === 'export') setResult(res);
-      else setError('Export finished but returned no files.');
+      setExportJobId(ref.job_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setExporting(false);
-      setPhase(null);
+      setStarting(false);
     }
   }, [doc, sessionId, basename, outputs, renderMode, includeUnverified, umValue]);
+
+  /** R48.9 — the export ends OUT LOUD: the file list, a refusal, or "you stopped it". */
+  useEffect(() => {
+    if (!exportJobId || !exportJob.isTerminal) return;
+    const finished = exportJob.job;
+    setExportJobId(null);
+    if (exportJob.state === 'failed') {
+      setError(exportJob.error?.message ?? 'The export failed.');
+      return;
+    }
+    if (exportJob.state !== 'done') {
+      setError('The export was stopped — nothing was written.');
+      return;
+    }
+    const res = finished?.result;
+    if (res && res.kind === 'export') {
+      setResult(res);
+      setExportedAt(String(Date.now()));
+    } else setError('Export finished but returned no files.');
+  }, [exportJobId, exportJob.isTerminal, exportJob.state, exportJob.job, exportJob.error]);
 
   if (!doc) {
     return (
@@ -494,8 +520,27 @@ export function MosaicStep() {
             >
               {exporting ? 'Exporting…' : 'Export'}
             </Button>
-            {phase && <span className={styles.phase}>{phase}</span>}
           </div>
+
+          {/* ⏱️ R48 — a bare phase word became THE bar: an overall percentage weighted across the
+              phases (R48.5), the ticking estimate the backend now sends, and a Stop. */}
+          {exporting && (
+            <Progress
+              className={styles.exportProgress}
+              data-testid="mosaic-export-progress"
+              label={exportJob.job?.said_as || 'Writing the mosaic and its sidecars'}
+              pct={exportJob.pct}
+              etaText={exportJob.etaText}
+              elapsedText={exportJob.elapsedText}
+              phase={exportJob.phase}
+              message={exportJob.message}
+              onStop={
+                exportRunning && exportJobId && (exportJob.job?.cancellable ?? true)
+                  ? () => void stopJob(exportJobId)
+                  : undefined
+              }
+            />
+          )}
 
           {/* Autosave note — the rolling crash-net, SEPARATE from Save… (R5.4). Loud on failure (W4). */}
           {autosave.state === 'failed' ? (
@@ -530,7 +575,7 @@ export function MosaicStep() {
           <section className={styles.section}>
             <OutputsPanel
               analysisId={analysisId}
-              version={result ? String(result.files.length) + (phase ?? '') : null}
+              version={exportedAt}
               title="Files"
             />
           </section>

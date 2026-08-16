@@ -201,3 +201,8 @@
   justify-content: flex-end;
   padding-top: 4px;
 }
+
+/* ⏱️ R48 — the dataset scan's bar (the ONE bar), under the path box it belongs to. */
+.scan {
+  margin-top: 10px;
+}
