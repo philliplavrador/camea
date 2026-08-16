@@ -1697,6 +1697,35 @@ function RegionDetail({
                       : '—'}
                   </span>
                 </Fact>
+                {/* ⭐ R46.2 — the actual evidence behind the ratio: the same electrode spacing,
+                    measured once in each picture. Shown only when it WAS measured there; a
+                    searched zoom keeps its live warning above, and these lines never soften it. */}
+                {zoom?.pitch_recording_px != null && (
+                  <Fact
+                    label="Spacing in this recording"
+                    help={
+                      'The distance between neighbouring electrodes, measured in this ' +
+                      'recording’s own pixels. The same array appears in both pictures, so it ' +
+                      'is a ruler: the mosaic’s spacing divided by this one is the zoom.'
+                    }
+                  >
+                    <span data-testid="region-pitch-recording">
+                      {f2(zoom.pitch_recording_px)} px
+                    </span>
+                  </Fact>
+                )}
+                {zoom?.pitch_mosaic_px != null && (
+                  <Fact
+                    label="Spacing in the mosaic"
+                    help={
+                      'The same electrode spacing, measured on the mosaic in mosaic pixels. ' +
+                      'Dividing it by the spacing in the recording is what gives the zoom — a ' +
+                      'measurement, not a search.'
+                    }
+                  >
+                    <span data-testid="region-pitch-mosaic">{f2(zoom.pitch_mosaic_px)} px</span>
+                  </Fact>
+                )}
                 <Fact
                   label="Placed by"
                   help={
@@ -1728,6 +1757,13 @@ function RegionDetail({
                   </Fact>
                 )}
               </dl>
+
+              {/* The measurement's own remark, when it made one — served verbatim, quiet. */}
+              {zoom != null && zoom.note !== '' && (
+                <p className={styles.zoomNote} data-testid="region-zoom-note">
+                  {zoom.note}
+                </p>
+              )}
 
               {/* ⭐ R46.5 — EVERY ATTEMPT IT TRIED, so a poor result can be diagnosed instead of
                   merely disbelieved. One row per picture × size, IN THE ORDER SERVED, the winner

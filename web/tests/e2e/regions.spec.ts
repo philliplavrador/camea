@@ -895,6 +895,21 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(byId(page, TID.regionZoom)).toHaveAttribute('data-measured', 'true');
   });
 
+  test('R46.2: the two measured spacings sit beside the zoom — the evidence, and the note verbatim', async ({
+    page,
+  }) => {
+    await openRegions(page, {
+      regions: [craftedRegion({ zoomNote: 'pitch agreed across two stills' })],
+    });
+    await byId(page, TID.regionEvidenceToggle).click();
+
+    // the actual evidence behind the ratio: the same electrode spacing, in each picture (px, 2 dp)
+    await expect(byId(page, TID.regionPitchRecording)).toHaveText('33.30 px');
+    await expect(byId(page, TID.regionPitchMosaic)).toHaveText('14.00 px');
+    // …and the measurement's own remark, served verbatim
+    await expect(byId(page, TID.regionZoomNote)).toHaveText('pitch agreed across two stills');
+  });
+
   // ───────────────────────────────────────────────────────────────────────────────────────────
   // R46.8 — THE RECORDING'S OWN PICTURE FADES INTO THE RECTANGLE, with an opacity slider (his
   // explicit ask). Whether the tissue lines up is a question the eye answers better than an NCC.

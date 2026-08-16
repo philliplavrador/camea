@@ -533,6 +533,9 @@ export const TID = {
   regionTriedRow: 'region-tried-row', //     one attempt; data-still, data-winner on the one that won
   regionZoom: 'region-zoom', //              the scale
   regionZoomSearched: 'region-zoom-searched', // ⚠️ shown when it was SEARCHED, not measured (R46.2)
+  regionPitchRecording: 'region-pitch-recording', // the electrode spacing measured in the recording
+  regionPitchMosaic: 'region-pitch-mosaic', //      …and in the mosaic — the evidence behind the zoom
+  regionZoomNote: 'region-zoom-note', //     the measurement's own remark, served verbatim
   regionNcc: 'region-ncc',
   regionMargin: 'region-margin', //          best − runner-up: the alias evidence
   regionDetailNcc: 'region-detail-ncc',

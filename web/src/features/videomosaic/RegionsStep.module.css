@@ -381,6 +381,13 @@
   margin-top: 10px;
 }
 
+/* The zoom measurement's own remark — a served sentence, kept quiet beside the facts. */
+.zoomNote {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+  font: 500 var(--fs-micro) / 1.4 var(--font-sans);
+}
+
 /* ── R46.5 — every attempt the search tried, folded with the rest of the working ──────────── */
 
 .tried {
