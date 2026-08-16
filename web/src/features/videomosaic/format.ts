@@ -28,3 +28,22 @@ export function fmtFps(fps: number): string {
   if (!Number.isFinite(fps)) return '—';
   return Number.isInteger(fps) ? String(fps) : fps.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
+
+/** `"2026-08-11T09:00:00Z" → "Aug 11, 09:00"` in the viewer's locale — the Outputs panel's shape. */
+export function fmtWhen(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** `1840 → "1.8 s"` · `12345 → "12.3 s"`. One decimal — a search time, not a stopwatch. */
+export function fmtSeconds(ms: number | null | undefined): string | null {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
+  return `${(ms / 1000).toFixed(1)} s`;
+}

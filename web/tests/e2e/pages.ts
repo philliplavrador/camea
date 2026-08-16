@@ -502,6 +502,8 @@ export const TID = {
   regionRow: 'region-row', //                data-region-id; data-status
   regionName: 'region-name', //              click to rename
   regionFile: 'region-file', //              the source video's file name — labels are editable, this is not
+  regionWhen: 'region-when', //              when it was placed + the search time, quiet on the row
+  regionElapsed: 'region-elapsed', //        the search time alone ("1.8 s"), inside region-when
   regionNameInput: 'region-name-input',
   regionStatus: 'region-status', //          unconfirmed | confirmed (R46.6)
   regionConfirm: 'region-confirm', //        ⭐ the human's signature — nothing promotes itself

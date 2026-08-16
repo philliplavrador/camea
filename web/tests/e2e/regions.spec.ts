@@ -1362,6 +1362,16 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(fileOf('r-3')).toHaveCount(0);
   });
 
+  test('each row says when it was placed and how long the search took', async ({ page }) => {
+    await openRegions(page, { regions: [craftedRegion({ id: 'r-1' })] });
+
+    // quiet receipts on the row: `located_at` in the app's timestamp shape, `elapsed_ms` in seconds
+    const when = rowOf(page, 'r-1').getByTestId(TID.regionWhen);
+    await expect(when).toBeVisible();
+    await expect(when).toContainText(/placed Aug 1[01]/); // 09:00Z — the calendar day is the viewer's
+    await expect(rowOf(page, 'r-1').getByTestId(TID.regionElapsed)).toHaveText('1.8 s');
+  });
+
   test('the runner-up spots are dashed ghosts — for the selected region only, and never the answer', async ({
     page,
   }) => {

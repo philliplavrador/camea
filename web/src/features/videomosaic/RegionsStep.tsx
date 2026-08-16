@@ -59,6 +59,7 @@ import type {
   VideoMosaicDocument,
 } from '../../api';
 import { Button, Help, Kbd, LiveWarning, Panel, cx } from '../../design';
+import { fmtSeconds, fmtWhen } from './format';
 import { forSubmit, normalisePath } from '../home/pathText';
 import { PreviewViewer, type FrameRequest, type ViewFrame } from './PreviewViewer';
 import { WorkFrame } from './WorkFrame';
@@ -1042,6 +1043,8 @@ export function RegionsStep({
                 {list.map((r) => {
                   const e = r.electrodes ?? null;
                   const isSel = r.id === selectedId;
+                  const when = fmtWhen(r.located_at);
+                  const took = fmtSeconds(r.elapsed_ms);
                   return (
                     <div
                       key={r.id}
@@ -1181,6 +1184,22 @@ export function RegionsStep({
                           Locate again
                         </Button>
                       </span>
+
+                      {/* When the machine placed it, and how long the search took — receipts,
+                          kept quiet under the numbers they date. */}
+                      {(when != null || took != null) && (
+                        <span className={styles.when} data-testid="region-when">
+                          {when != null ? `placed ${when}` : ''}
+                          {when != null && took != null ? ' · ' : ''}
+                          {took != null ? (
+                            <>
+                              found in <span data-testid="region-elapsed">{took}</span>
+                            </>
+                          ) : (
+                            ''
+                          )}
+                        </span>
+                      )}
                     </div>
                   );
                 })}
