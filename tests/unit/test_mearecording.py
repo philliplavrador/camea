@@ -265,7 +265,10 @@ def test_activity_needs_no_decoder(rec):
 # ── the trace, and being honest about it ────────────────────────────────────────────────────────
 
 
-def test_trace_converts_counts_to_microvolts(tmp_path):
+def test_trace_is_centered_on_the_windows_own_median_then_scaled(tmp_path):
+    """⭐ docs/MAXWELL.md §7.6: the raw stream is offset-binary, so an uncentered trace carries a
+    fixed DC offset. The fix is the WINDOW'S OWN MEDIAN — the shape survives, shifted so the
+    window's resting level is zero."""
     d = tmp_path / "Network" / "000123"
     d.mkdir(parents=True)
     raw = np.full((4, 4000), RAIL, dtype=np.uint16)
@@ -273,7 +276,26 @@ def test_trace_converts_counts_to_microvolts(tmp_path):
     p = _write(d / mr.MEA_FILENAME, raw=raw)
     with mr.MeaRecording(p) as r:
         t = r.trace(0, 0.0, 0.01)
-        assert t.tolist() == pytest.approx((np.arange(10) + 100).astype(float).tolist())
+        want = np.arange(10) + 100.0
+        want -= np.median(want)                        # 104.5 — this window's own level
+        assert t.tolist() == pytest.approx(want.tolist())
+        assert float(np.median(t)) == pytest.approx(0.0)
+
+
+def test_trace_centering_is_the_median_not_a_hard_coded_midscale(tmp_path):
+    """⛔ §7.4: never `counts - 512` and never a µV constant. A rail at an ARBITRARY level must come
+    back at exactly zero — a subtraction of 512 would leave 188 counts of offset here, and a
+    subtraction of nothing would leave 700."""
+    d = tmp_path / "Network" / "000123"
+    d.mkdir(parents=True)
+    raw = np.full((4, 4000), 700, dtype=np.uint16)     # deliberately NOT the 10-bit midscale
+    p = _write(d / mr.MEA_FILENAME, raw=raw)
+    with mr.MeaRecording(p) as r:
+        assert np.all(r.trace(0, 0.0, 1.0) == 0.0)
+        uv, health = r.trace_window(0, 0.0, 1.0)
+        assert np.all(uv == 0.0)
+        # ...and the health still reports the STORED count, so a debugger can find it in the file.
+        assert health.fill_value == 700
 
 
 def test_trace_window_is_clipped_to_the_recording(rec):
@@ -504,6 +526,7 @@ def test_the_envelope_round_trips_through_disk(tmp_path):
     assert np.array_equal(back.fill_value, env.fill_value)
     assert np.array_equal(back.fill_fraction, env.fill_fraction)
     assert np.array_equal(back.distinct_values, env.distinct_values)
+    assert np.array_equal(back.median, env.median), "the centering offset survives the save too"
     for ch in (0, 1, 2, 3):
         assert back.health_of(ch) == env.health_of(ch)
 
@@ -587,20 +610,42 @@ def test_the_envelope_window_clamps_to_its_own_buckets_and_honours_max_points(tm
     assert env.window(9999, 0.0, dur, 20) is None
 
 
-def test_the_envelope_window_comes_back_in_microvolts(tmp_path):
+def test_the_envelope_window_comes_back_in_microvolts_centered_on_the_recording(tmp_path):
     """Stored as raw counts and scaled on the way out — so the cache is half the size and exactly
-    reversible. `lsb_uv` is 1.0 on this fixture, so a scale that was dropped would still show; the
-    check that catches it is against the real samples."""
+    reversible — and served relative to the channel's own WHOLE-RECORDING median (§7.6), so the
+    strip agrees with a median-centered close-up about where zero is."""
     raw = _mixed()
     p = _mixed_recording(tmp_path)
     with mr.MeaRecording(p) as r:
         env = r.build_envelope(64)
         lsb = r.info().lsb_uv
 
-    lo, hi, _w0, _w1 = env.window(1, 0.0, env.duration_s, 10_000)
     row = env.row_of(1)
-    assert lo.min() == pytest.approx(raw[row].min() * lsb)
-    assert hi.max() == pytest.approx(raw[row].max() * lsb)
+    med = np.median(raw[row])
+    assert env.median[row] == pytest.approx(med), "the stored median is numpy's own, exactly"
+    lo, hi, _w0, _w1 = env.window(1, 0.0, env.duration_s, 10_000)
+    assert lo.min() == pytest.approx((raw[row].min() - med) * lsb)
+    assert hi.max() == pytest.approx((raw[row].max() - med) * lsb)
+
+
+def test_the_strip_and_the_close_up_agree_about_zero(tmp_path):
+    """🔴 **THE CONSISTENCY PROMISE OF THE CENTERING FIX.** The close-up subtracts its window's own
+    median; the strip is served from the cache relative to the recording's. Over the full range the
+    two windows are the same set of samples, so the two centerings must agree EXACTLY — the
+    envelope's columns bracket the centered trace, and both put the resting rail at 0."""
+    p = _mixed_recording(tmp_path)
+    with mr.MeaRecording(p) as r:
+        env = r.build_envelope(64)
+        # The dead-rail channel: both pictures put it at exactly zero, whatever the rail's level.
+        assert np.all(r.trace(0) == 0.0)
+        lo0, hi0, _a, _b = env.window(0, 0.0, env.duration_s, 10_000)
+        assert np.all(lo0 == 0.0) and np.all(hi0 == 0.0)
+
+        # The noisy channel: same extremes on both sides once both are centered.
+        centered = r.trace(1)                          # whole recording -> same median as the cache
+        lo1, hi1, _a, _b = env.window(1, 0.0, env.duration_s, 10_000)
+        assert lo1.min() == pytest.approx(centered.min())
+        assert hi1.max() == pytest.approx(centered.max())
 
 
 def test_a_recording_with_no_continuous_trace_is_refused_by_name(tmp_path):
@@ -647,6 +692,7 @@ def test_the_builder_reports_progress_and_the_same_answer_whatever_the_block_siz
     assert np.array_equal(one.hi, many.hi)
     assert np.array_equal(one.fill_value, many.fill_value)
     assert np.array_equal(one.distinct_values, many.distinct_values)
+    assert np.array_equal(one.median, many.median)
     assert seen and seen == sorted(seen)
     assert seen[-1] == pytest.approx(1.0), "it finishes at 100 %, so a progress bar can land"
 

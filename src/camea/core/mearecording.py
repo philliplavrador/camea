@@ -272,7 +272,9 @@ def minmax_columns(values: np.ndarray, n_columns: int) -> tuple[np.ndarray, np.n
 
 #: Bumped whenever the on-disk envelope layout changes. A cache written by an older Camea is
 #: rebuilt rather than reinterpreted — a stale shape served as a current one is worse than a wait.
-ENVELOPE_VERSION = 1
+#: (1 -> 2, 2026-08-16: the per-channel whole-recording `median` joined the stored format, so the
+#: cache can serve a CENTERED strip — see `Envelope.window` and docs/MAXWELL.md §7.6.)
+ENVELOPE_VERSION = 2
 
 #: What :func:`save_envelope` writes, beside the recording it describes.
 ENVELOPE_FILENAME = "envelope.npz"
@@ -293,6 +295,17 @@ class Envelope:
     ``lo``/``hi`` are raw counts, in the file's own dtype, ``(n_channels, n_buckets)``. Multiply by
     :attr:`lsb_uv` for microvolts — stored unscaled so the cache is half the size and exactly
     reversible. Rows are in ``groups/routed/channels`` order; :meth:`row_of` resolves a channel id.
+
+    ⭐ **``median`` IS WHAT KEEPS THE STRIP CONSISTENT WITH A CENTERED CLOSE-UP** (docs/MAXWELL.md
+    §7.6). The raw stream is offset-binary, so every count sits a midscale above zero;
+    :meth:`MeaRecording.trace` subtracts **its window's own median** (⛔ never the literal 512 —
+    §7.4), and the strip must put the same resting level at the same zero or the two pictures
+    disagree about where quiet is. The cache cannot recompute a window median (it has no samples),
+    so it stores each channel's exact **whole-recording** median — computed from the same per-value
+    tally the health numbers come from — and :meth:`window` serves counts relative to it. The two
+    agree at the resting level by construction: an honest window's median IS the recording's
+    midscale, and where they genuinely differ (a window inside a lamp episode) each picture is
+    centered on its own honest baseline, which is the §7.6 rule applied twice, not a drift.
     """
 
     version: int
@@ -305,6 +318,8 @@ class Envelope:
     fill_value: np.ndarray
     fill_fraction: np.ndarray
     distinct_values: np.ndarray
+    #: per-channel whole-recording median, in raw counts (float64: an even count halves).
+    median: np.ndarray
 
     @property
     def n_buckets(self) -> int:
@@ -339,6 +354,9 @@ class Envelope:
         The returned times are the **bucket edges actually covered**, not what was asked for — a
         caller must label its axis from these, because the buckets are the finest thing this cache
         can honestly report.
+
+        ⭐ **CENTERED**: microvolts relative to this channel's own whole-recording median (see the
+        class docstring), so the strip and a median-centered close-up agree about zero.
         """
         row = self.row_of(channel)
         if row is None:
@@ -355,9 +373,10 @@ class Envelope:
             cut = np.linspace(0, lo.size, max_points + 1, dtype=np.int64)
             lo = np.minimum.reduceat(lo, cut[:-1])
             hi = np.maximum.reduceat(hi, cut[:-1])
+        med = float(self.median[row])
         return (
-            lo * self.lsb_uv,
-            hi * self.lsb_uv,
+            (lo - med) * self.lsb_uv,
+            (hi - med) * self.lsb_uv,
             a / self.n_buckets * dur,
             b / self.n_buckets * dur,
         )
@@ -380,6 +399,7 @@ def save_envelope(path: Path, env: Envelope) -> None:
             fill_value=env.fill_value,
             fill_fraction=env.fill_fraction,
             distinct_values=env.distinct_values,
+            median=env.median,
         )
     # ⚠️ Atomic: a half-written cache that loads is worse than no cache. The rename is the commit.
     tmp.replace(path)
@@ -405,6 +425,7 @@ def load_envelope(path: Path) -> Envelope | None:
                 fill_value=z["fill_value"],
                 fill_fraction=z["fill_fraction"],
                 distinct_values=z["distinct_values"],
+                median=z["median"],
             )
     except Exception:  # noqa: BLE001
         # ⭐ **DELIBERATELY EVERYTHING, AND THAT IS THE POINT OF THIS FUNCTION.** A cache that will
@@ -976,7 +997,16 @@ class MeaRecording:
     # -- the half that needs the decoder ---------------------------------------------------------
 
     def trace(self, channel: int, t0: float = 0.0, t1: float | None = None) -> np.ndarray:
-        """The stored waveform for ``channel`` over ``[t0, t1)`` seconds, in microvolts.
+        """The stored waveform for ``channel`` over ``[t0, t1)`` seconds, in microvolts,
+        **centered on the window's own median**.
+
+        ⭐ **THE CENTERING IS OWED, NOT COSMETIC** (docs/MAXWELL.md §7.6). The raw stream is
+        offset-binary — every stored count sits a midscale above zero — so an uncentered trace
+        carries a fixed DC offset (≈+3.2 mV at 10 bits on his files) and the day a working decoder
+        arrives every waveform would sit that far off zero. Subtracting the **window's own median**
+        removes it honestly: the median of an extracellular window IS its resting level (spikes are
+        a few samples in thousands and cannot move it). ⛔ Never subtract the literal 512 or
+        3,222 µV — §7.4: the midscale depends on the bit depth, and the median is correct at any.
 
         ⚠️ Consult :meth:`trace_health` on the same window before presenting this as a voltage. On
         this project's data the published decoder returns a rail with a comb of isolated samples;
@@ -999,7 +1029,7 @@ class MeaRecording:
                 f"HDF5 filter (id {_MXW_FILTER_ID}); the matching decoder library must be present "
                 f"in {plugin_dir()}. It ships with MaxLab Live."
             ) from e
-        return counts * info.lsb_uv
+        return (counts - np.median(counts)) * info.lsb_uv
 
     def trace_health(self, channel: int, t0: float = 0.0, t1: float | None = None) -> TraceHealth:
         """How much of that window is a single repeated value — see :class:`TraceHealth`."""
@@ -1044,6 +1074,10 @@ class MeaRecording:
 
         ⚠️ :meth:`trace` and :meth:`trace_health` are deliberately left in place and unchanged. They
         have their own callers and their own tests; this is an addition, not a replacement.
+
+        ⭐ Centered exactly as :meth:`trace` is — the window's own median (§7.6), never a constant
+        (§7.4) — and the health is measured on the **raw** counts, so ``fill_value`` stays a stored
+        count a debugger can find in the file.
         """
         info = self.info()
         a, b = self._bounds(t0, t1)
@@ -1055,7 +1089,8 @@ class MeaRecording:
             counts = np.asarray(raw[row, a:b])
         except OSError as e:
             raise _undecodable() from e
-        return counts.astype(np.float64) * info.lsb_uv, health_of(counts)
+        uv = (counts.astype(np.float64) - np.median(counts)) * info.lsb_uv
+        return uv, health_of(counts)
 
     # -- the whole recording at a glance: the min/max envelope ------------------------------------
 
@@ -1154,6 +1189,15 @@ class MeaRecording:
 
         modal = hist.argmax(axis=1)
         counts = hist[np.arange(n_ch), modal]
+        # ⭐ **THE EXACT WHOLE-RECORDING MEDIAN, FROM THE TALLY ALREADY IN HAND.** The same
+        # per-value histogram the health numbers come from holds the median for free: the k-th
+        # smallest value is the first bin whose cumulative count exceeds k. Both middle elements
+        # are taken and averaged, so this is numpy's own median semantics, not a cheaper cousin —
+        # `trace()` centers its windows with `np.median`, and the strip must agree with it exactly
+        # on a window that happens to be the whole recording.
+        cum = hist.astype(np.int64).cumsum(axis=1)
+        k_lo, k_hi = (n_s - 1) // 2, n_s // 2
+        median = ((cum <= k_lo).sum(axis=1) + (cum <= k_hi).sum(axis=1)) / 2.0
         return Envelope(
             version=ENVELOPE_VERSION,
             channels=channels.astype(np.int32),
@@ -1165,6 +1209,7 @@ class MeaRecording:
             fill_value=modal.astype(np.int32),
             fill_fraction=(counts / n_s).astype(np.float32),
             distinct_values=(hist > 0).sum(axis=1).astype(np.int32),
+            median=median.astype(np.float64),
         )
 
     # -- the lamp episodes ------------------------------------------------------------------------
