@@ -132,3 +132,51 @@ def test_malformed_electrode_ids_are_skipped_not_fatal():
                                 channel_of={}, spikes_of={}, calcium=np.zeros(10),
                                 duration_s=1.0)
     assert all(s.n_region == 1 for s in scores)
+
+
+# ── combining several regions ───────────────────────────────────────────────────────────────────
+
+
+def test_score_seatings_returns_the_four_seatings_in_SEATINGS_order():
+    """⭐ The order IS the contract: the route zips per-region score lists together seat by seat,
+    so two regions' lists must name the same seating at the same index."""
+    scores = ori.score_seatings(["1-1"], cols=COLS, rows=ROWS, stride=STRIDE,
+                                channel_of={}, spikes_of={}, calcium=np.zeros(10),
+                                duration_s=1.0)
+    assert [(s.flip_x, s.flip_y) for s in scores] == list(ori.SEATINGS)
+    assert len(set(ori.SEATINGS)) == 4
+
+
+def test_seating_rate_is_the_series_half_of_score_seatings():
+    """The chance-level test recomputes the best seating's series through `seating_rate`; if it
+    drifted from what `score_seatings` scored, the null distribution would judge a different
+    series than the one that won."""
+    duration = 20.0
+    bursts = [2.0, 8.0, 14.0]
+    calcium = ori.population_rate(_spiky(duration, bursts), 0.0, duration)
+    kw = dict(cols=COLS, rows=ROWS, stride=STRIDE, channel_of={0: 10},
+              spikes_of={10: _spiky(duration, bursts)}, duration_s=duration)
+
+    scores = ori.score_seatings(["1-1"], calcium=calcium, **kw)
+    for s in scores:
+        rate, n_recorded, n_region, n_spikes = ori.seating_rate(
+            ["1-1"], flip_x=s.flip_x, flip_y=s.flip_y, **kw)
+        assert (n_recorded, n_region, n_spikes) == (s.n_recorded, s.n_region, s.n_spikes)
+        assert ori.pearson(rate, calcium) == (s.correlation if n_recorded else None)
+
+
+def test_combined_correlation_is_weighted_by_recorded_pads():
+    """A region with more recorded pads under the seating carries proportionally more evidence."""
+    assert ori.combined_correlation([(0.8, 3), (0.2, 1)]) == pytest.approx(0.65)
+    assert ori.combined_correlation([(0.5, 7)]) == pytest.approx(0.5)
+
+
+def test_combined_correlation_refuses_to_invent_a_zero_for_an_untested_region():
+    """⭐ THE SAME DISTINCTION AS SeatingScore, held while combining: a region this seating puts no
+    recorded pad under says NOTHING, and averaging in a zero for it would drag a genuinely tested
+    correlation toward the untested middle."""
+    assert ori.combined_correlation([(None, 0), (0.9, 4)]) == pytest.approx(0.9)
+    assert ori.combined_correlation([(None, 0), (None, 0)]) is None
+    assert ori.combined_correlation([]) is None
+    # a correlation reported with zero weight is a contradiction — weight zero means untested
+    assert ori.combined_correlation([(0.4, 0)]) is None

@@ -1712,16 +1712,50 @@ export interface paths {
         put?: never;
         /**
          * Post Mea Orientation
-         * @description Score the four chip seatings against a located region (202 + `JobRef`).
+         * @description Score the four chip seatings against the located regions (202 + `JobRef`).
          *
-         *     A job because it reads every frame of the region recording and makes a full pass over the MEA
+         *     A job because it reads every frame of each region recording and makes a full pass over the MEA
          *     spike table — minutes, not milliseconds.
+         *
+         *     ⭐ **EVERY SCORABLE REGION TAKES PART** (2026-08-15). Two located regions are two independent
+         *     witnesses to the same seating — the chip sat one way for the whole session — so the test scores
+         *     each region against each seating and combines them (`orientation.combined_correlation`
+         *     documents how). `region_id` still narrows it to one region, with the old single-region contract
+         *     and its specific refusals intact.
          *
          *     ⭐ **IT PROPOSES; IT NEVER APPLIES.** The winning seating comes back in the result and a human
          *     confirms it through `POST /mea/attach`. That is his rule for the whole app and it matters most
          *     here: a wrong seating pairs every neuron with the wrong electrode, and would do so invisibly.
          */
         post: operations["post_mea_orientation_api_videomosaic_mea_orientation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/mea/footprint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea Footprint
+         * @description Where the RECORDED pads would sit in the mosaic, under each of the four seatings.
+         *
+         *     ⭐ **CHEAP ON PURPOSE — the mapping only.** No video, no spikes, no raw stream: a UI can draw
+         *     the four candidate footprints the moment its panel opens. The per-region covered-pad counts
+         *     are the same geometry the orientation job's coverage evidence rests on, computable without
+         *     reading a single frame — the heavy evidence stays in the job.
+         *
+         *     Refusals mirror the orientation route's: no MEA attached and no electrode map are both 409s,
+         *     because without them there is no grid for a footprint to sit in.
+         */
+        get: operations["get_mea_footprint_api_videomosaic_mea_footprint_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4204,6 +4238,88 @@ export interface components {
             started?: string[];
         };
         /**
+         * MeaFootprintPayload
+         * @description `GET /api/videomosaic/mea/footprint` — the four seatings' recorded-pad footprints.
+         *
+         *     ⭐ **GEOMETRY ONLY, CHEAP ON PURPOSE**: reads the recording's routed mapping and nothing else
+         *     (no video, no spikes, no raw stream), so a UI can draw where each candidate seating would put
+         *     the recorded block the moment its panel opens. ⛔ It ranks nothing and proposes nothing — the
+         *     evidence lives in the orientation job.
+         */
+        MeaFootprintPayload: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Cols
+             * @description The project's electrode grid, as mapped from the mosaic.
+             */
+            cols: number;
+            /** Rows */
+            rows: number;
+            /**
+             * Stride
+             * @description The chip's long-axis length, derived from the recording itself (never a datasheet number).
+             */
+            stride: number;
+            /**
+             * N Routed
+             * @description How many electrodes the recording routed at all.
+             */
+            n_routed: number;
+            /** @description The seating the project currently holds — so the UI can mark which footprint is the saved one. */
+            orientation?: components["schemas"]["MeaOrientation"];
+            /** Seatings */
+            seatings?: components["schemas"]["MeaFootprintSeating"][];
+        };
+        /**
+         * MeaFootprintRegion
+         * @description How many of one located region's pads a seating actually covers — pure geometry.
+         */
+        MeaFootprintRegion: {
+            /** Region Id */
+            region_id: string;
+            /**
+             * Region Name
+             * @default
+             */
+            region_name: string;
+            /**
+             * N Region
+             * @description How many pads the region covers at all.
+             */
+            n_region: number;
+            /**
+             * N Covered
+             * @description How many of them this seating maps onto RECORDED electrodes. The same coverage number the orientation test reports, computed without reading a frame or a spike.
+             */
+            n_covered: number;
+        };
+        /**
+         * MeaFootprintSeating
+         * @description Where the recorded pads would sit in the mosaic under one candidate seating.
+         */
+        MeaFootprintSeating: {
+            /** Flip X */
+            flip_x: boolean;
+            /** Flip Y */
+            flip_y: boolean;
+            /**
+             * Electrodes
+             * @description The recorded pads as Camea "col-row" grid ids under this seating. Pads that fall outside the mapped grid are absent — they have no id in this mosaic.
+             */
+            electrodes?: string[];
+            /**
+             * N Recorded
+             * @description len(electrodes) — how many recorded pads land inside the mapped grid under this seating.
+             * @default 0
+             */
+            n_recorded: number;
+            /** Regions */
+            regions?: components["schemas"]["MeaFootprintRegion"][];
+        };
+        /**
          * MeaOrientation
          * @description How the chip's own axes sit in the mosaic — the half no file records (see header).
          */
@@ -4623,6 +4739,63 @@ export interface components {
             trials?: number[] | null;
         };
         /**
+         * OrientationRegionScore
+         * @description One located region's own evidence inside the orientation test.
+         *
+         *     ⭐ Regions are combined for the verdict, but each is also reported alone: a seating that two
+         *     independent fields both point at is different evidence from one field shouting and one silent,
+         *     and only the breakdown can show which happened.
+         */
+        OrientationRegionScore: {
+            /** Region Id */
+            region_id: string;
+            /**
+             * Region Name
+             * @default
+             */
+            region_name: string;
+            /**
+             * N Region
+             * @description How many pads this region covers.
+             * @default 0
+             */
+            n_region: number;
+            /**
+             * Offset S
+             * @description Clock shift applied for THIS region's video, MEA onto video. Each region's recording has its own clock, so each gets its own alignment.
+             * @default 0
+             */
+            offset_s: number;
+            /**
+             * Alignment Quality
+             * @description Jaccard overlap of the mark trains at that offset, for this region. Same sceptical reading as the top-level number.
+             * @default 0
+             */
+            alignment_quality: number;
+            /** Seatings */
+            seatings?: components["schemas"]["OrientationRegionSeating"][];
+        };
+        /**
+         * OrientationRegionSeating
+         * @description One seating's numbers against ONE region — a row of the per-region breakdown.
+         */
+        OrientationRegionSeating: {
+            /** Flip X */
+            flip_x: boolean;
+            /** Flip Y */
+            flip_y: boolean;
+            /**
+             * N Recorded
+             * @description Of THIS region's pads, how many this seating maps onto recorded electrodes.
+             */
+            n_recorded: number;
+            /**
+             * Correlation
+             * @description This region's own spike-rate vs calcium correlation under this seating. null = untestable here (no recorded pad under this field).
+             */
+            correlation?: number | null;
+        };
+        /**
          * OrientationTestResult
          * @description `job.result` of an `mea_orientation` job — the four seatings, ranked.
          *
@@ -4642,7 +4815,10 @@ export interface components {
             analysis_id: string;
             /** Run Id */
             run_id: string;
-            /** Region Id */
+            /**
+             * Region Id
+             * @description The region tested, when ONE was — its old meaning. Blank when several regions took part; `regions` carries each of them.
+             */
             region_id: string;
             /**
              * Region Name
@@ -4651,6 +4827,11 @@ export interface components {
             region_name: string;
             /** Scores */
             scores?: components["schemas"]["SeatingScorePayload"][];
+            /**
+             * Regions
+             * @description ⭐ The per-region breakdown behind `scores` — every region that was scored, each with its own clock alignment and its own four seating rows. Additive: a one-region run has a one-entry list.
+             */
+            regions?: components["schemas"]["OrientationRegionScore"][];
             /** @description The top-ranked seating — a PROPOSAL, and only when `decisive`. Never applied by the job, and null when the seatings could not be told apart. */
             best?: components["schemas"]["MeaOrientation"] | null;
             /**
@@ -5546,7 +5727,8 @@ export interface components {
         };
         /**
          * SeatingScorePayload
-         * @description One candidate seating and how well it explains the data.
+         * @description One candidate seating and how well it explains the data — summed over every region the
+         *     test scored (one region behaves exactly as it always did).
          */
         SeatingScorePayload: {
             /** Flip X */
@@ -5555,12 +5737,12 @@ export interface components {
             flip_y: boolean;
             /**
              * N Recorded
-             * @description Of the region's pads, how many this seating maps onto electrodes that were actually recorded.
+             * @description Of the scored regions' pads, how many this seating maps onto electrodes that were actually recorded — totalled across regions when several took part.
              */
             n_recorded: number;
             /**
              * N Region
-             * @description How many pads the region covers — the denominator.
+             * @description How many pads the scored regions cover — the denominator, totalled across regions when several took part.
              */
             n_region: number;
             /** Coverage */
@@ -5569,7 +5751,7 @@ export interface components {
             n_spikes: number;
             /**
              * Correlation
-             * @description Spike rate vs calcium activity. ⭐ **null means UNTESTABLE** — this seating puts no recorded electrode under the field — which is a different answer from a low correlation and must never be rendered as one.
+             * @description Spike rate vs calcium activity. ⭐ **null means UNTESTABLE** — this seating puts no recorded electrode under any scored field — which is a different answer from a low correlation and must never be rendered as one. Across several regions it is the per-region correlations combined, weighted by each region's recorded-pad count under this seating (`orientation.combined_correlation` documents why a weighted mean: the regions' videos share no clock, so their series cannot be laid on one axis).
              */
             correlation?: number | null;
             /** Scorable */
@@ -8588,6 +8770,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mea_footprint_api_videomosaic_mea_footprint_get: {
+        parameters: {
+            query: {
+                analysis_id: string;
+                run_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeaFootprintPayload"];
                 };
             };
             /** @description Validation Error */

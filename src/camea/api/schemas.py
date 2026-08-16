@@ -2251,20 +2251,58 @@ class MeaAttachment(Res):
 
 
 class SeatingScorePayload(Res):
-    """One candidate seating and how well it explains the data."""
+    """One candidate seating and how well it explains the data — summed over every region the
+    test scored (one region behaves exactly as it always did)."""
 
     flip_x: bool
     flip_y: bool
-    n_recorded: int = Field(description="Of the region's pads, how many this seating maps onto "
-                            "electrodes that were actually recorded.")
-    n_region: int = Field(description="How many pads the region covers — the denominator.")
+    n_recorded: int = Field(description="Of the scored regions' pads, how many this seating maps "
+                            "onto electrodes that were actually recorded — totalled across "
+                            "regions when several took part.")
+    n_region: int = Field(description="How many pads the scored regions cover — the denominator, "
+                          "totalled across regions when several took part.")
     coverage: float
     n_spikes: int
     correlation: float | None = Field(
         default=None, description="Spike rate vs calcium activity. ⭐ **null means UNTESTABLE** — "
-        "this seating puts no recorded electrode under the field — which is a different answer "
-        "from a low correlation and must never be rendered as one.")
+        "this seating puts no recorded electrode under any scored field — which is a different "
+        "answer from a low correlation and must never be rendered as one. Across several regions "
+        "it is the per-region correlations combined, weighted by each region's recorded-pad count "
+        "under this seating (`orientation.combined_correlation` documents why a weighted mean: "
+        "the regions' videos share no clock, so their series cannot be laid on one axis).")
     scorable: bool
+
+
+class OrientationRegionSeating(Res):
+    """One seating's numbers against ONE region — a row of the per-region breakdown."""
+
+    flip_x: bool
+    flip_y: bool
+    n_recorded: int = Field(description="Of THIS region's pads, how many this seating maps onto "
+                            "recorded electrodes.")
+    correlation: float | None = Field(
+        default=None, description="This region's own spike-rate vs calcium correlation under this "
+        "seating. null = untestable here (no recorded pad under this field).")
+
+
+class OrientationRegionScore(Res):
+    """One located region's own evidence inside the orientation test.
+
+    ⭐ Regions are combined for the verdict, but each is also reported alone: a seating that two
+    independent fields both point at is different evidence from one field shouting and one silent,
+    and only the breakdown can show which happened.
+    """
+
+    region_id: str
+    region_name: str = ""
+    n_region: int = Field(default=0, description="How many pads this region covers.")
+    offset_s: float = Field(default=0.0, description="Clock shift applied for THIS region's "
+                            "video, MEA onto video. Each region's recording has its own clock, "
+                            "so each gets its own alignment.")
+    alignment_quality: float = Field(
+        default=0.0, description="Jaccard overlap of the mark trains at that offset, for this "
+        "region. Same sceptical reading as the top-level number.")
+    seatings: list[OrientationRegionSeating] = Field(default_factory=list)
 
 
 class OrientationTestResult(Res):
@@ -2280,9 +2318,14 @@ class OrientationTestResult(Res):
     kind: Literal["mea_orientation"] = "mea_orientation"
     analysis_id: str
     run_id: str
-    region_id: str
+    region_id: str = Field(description="The region tested, when ONE was — its old meaning. Blank "
+                           "when several regions took part; `regions` carries each of them.")
     region_name: str = ""
     scores: list[SeatingScorePayload] = Field(default_factory=list)
+    regions: list[OrientationRegionScore] = Field(
+        default_factory=list, description="⭐ The per-region breakdown behind `scores` — every "
+        "region that was scored, each with its own clock alignment and its own four seating "
+        "rows. Additive: a one-region run has a one-entry list.")
     best: MeaOrientation | None = Field(
         default=None, description="The top-ranked seating — a PROPOSAL, and only when `decisive`. "
         "Never applied by the job, and null when the seatings could not be told apart.")
@@ -2321,6 +2364,52 @@ class MeaAttachRequest(Req):
     confirm: bool = Field(default=False, description="False = discover and report only. True = "
                           "save this attachment onto the project.")
     orientation: MeaOrientation | None = None
+
+
+class MeaFootprintRegion(Res):
+    """How many of one located region's pads a seating actually covers — pure geometry."""
+
+    region_id: str
+    region_name: str = ""
+    n_region: int = Field(description="How many pads the region covers at all.")
+    n_covered: int = Field(description="How many of them this seating maps onto RECORDED "
+                           "electrodes. The same coverage number the orientation test reports, "
+                           "computed without reading a frame or a spike.")
+
+
+class MeaFootprintSeating(Res):
+    """Where the recorded pads would sit in the mosaic under one candidate seating."""
+
+    flip_x: bool
+    flip_y: bool
+    electrodes: list[str] = Field(default_factory=list, description='The recorded pads as Camea '
+                                  '"col-row" grid ids under this seating. Pads that fall outside '
+                                  'the mapped grid are absent — they have no id in this mosaic.')
+    n_recorded: int = Field(default=0, description="len(electrodes) — how many recorded pads land "
+                            "inside the mapped grid under this seating.")
+    regions: list[MeaFootprintRegion] = Field(default_factory=list)
+
+
+class MeaFootprintPayload(Res):
+    """`GET /api/videomosaic/mea/footprint` — the four seatings' recorded-pad footprints.
+
+    ⭐ **GEOMETRY ONLY, CHEAP ON PURPOSE**: reads the recording's routed mapping and nothing else
+    (no video, no spikes, no raw stream), so a UI can draw where each candidate seating would put
+    the recorded block the moment its panel opens. ⛔ It ranks nothing and proposes nothing — the
+    evidence lives in the orientation job.
+    """
+
+    analysis_id: str
+    run_id: str
+    cols: int = Field(description="The project's electrode grid, as mapped from the mosaic.")
+    rows: int
+    stride: int = Field(description="The chip's long-axis length, derived from the recording "
+                        "itself (never a datasheet number).")
+    n_routed: int = Field(description="How many electrodes the recording routed at all.")
+    orientation: MeaOrientation = Field(default_factory=MeaOrientation,
+                                        description="The seating the project currently holds — "
+                                        "so the UI can mark which footprint is the saved one.")
+    seatings: list[MeaFootprintSeating] = Field(default_factory=list)
 
 
 class TraceHealthPayload(Res):
@@ -3056,8 +3145,13 @@ __all__ = [
     "ElectrodeTracePayload",
     "MeaAttachRequest",
     "MeaAttachment",
+    "MeaFootprintPayload",
+    "MeaFootprintRegion",
+    "MeaFootprintSeating",
     "MeaOrientationRequest",
     "OrientationTestResult",
+    "OrientationRegionScore",
+    "OrientationRegionSeating",
     "SeatingScorePayload",
     "MeaOrientation",
     "MeaRecordingSummary",

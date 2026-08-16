@@ -47,18 +47,27 @@ from pathlib import Path
 import numpy as np
 
 __all__ = [
+    "SEATINGS",
     "SeatingScore",
     "align_offset",
+    "combined_correlation",
     "intervals_to_mask",
     "pearson",
     "population_rate",
     "score_seatings",
+    "seating_rate",
     "video_activity",
 ]
 
 #: Bin width for both time series. 100 ms is well below the seconds-long calcium transients this
 #: compares and well above the jitter any clock alignment here can promise.
 BIN_S = 0.1
+
+#: The four candidate seatings, as ``(flip_x, flip_y)``, **in the one order every list in this
+#: module uses**. :func:`score_seatings` returns them in this order for every region, which is what
+#: lets a caller zip per-region score lists together seat by seat without matching on flags.
+SEATINGS: tuple[tuple[bool, bool], ...] = ((False, False), (True, False), (False, True),
+                                           (True, True))
 
 
 @dataclass(frozen=True)
@@ -189,6 +198,59 @@ def pearson(a: np.ndarray, b: np.ndarray) -> float | None:
 # ── the scoring ─────────────────────────────────────────────────────────────────────────────────
 
 
+def _parse_ids(region_electrodes: list[str]) -> list[tuple[int, int]]:
+    """``"col-row"`` strings to ``(col, row)`` pairs, skipping anything malformed."""
+    parsed: list[tuple[int, int]] = []
+    for e in region_electrodes:
+        try:
+            c, r = (int(v) for v in e.split("-", 1))
+        except ValueError:
+            continue
+        parsed.append((c, r))
+    return parsed
+
+
+def seating_rate(
+    region_electrodes: list[str],
+    *,
+    flip_x: bool,
+    flip_y: bool,
+    cols: int,
+    rows: int,
+    stride: int,
+    channel_of: dict[int, int],
+    spikes_of: dict[int, np.ndarray],
+    duration_s: float,
+    offset_s: float = 0.0,
+    bin_s: float = BIN_S,
+) -> tuple[np.ndarray, int, int, int]:
+    """The binned spike rate ONE seating puts under one region.
+
+    -> ``(rate, n_recorded, n_region, n_spikes)``. The series half of :func:`score_seatings`,
+    split out so a caller that already knows which seating it cares about (the chance-level test)
+    can get its series back without recomputing all four.
+    """
+    from camea.core.mearecording import Orientation  # noqa: PLC0415
+
+    parsed = _parse_ids(region_electrodes)
+    o = Orientation(flip_x=flip_x, flip_y=flip_y)
+    times: list[np.ndarray] = []
+    n_recorded = 0
+    for c, r in parsed:
+        chip = o.chip_electrode(c, r, cols=cols, rows=rows, stride=stride)
+        ch = channel_of.get(chip)
+        if ch is None:
+            continue
+        n_recorded += 1
+        st = spikes_of.get(ch)
+        if st is not None and st.size:
+            times.append(st)
+    allt = np.concatenate(times) if times else np.zeros(0)
+    # The MEA clock moved onto the video's, so both series index the same moments.
+    rate = population_rate(allt - offset_s, 0.0, duration_s, bin_s)
+    return rate, n_recorded, len(parsed), int(allt.size)
+
+
 def score_seatings(
     region_electrodes: list[str],
     *,
@@ -202,7 +264,7 @@ def score_seatings(
     offset_s: float = 0.0,
     bin_s: float = BIN_S,
 ) -> list[SeatingScore]:
-    """Score all four seatings for one located region.
+    """Score all four seatings for one located region, in :data:`SEATINGS` order.
 
     ``channel_of`` maps a MaxWell electrode id to its routed channel (absent = never recorded);
     ``spikes_of`` maps a channel to its spike times in seconds. Both are handed in so this stays
@@ -212,36 +274,36 @@ def score_seatings(
     coverage, spikes and correlation, and refuses to invent a correlation where there is nothing to
     correlate (see :class:`SeatingScore`).
     """
-    from camea.core.mearecording import Orientation  # noqa: PLC0415
-
-    parsed: list[tuple[int, int]] = []
-    for e in region_electrodes:
-        try:
-            c, r = (int(v) for v in e.split("-", 1))
-        except ValueError:
-            continue
-        parsed.append((c, r))
-
     out: list[SeatingScore] = []
-    for flip_y in (False, True):
-        for flip_x in (False, True):
-            o = Orientation(flip_x=flip_x, flip_y=flip_y)
-            times: list[np.ndarray] = []
-            n_recorded = 0
-            for c, r in parsed:
-                chip = o.chip_electrode(c, r, cols=cols, rows=rows, stride=stride)
-                ch = channel_of.get(chip)
-                if ch is None:
-                    continue
-                n_recorded += 1
-                st = spikes_of.get(ch)
-                if st is not None and st.size:
-                    times.append(st)
-            allt = np.concatenate(times) if times else np.zeros(0)
-            # The MEA clock moved onto the video's, so both series index the same moments.
-            rate = population_rate(allt - offset_s, 0.0, duration_s, bin_s)
-            corr = pearson(rate, calcium) if n_recorded else None
-            out.append(SeatingScore(flip_x=flip_x, flip_y=flip_y, n_recorded=n_recorded,
-                                    n_region=len(parsed), n_spikes=int(allt.size),
-                                    correlation=corr))
+    for flip_x, flip_y in SEATINGS:
+        rate, n_recorded, n_region, n_spikes = seating_rate(
+            region_electrodes, flip_x=flip_x, flip_y=flip_y, cols=cols, rows=rows,
+            stride=stride, channel_of=channel_of, spikes_of=spikes_of,
+            duration_s=duration_s, offset_s=offset_s, bin_s=bin_s)
+        corr = pearson(rate, calcium) if n_recorded else None
+        out.append(SeatingScore(flip_x=flip_x, flip_y=flip_y, n_recorded=n_recorded,
+                                n_region=n_region, n_spikes=n_spikes, correlation=corr))
     return out
+
+
+def combined_correlation(parts: list[tuple[float | None, int]]) -> float | None:
+    """One correlation for a seating scored against SEVERAL regions. ``parts`` is per region
+    ``(correlation, n_recorded)``.
+
+    ⭐ **WHY A WEIGHTED MEAN AND NOT ONE LONG CORRELATION.** Each region recording is its own video
+    on its own clock, aligned to the MEA independently — so the per-region series cannot be laid on
+    one axis without inventing a relative clock between videos that nothing measured. What CAN be
+    combined honestly is the per-region correlations, weighted by how many recorded pads the
+    seating actually has under each region: a region with more pads under it contributes a steadier
+    estimate and proportionally more evidence, and a region with none (correlation ``None``)
+    contributes **nothing** rather than an invented zero — the same refusal
+    :class:`SeatingScore` makes for a single region.
+    """
+    num = 0.0
+    den = 0.0
+    for corr, weight in parts:
+        if corr is None or weight <= 0:
+            continue
+        num += corr * weight
+        den += weight
+    return (num / den) if den else None

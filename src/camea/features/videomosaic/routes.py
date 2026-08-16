@@ -47,6 +47,7 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     LocateRegionRequest,
     MeaAttachment,
     MeaAttachRequest,
+    MeaFootprintPayload,
     MeaOrientationRequest,
     RegionRecord,
     RegionsPayload,
@@ -996,10 +997,16 @@ ORIENTATION_CAVEAT = (
 
 @router.post("/api/videomosaic/mea/orientation", status_code=202, response_model=JobRef)
 def post_mea_orientation(body: MeaOrientationRequest) -> dict:
-    """Score the four chip seatings against a located region (202 + `JobRef`).
+    """Score the four chip seatings against the located regions (202 + `JobRef`).
 
-    A job because it reads every frame of the region recording and makes a full pass over the MEA
+    A job because it reads every frame of each region recording and makes a full pass over the MEA
     spike table — minutes, not milliseconds.
+
+    ⭐ **EVERY SCORABLE REGION TAKES PART** (2026-08-15). Two located regions are two independent
+    witnesses to the same seating — the chip sat one way for the whole session — so the test scores
+    each region against each seating and combines them (`orientation.combined_correlation`
+    documents how). `region_id` still narrows it to one region, with the old single-region contract
+    and its specific refusals intact.
 
     ⭐ **IT PROPOSES; IT NEVER APPLIES.** The winning seating comes back in the result and a human
     confirms it through `POST /mea/attach`. That is his rule for the whole app and it matters most
@@ -1027,15 +1034,32 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
         raise ApiError(409, "refused",
                        "this test needs a located region recording — the electrodes under a field "
                        "are what its spikes are compared against. Locate one first.")
-    region = regions[0]
-    ids = list((region.get("electrodes") or {}).get("ids") or [])
-    if not ids:
+
+    # Which regions can actually be scored: named electrodes, and the recording still on disk.
+    # When ONE region was asked for by id, a problem with it is refused specifically, as before;
+    # when the test sweeps all of them, an unscorable region is skipped and the rest still count.
+    chosen: list[dict] = []
+    for region in regions:
+        ids = list((region.get("electrodes") or {}).get("ids") or [])
+        if not ids:
+            if body.region_id:
+                raise ApiError(409, "refused",
+                               "that region has no electrodes named under it, so there is "
+                               "nothing to score")
+            continue
+        video = str((region.get("source") or {}).get("path") or "")
+        if not video or not Path(video).is_file():
+            if body.region_id:
+                raise ApiError(404, "not_found",
+                               "the region's own recording is not where the project left it")
+            continue
+        chosen.append({"id": str(region.get("id") or ""),
+                       "name": str(region.get("name") or ""),
+                       "ids": ids, "video": video})
+    if not chosen:
         raise ApiError(409, "refused",
-                       "that region has no electrodes named under it, so there is nothing to score")
-    video = str((region.get("source") or {}).get("path") or "")
-    if not video or not Path(video).is_file():
-        raise ApiError(404, "not_found",
-                       "the region's own recording is not where the project left it")
+                       "none of the located regions can be scored — a region needs electrodes "
+                       "named under it and its own recording still on disk")
 
     paths = mearecording.find_recordings(block["mea_dir"])
     if body.run_id:
@@ -1047,12 +1071,18 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
     def fn(report, cancel):
         from camea.core import jobs as core_jobs  # noqa: PLC0415
 
-        core_jobs.say(report, "video", 1, 3, 0.0, "reading the region recording")
-        calcium, _fps = vorient.video_activity(video)
-        core_jobs.check_cancelled(cancel, "orientation test")
-        duration = calcium.size * vorient.BIN_S
+        n_regions = len(chosen)
+        steps = n_regions + 2
+        calcium_of: list[np.ndarray] = []
+        for i, ch in enumerate(chosen):
+            core_jobs.say(report, "video", i + 1, steps, 0.0,
+                          f"reading region recording {i + 1} of {n_regions}")
+            arr, _fps = vorient.video_activity(ch["video"])
+            calcium_of.append(arr)
+            core_jobs.check_cancelled(cancel, "orientation test")
 
-        core_jobs.say(report, "mea", 2, 3, 0.0, "reading the electrical recording")
+        core_jobs.say(report, "mea", n_regions + 1, steps, 0.0,
+                      "reading the electrical recording")
         with mearecording.MeaRecording(rec_path) as r:
             info = r.info()
             stride = r.stride()
@@ -1060,9 +1090,9 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
             channel_of = {int(e): int(c) for e, c in zip(m["electrode"], m["channel"])}
             sp = r.spikes()
             spikes_of: dict[int, np.ndarray] = {}
-            for ch in np.unique(sp["channel"]):
-                spikes_of[int(ch)] = sp["t_s"][sp["channel"] == ch]
-            # The lamp marks on each side, and the shift that best lines them up.
+            for ch_id in np.unique(sp["channel"]):
+                spikes_of[int(ch_id)] = sp["t_s"][sp["channel"] == ch_id]
+            # The lamp marks on the MEA side, shared by every region's alignment.
             try:
                 eps = r.sync_episodes()
                 mea_mask = vorient.intervals_to_mask(
@@ -1071,57 +1101,99 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
                 mea_mask = np.zeros(0, dtype=bool)
         core_jobs.check_cancelled(cancel, "orientation test")
 
-        core_jobs.say(report, "score", 3, 3, 0.0, "scoring the four seatings")
-        lo, hi = float(calcium.min()), float(calcium.max())
-        dark = calcium < (lo + 0.5 * (hi - lo)) if hi > lo else np.zeros(calcium.size, dtype=bool)
-        offset, quality = vorient.align_offset(mea_mask, dark) if mea_mask.size else (0.0, 0.0)
+        core_jobs.say(report, "score", steps, steps, 0.0, "scoring the four seatings")
+        # ⭐ EACH REGION IS ALIGNED ON ITS OWN. Each recording is its own video with its own start
+        # instant, so one clock offset per region — never one offset stretched across videos that
+        # never shared a clock.
+        per_region: list[dict] = []
+        for ch, calcium in zip(chosen, calcium_of):
+            duration = calcium.size * vorient.BIN_S
+            lo, hi = (float(calcium.min()), float(calcium.max())) if calcium.size else (0.0, 0.0)
+            dark = (calcium < (lo + 0.5 * (hi - lo)) if hi > lo
+                    else np.zeros(calcium.size, dtype=bool))
+            offset, quality = (vorient.align_offset(mea_mask, dark)
+                               if mea_mask.size else (0.0, 0.0))
+            scores = vorient.score_seatings(
+                ch["ids"], cols=cols, rows=rows, stride=stride, channel_of=channel_of,
+                spikes_of=spikes_of, calcium=calcium, duration_s=duration, offset_s=offset)
+            per_region.append({**ch, "scores": scores, "offset": float(offset),
+                               "quality": float(quality)})
 
-        scores = vorient.score_seatings(
-            ids, cols=cols, rows=rows, stride=stride, channel_of=channel_of,
-            spikes_of=spikes_of, calcium=calcium, duration_s=duration, offset_s=offset)
+        # One aggregate score per seating, across every region it was tested against. Counts add;
+        # the correlations combine as `combined_correlation` documents (weighted by how many
+        # recorded pads the seating has under each region — a region it covers not at all
+        # contributes nothing, never a zero).
+        agg: list[vorient.SeatingScore] = []
+        for k, (fx, fy) in enumerate(vorient.SEATINGS):
+            seats = [pr["scores"][k] for pr in per_region]
+            agg.append(vorient.SeatingScore(
+                flip_x=fx, flip_y=fy,
+                n_recorded=sum(s.n_recorded for s in seats),
+                n_region=sum(s.n_region for s in seats),
+                n_spikes=sum(s.n_spikes for s in seats),
+                correlation=vorient.combined_correlation(
+                    [(s.correlation, s.n_recorded) for s in seats])))
 
-        # Rank only what is scorable. A seating with no recorded electrode under the field is not a
-        # loser — it is untested, and sorting it against tested ones would be a lie about the data.
-        ranked = sorted((s for s in scores if s.scorable),
+        # Rank only what is scorable. A seating with no recorded electrode under any field is not
+        # a loser — it is untested, and sorting it against tested ones would lie about the data.
+        ranked = sorted((s for s in agg if s.scorable),
                         key=lambda s: (s.correlation or -1.0), reverse=True)
 
         # ⭐ WHAT ACTUALLY SEPARATED THEM — and whether anything did.
         #
         # Coverage first, and it is the strongest evidence this test can produce: if only ONE
-        # seating puts any recorded electrode under the field, that is pure geometry. It does not
-        # depend on the clock alignment, and it does not depend on the raw stream decoding — the
-        # two things issue 003 says cannot be trusted here. (Measured on P003658: one seating puts
-        # 210 pads under the region, the other three put none.)
+        # seating puts any recorded electrode under ANY of the fields, that is pure geometry. It
+        # does not depend on the clock alignment, and it does not depend on the raw stream
+        # decoding — the two things issue 003 says cannot be trusted here. (Measured on P003658:
+        # one seating puts 210 pads under the region, the other three put none.)
         #
-        # Otherwise fall back to correlation, but only if the top actually beats the runner-up. Four
-        # near-identical numbers separated by 0.004 are noise, and crowning one would manufacture the
-        # answer this whole feature exists to avoid.
-        best = ranked[0] if ranked else None
+        # Otherwise fall back to correlation, but only if the top actually beats the runner-up.
+        # Four near-identical numbers separated by 0.004 are noise, and crowning one would
+        # manufacture the answer this whole feature exists to avoid.
+        covered = [s for s in agg if s.n_recorded > 0]
         margin = (float(ranked[0].correlation - ranked[1].correlation)  # type: ignore[operator]
                   if len(ranked) >= 2 else None)
-        if len(ranked) == 1:
-            decisive, decided_by = True, "coverage"
+        if len(covered) == 1:
+            best, decisive, decided_by = covered[0], True, "coverage"
         elif margin is not None and margin >= MIN_CORRELATION_MARGIN:
-            decisive, decided_by = True, "correlation"
+            best, decisive, decided_by = ranked[0], True, "correlation"
         else:
+            best = ranked[0] if ranked else None
             decisive, decided_by = False, ""
+
+        single = len(per_region) == 1
+        names = ", ".join(pr["name"] or pr["id"] for pr in per_region)
+        source = (f"orientation test vs region {per_region[0]['name'] or ''}".strip() if single
+                  else f"orientation test vs regions {names}")
         return {
             "kind": ORIENTATION_JOB_KIND,
             "analysis_id": analysis_id,
             "run_id": rec_path.parent.name,
-            "region_id": str(region.get("id") or ""),
-            "region_name": str(region.get("name") or ""),
-            "scores": [s.as_dict() for s in scores],
+            # Kept meaning: WHICH region, when one region was tested. Blank when several were —
+            # the per-region truth is in `regions` below.
+            "region_id": per_region[0]["id"] if single else "",
+            "region_name": per_region[0]["name"] if single else "",
+            "scores": [s.as_dict() for s in agg],
+            "regions": [
+                {"region_id": pr["id"], "region_name": pr["name"],
+                 "n_region": pr["scores"][0].n_region,
+                 "offset_s": pr["offset"], "alignment_quality": pr["quality"],
+                 "seatings": [{"flip_x": s.flip_x, "flip_y": s.flip_y,
+                               "n_recorded": s.n_recorded, "correlation": s.correlation}
+                              for s in pr["scores"]]}
+                for pr in per_region],
             # ⛔ No winner at all when nothing separated them. A `best` the UI could apply would be
             # read as an answer however it was captioned.
             "best": ({"flip_x": best.flip_x, "flip_y": best.flip_y, "confirmed": False,
-                      "source": f"orientation test vs region {region.get('name') or ''}".strip()}
+                      "source": source}
                      if (best and decisive) else None),
             "decisive": decisive,
             "decided_by": decided_by,
             "margin": margin,
-            "offset_s": float(offset),
-            "alignment_quality": float(quality),
+            # Kept meaning: the (first) region's clock alignment, as before. With several regions
+            # each has its own — see `regions`.
+            "offset_s": per_region[0]["offset"],
+            "alignment_quality": per_region[0]["quality"],
             "caveat": ORIENTATION_CAVEAT,
         }
 
@@ -1130,6 +1202,67 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     return {"job_id": job.job_id, "kind": ORIENTATION_JOB_KIND}
+
+
+@router.get("/api/videomosaic/mea/footprint", response_model=MeaFootprintPayload)
+def get_mea_footprint(analysis_id: str, run_id: str | None = None) -> dict:
+    """Where the RECORDED pads would sit in the mosaic, under each of the four seatings.
+
+    ⭐ **CHEAP ON PURPOSE — the mapping only.** No video, no spikes, no raw stream: a UI can draw
+    the four candidate footprints the moment its panel opens. The per-region covered-pad counts
+    are the same geometry the orientation job's coverage evidence rests on, computable without
+    reading a single frame — the heavy evidence stays in the job.
+
+    Refusals mirror the orientation route's: no MEA attached and no electrode map are both 409s,
+    because without them there is no grid for a footprint to sit in.
+    """
+    from camea.core import mearecording  # noqa: PLC0415
+
+    from . import orientation as vorient  # noqa: PLC0415
+
+    doc, _ws = _video_project(analysis_id)
+    block = _mea_block(doc)
+    if not block.get("mea_dir"):
+        raise ApiError(409, "refused", "no MEA recording is attached to this project")
+
+    grid = dict(doc.get("electrodes") or {})
+    cols, rows = int(grid.get("cols") or 0), int(grid.get("rows") or 0)
+    if not (cols and rows):
+        raise ApiError(409, "refused",
+                       "map the electrodes before asking where the recorded pads would sit")
+
+    paths = mearecording.find_recordings(block["mea_dir"])
+    if run_id:
+        paths = [p for p in paths if p.parent.name == run_id]
+    if not paths:
+        raise ApiError(404, "not_found", "that recording is no longer where the project left it")
+
+    regions = [r for r in (doc.get("regions") or [])
+               if list((r.get("electrodes") or {}).get("ids") or [])]
+    with mearecording.MeaRecording(paths[0]) as r:
+        m = r.mapping()
+        stride = r.stride()
+
+    seatings: list[dict] = []
+    for flip_x, flip_y in vorient.SEATINGS:
+        o = mearecording.Orientation(flip_x=flip_x, flip_y=flip_y)
+        col, row = o.to_grid(m["ex"], m["ey"], cols=cols, rows=rows, stride=stride)
+        # A routed pad can sit outside the mapped grid (the mosaic need not show the whole chip);
+        # those have no Camea id under this map and are honestly absent from the list.
+        inside = (col >= 1) & (col <= cols) & (row >= 1) & (row <= rows)
+        ids = [f"{int(c)}-{int(w)}" for c, w in zip(col[inside], row[inside])]
+        id_set = set(ids)
+        cover = [{"region_id": str(region.get("id") or ""),
+                  "region_name": str(region.get("name") or ""),
+                  "n_region": len((region.get("electrodes") or {}).get("ids") or []),
+                  "n_covered": sum(1 for e in ((region.get("electrodes") or {}).get("ids") or [])
+                                   if e in id_set)}
+                 for region in regions]
+        seatings.append({"flip_x": flip_x, "flip_y": flip_y, "electrodes": ids,
+                         "n_recorded": len(ids), "regions": cover})
+    return {"analysis_id": analysis_id, "run_id": paths[0].parent.name, "cols": cols,
+            "rows": rows, "stride": stride, "n_routed": int(m.shape[0]),
+            "orientation": _orientation_of(block).as_dict(), "seatings": seatings}
 
 
 __all__ = ["router", "ApiError", "set_store", "JOB_KIND", "REGION_JOB_KIND",

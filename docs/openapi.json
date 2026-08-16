@@ -3133,7 +3133,7 @@
     "/api/videomosaic/mea/orientation": {
       "post": {
         "summary": "Post Mea Orientation",
-        "description": "Score the four chip seatings against a located region (202 + `JobRef`).\n\nA job because it reads every frame of the region recording and makes a full pass over the MEA\nspike table \u2014 minutes, not milliseconds.\n\n\u2b50 **IT PROPOSES; IT NEVER APPLIES.** The winning seating comes back in the result and a human\nconfirms it through `POST /mea/attach`. That is his rule for the whole app and it matters most\nhere: a wrong seating pairs every neuron with the wrong electrode, and would do so invisibly.",
+        "description": "Score the four chip seatings against the located regions (202 + `JobRef`).\n\nA job because it reads every frame of each region recording and makes a full pass over the MEA\nspike table \u2014 minutes, not milliseconds.\n\n\u2b50 **EVERY SCORABLE REGION TAKES PART** (2026-08-15). Two located regions are two independent\nwitnesses to the same seating \u2014 the chip sat one way for the whole session \u2014 so the test scores\neach region against each seating and combines them (`orientation.combined_correlation`\ndocuments how). `region_id` still narrows it to one region, with the old single-region contract\nand its specific refusals intact.\n\n\u2b50 **IT PROPOSES; IT NEVER APPLIES.** The winning seating comes back in the result and a human\nconfirms it through `POST /mea/attach`. That is his rule for the whole app and it matters most\nhere: a wrong seating pairs every neuron with the wrong electrode, and would do so invisibly.",
         "operationId": "post_mea_orientation_api_videomosaic_mea_orientation_post",
         "requestBody": {
           "content": {
@@ -3152,6 +3152,62 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/JobRef"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/videomosaic/mea/footprint": {
+      "get": {
+        "summary": "Get Mea Footprint",
+        "description": "Where the RECORDED pads would sit in the mosaic, under each of the four seatings.\n\n\u2b50 **CHEAP ON PURPOSE \u2014 the mapping only.** No video, no spikes, no raw stream: a UI can draw\nthe four candidate footprints the moment its panel opens. The per-region covered-pad counts\nare the same geometry the orientation job's coverage evidence rests on, computable without\nreading a single frame \u2014 the heavy evidence stays in the job.\n\nRefusals mirror the orientation route's: no MEA attached and no electrode map are both 409s,\nbecause without them there is no grid for a footprint to sit in.",
+        "operationId": "get_mea_footprint_api_videomosaic_mea_footprint_get",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeaFootprintPayload"
                 }
               }
             }
@@ -7836,6 +7892,130 @@
         "title": "MeaEnvelopeStatus",
         "description": "`GET`/`POST /api/mea/{analysis_id}/recordings/envelopes` \u2014 the state of the one-off read that\nlets the trace panel show a whole recording, and the way to start it for the ones that lack it.\n\n\u2b50 **THE BACKFILL EXISTS BECAUSE HE ASKED FOR IT BY NAME** (2026-08-15): *\"go ahead and run the\nloader on the MEAs I have already imported.\"* New recordings get this at import; everything\nalready in a project gets it from here."
       },
+      "MeaFootprintPayload": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "cols": {
+            "type": "integer",
+            "title": "Cols",
+            "description": "The project's electrode grid, as mapped from the mosaic."
+          },
+          "rows": {
+            "type": "integer",
+            "title": "Rows"
+          },
+          "stride": {
+            "type": "integer",
+            "title": "Stride",
+            "description": "The chip's long-axis length, derived from the recording itself (never a datasheet number)."
+          },
+          "n_routed": {
+            "type": "integer",
+            "title": "N Routed",
+            "description": "How many electrodes the recording routed at all."
+          },
+          "orientation": {
+            "$ref": "#/components/schemas/MeaOrientation",
+            "description": "The seating the project currently holds \u2014 so the UI can mark which footprint is the saved one."
+          },
+          "seatings": {
+            "items": {
+              "$ref": "#/components/schemas/MeaFootprintSeating"
+            },
+            "type": "array",
+            "title": "Seatings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "run_id",
+          "cols",
+          "rows",
+          "stride",
+          "n_routed"
+        ],
+        "title": "MeaFootprintPayload",
+        "description": "`GET /api/videomosaic/mea/footprint` \u2014 the four seatings' recorded-pad footprints.\n\n\u2b50 **GEOMETRY ONLY, CHEAP ON PURPOSE**: reads the recording's routed mapping and nothing else\n(no video, no spikes, no raw stream), so a UI can draw where each candidate seating would put\nthe recorded block the moment its panel opens. \u26d4 It ranks nothing and proposes nothing \u2014 the\nevidence lives in the orientation job."
+      },
+      "MeaFootprintRegion": {
+        "properties": {
+          "region_id": {
+            "type": "string",
+            "title": "Region Id"
+          },
+          "region_name": {
+            "type": "string",
+            "title": "Region Name",
+            "default": ""
+          },
+          "n_region": {
+            "type": "integer",
+            "title": "N Region",
+            "description": "How many pads the region covers at all."
+          },
+          "n_covered": {
+            "type": "integer",
+            "title": "N Covered",
+            "description": "How many of them this seating maps onto RECORDED electrodes. The same coverage number the orientation test reports, computed without reading a frame or a spike."
+          }
+        },
+        "type": "object",
+        "required": [
+          "region_id",
+          "n_region",
+          "n_covered"
+        ],
+        "title": "MeaFootprintRegion",
+        "description": "How many of one located region's pads a seating actually covers \u2014 pure geometry."
+      },
+      "MeaFootprintSeating": {
+        "properties": {
+          "flip_x": {
+            "type": "boolean",
+            "title": "Flip X"
+          },
+          "flip_y": {
+            "type": "boolean",
+            "title": "Flip Y"
+          },
+          "electrodes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Electrodes",
+            "description": "The recorded pads as Camea \"col-row\" grid ids under this seating. Pads that fall outside the mapped grid are absent \u2014 they have no id in this mosaic."
+          },
+          "n_recorded": {
+            "type": "integer",
+            "title": "N Recorded",
+            "description": "len(electrodes) \u2014 how many recorded pads land inside the mapped grid under this seating.",
+            "default": 0
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/MeaFootprintRegion"
+            },
+            "type": "array",
+            "title": "Regions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "flip_x",
+          "flip_y"
+        ],
+        "title": "MeaFootprintSeating",
+        "description": "Where the recorded pads would sit in the mosaic under one candidate seating."
+      },
       "MeaOrientation": {
         "properties": {
           "flip_x": {
@@ -8586,6 +8766,87 @@
         "title": "OpenSessionRequest",
         "description": "\u26a0\ufe0f `trials` is the caller's selection. A FrameStore holds one shape.\n\n* `trials: null` \u21d2 every snapshot trial. If they are **not** all one shape the open fails with\n  `409 mixed_shape`, listing the groups \u2014 core **refuses to guess** which shape you meant.\n* `trials: [...]` \u21d2 exactly those. The mosaic feature passes its 512\u00d7512 selection here.\n\n\u26d4 Nothing is ever dropped by TRIAL NUMBER. Only by shape, and only with a reason, reported in\n`SessionResponse.skipped`."
       },
+      "OrientationRegionScore": {
+        "properties": {
+          "region_id": {
+            "type": "string",
+            "title": "Region Id"
+          },
+          "region_name": {
+            "type": "string",
+            "title": "Region Name",
+            "default": ""
+          },
+          "n_region": {
+            "type": "integer",
+            "title": "N Region",
+            "description": "How many pads this region covers.",
+            "default": 0
+          },
+          "offset_s": {
+            "type": "number",
+            "title": "Offset S",
+            "description": "Clock shift applied for THIS region's video, MEA onto video. Each region's recording has its own clock, so each gets its own alignment.",
+            "default": 0.0
+          },
+          "alignment_quality": {
+            "type": "number",
+            "title": "Alignment Quality",
+            "description": "Jaccard overlap of the mark trains at that offset, for this region. Same sceptical reading as the top-level number.",
+            "default": 0.0
+          },
+          "seatings": {
+            "items": {
+              "$ref": "#/components/schemas/OrientationRegionSeating"
+            },
+            "type": "array",
+            "title": "Seatings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region_id"
+        ],
+        "title": "OrientationRegionScore",
+        "description": "One located region's own evidence inside the orientation test.\n\n\u2b50 Regions are combined for the verdict, but each is also reported alone: a seating that two\nindependent fields both point at is different evidence from one field shouting and one silent,\nand only the breakdown can show which happened."
+      },
+      "OrientationRegionSeating": {
+        "properties": {
+          "flip_x": {
+            "type": "boolean",
+            "title": "Flip X"
+          },
+          "flip_y": {
+            "type": "boolean",
+            "title": "Flip Y"
+          },
+          "n_recorded": {
+            "type": "integer",
+            "title": "N Recorded",
+            "description": "Of THIS region's pads, how many this seating maps onto recorded electrodes."
+          },
+          "correlation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation",
+            "description": "This region's own spike-rate vs calcium correlation under this seating. null = untestable here (no recorded pad under this field)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "flip_x",
+          "flip_y",
+          "n_recorded"
+        ],
+        "title": "OrientationRegionSeating",
+        "description": "One seating's numbers against ONE region \u2014 a row of the per-region breakdown."
+      },
       "OrientationTestResult": {
         "properties": {
           "kind": {
@@ -8604,7 +8865,8 @@
           },
           "region_id": {
             "type": "string",
-            "title": "Region Id"
+            "title": "Region Id",
+            "description": "The region tested, when ONE was \u2014 its old meaning. Blank when several regions took part; `regions` carries each of them."
           },
           "region_name": {
             "type": "string",
@@ -8617,6 +8879,14 @@
             },
             "type": "array",
             "title": "Scores"
+          },
+          "regions": {
+            "items": {
+              "$ref": "#/components/schemas/OrientationRegionScore"
+            },
+            "type": "array",
+            "title": "Regions",
+            "description": "\u2b50 The per-region breakdown behind `scores` \u2014 every region that was scored, each with its own clock alignment and its own four seating rows. Additive: a one-region run has a one-entry list."
           },
           "best": {
             "anyOf": [
@@ -10534,12 +10804,12 @@
           "n_recorded": {
             "type": "integer",
             "title": "N Recorded",
-            "description": "Of the region's pads, how many this seating maps onto electrodes that were actually recorded."
+            "description": "Of the scored regions' pads, how many this seating maps onto electrodes that were actually recorded \u2014 totalled across regions when several took part."
           },
           "n_region": {
             "type": "integer",
             "title": "N Region",
-            "description": "How many pads the region covers \u2014 the denominator."
+            "description": "How many pads the scored regions cover \u2014 the denominator, totalled across regions when several took part."
           },
           "coverage": {
             "type": "number",
@@ -10559,7 +10829,7 @@
               }
             ],
             "title": "Correlation",
-            "description": "Spike rate vs calcium activity. \u2b50 **null means UNTESTABLE** \u2014 this seating puts no recorded electrode under the field \u2014 which is a different answer from a low correlation and must never be rendered as one."
+            "description": "Spike rate vs calcium activity. \u2b50 **null means UNTESTABLE** \u2014 this seating puts no recorded electrode under any scored field \u2014 which is a different answer from a low correlation and must never be rendered as one. Across several regions it is the per-region correlations combined, weighted by each region's recorded-pad count under this seating (`orientation.combined_correlation` documents why a weighted mean: the regions' videos share no clock, so their series cannot be laid on one axis)."
           },
           "scorable": {
             "type": "boolean",
@@ -10577,7 +10847,7 @@
           "scorable"
         ],
         "title": "SeatingScorePayload",
-        "description": "One candidate seating and how well it explains the data."
+        "description": "One candidate seating and how well it explains the data \u2014 summed over every region the\ntest scored (one region behaves exactly as it always did)."
       },
       "SeedRequest": {
         "properties": {
