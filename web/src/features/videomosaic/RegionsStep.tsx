@@ -817,6 +817,8 @@ export function RegionsStep({
   );
 
   const stale = served?.stale ?? false;
+  // R46.10 — the rows a rebuild actually invalidated (derived server-side, per row).
+  const staleRows = useMemo(() => list.filter((r) => r.stale), [list]);
 
   return (
     <div className={styles.step} data-testid="regions-step">
@@ -863,12 +865,35 @@ export function RegionsStep({
                     'These rectangles were placed against an earlier build of the mosaic. Camea ' +
                     'never drifts a location onto new pixels, so they are reported as stale ' +
                     'instead: drag each one roughly into place and Snap it, or locate the ' +
-                    'recording again.'
+                    'recording again. Re-place all stale does the locating for every marked ' +
+                    'row, one after another — each result comes back unconfirmed, for you to ' +
+                    'check and confirm.'
                   }
                 >
                   the mosaic was rebuilt after these were placed —{' '}
                   <b>re-snap before trusting them</b>.
                 </LiveWarning>
+                {/* ⭐ Every stale row through the same queue the multi-add uses: one at a time,
+                    each machine-proposed again (R46.6), refusals kept per file. */}
+                {staleRows.length > 0 && (
+                  <div className={styles.staleActions}>
+                    <Button
+                      size="sm"
+                      data-testid="regions-replace-stale"
+                      disabled={busy}
+                      onClick={() =>
+                        startBatch(
+                          staleRows.map((r) => ({
+                            label: r.name || basenameOf(r.source?.name ?? r.id),
+                            start: () => relocateRegion(analysisId, r.id),
+                          })),
+                        )
+                      }
+                    >
+                      Re-place all stale ({staleRows.length})
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1083,6 +1108,19 @@ export function RegionsStep({
                         >
                           {r.status}
                         </span>
+
+                        {/* R46.10 · R47.7 — WHICH rows the rebuild invalidated, said on the row
+                            itself. A current-state warning, so it lives on the page, never
+                            behind a hover. */}
+                        {r.stale && (
+                          <span
+                            className={cx(styles.chip, styles.chipStale)}
+                            data-testid="region-stale"
+                            title="Placed against an earlier build of the mosaic — re-snap or locate it again before trusting it"
+                          >
+                            stale
+                          </span>
+                        )}
 
                         <Button
                           variant="ghost"

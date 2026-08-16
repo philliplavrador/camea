@@ -495,6 +495,9 @@ export const TID = {
   regionsList: 'regions-list', //            one row per located recording
   regionsEmpty: 'regions-empty',
   regionsStale: 'regions-stale', //          live warning: the mosaic was rebuilt (R46.10)
+  regionsReplaceStale: 'regions-replace-stale', // walk every stale row through the queue —
+  //                                         relocated one at a time, each back to unconfirmed
+  regionStale: 'region-stale', //            the per-ROW chip naming which rows went stale (R47.7)
   regionsFieldsToggle: 'regions-fields-toggle', // show every rectangle, or only the selected one
   regionRow: 'region-row', //                data-region-id; data-status
   regionName: 'region-name', //              click to rename

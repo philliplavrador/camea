@@ -188,6 +188,19 @@
   background: color-mix(in srgb, var(--anchored) 16%, transparent);
 }
 
+/* R46.10 · R47.7 — the row a rebuild invalidated, in the app's warning colour, on the page. */
+.chipStale {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+
+/* "Re-place all stale" sits under the warning it answers. */
+.staleActions {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* Which FILE a row's label stands for — the labels are editable, this is not. One line, ellipsised
    rather than wrapped, so a long name cannot break the row at narrow rail widths. */
 .file {

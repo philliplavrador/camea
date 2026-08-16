@@ -761,7 +761,9 @@ def patch_region(body: RegionUpdateRequest) -> dict:
         updated["status"] = body.status
     regions[idx] = updated
     _save_regions(ws, body.analysis_id, regions)
-    return updated
+    # `stale` is derived for the answer only — what was SAVED above never carries it.
+    built = str((doc.get("build") or {}).get("built_at") or "")
+    return {**updated, "stale": str(updated.get("source_stamp") or "") != built}
 
 
 @router.delete("/api/videomosaic/{analysis_id}/regions/{region_id}",
@@ -814,8 +816,12 @@ def get_regions(analysis_id: str) -> dict:
 
 def _regions_payload(analysis_id: str, doc: dict, ws) -> dict:
     built = str((doc.get("build") or {}).get("built_at") or "")
-    regions = list(doc.get("regions") or [])
-    stale = any(str(r.get("source_stamp") or "") != built for r in regions)
+    # ⭐ `stale` PER ROW, derived on COPIES — the same source_stamp-vs-built comparison the global
+    # flag has always made, now answered for each region so the UI can say WHICH rows a rebuild
+    # invalidated (R46.10). ⛔ Never written back into the document: it is an answer, not a fact.
+    regions = [{**r, "stale": str(r.get("source_stamp") or "") != built}
+               for r in (doc.get("regions") or [])]
+    stale = any(r["stale"] for r in regions)
     base = _region_basename(doc, analysis_id)
     return {"analysis_id": analysis_id, "regions": regions, "built_from": built or None,
             "stale": stale,

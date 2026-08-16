@@ -677,18 +677,44 @@ def test_locate_again_refuses_what_it_cannot_do(client, scene, built):
 def test_a_rebuild_makes_every_location_stale(client, scene, built):
     """⭐ A location is a statement about a particular mosaic. Rebuild it and the canvas may be a
     different size, in a different place, from different keyframes — so every rectangle placed on
-    the old one is STALE and the UI says so. It never silently drifts."""
+    the old one is STALE and the UI says so. It never silently drifts.
+
+    ⭐ And stale is answered PER ROW (2026-08-16): the payload flag says whether any row is, each
+    region's own `stale` says which — derived on serve, never stored in the document. Locating a
+    stale region again refreshes its stamp, so the flag clears for that row honestly.
+    """
     aid = built["aid"]
     region = _locate(client, aid, scene["recording"])["region"]
     payload = client.get(f"/api/videomosaic/{aid}/regions").json()
     assert payload["stale"] is False
+    assert payload["regions"][0]["stale"] is False
     assert payload["built_from"] == region["source_stamp"]
 
     _build(client, aid)
     after = client.get(f"/api/videomosaic/{aid}/regions").json()
     assert after["stale"] is True
     assert after["regions"], "stale is a warning, not a deletion — his placement is still his"
+    assert all(r["stale"] is True for r in after["regions"])
     assert after["built_from"] != region["source_stamp"]
+
+    # a synchronous PATCH answers with the same derived truth…
+    p = client.patch("/api/videomosaic/regions",
+                     json={"analysis_id": aid, "region_id": region["id"], "name": "still mine"})
+    assert p.status_code == 200 and p.json()["stale"] is True
+    # …but the DOCUMENT never stores it — stale is an answer, not a fact
+    saved = client.get(f"/api/analyses/{aid}/document").json()["doc"]["regions"][0]
+    assert "stale" not in saved
+
+    # locate it again against the REBUILT mosaic: the stamp refreshes and the row's flag clears
+    rr = client.post("/api/videomosaic/regions/relocate",
+                     json={"analysis_id": aid, "region_id": region["id"]})
+    assert rr.status_code == 202, rr.text
+    run_job(client, rr.json()["job_id"])
+    final = client.get(f"/api/videomosaic/{aid}/regions").json()
+    assert final["stale"] is False
+    assert final["regions"][0]["stale"] is False
+    assert final["regions"][0]["status"] == "unconfirmed"
+    assert final["regions"][0]["name"] == "still mine"
 
 
 def test_a_region_id_this_project_never_had_is_a_404(client, scene):

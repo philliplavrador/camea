@@ -143,6 +143,8 @@ interface Region {
   placed_by: string;
   located_at: string;
   source_stamp: string;
+  /** R46.10 per row — derived by the server from `source_stamp` vs the current build. */
+  stale: boolean;
   moved_px: number | null;
   snap_margin: number | null;
   /** What the last snap ACTUALLY searched — the server's clamped number, quoted in the banner. */
@@ -179,6 +181,8 @@ interface RegionOpts {
   sourceName?: string;
   /** The whole ranked list the search kept — candidates[0] is the winner, the rest are rivals. */
   candidates?: Region['candidates'];
+  /** R46.10 — this row was placed against an earlier build (the server derives it per row). */
+  stale?: boolean;
 }
 
 function craftedRegion(o: RegionOpts = {}): Region {
@@ -213,6 +217,7 @@ function craftedRegion(o: RegionOpts = {}): Region {
     placed_by: 'machine',
     located_at: BUILT_AT,
     source_stamp: BUILT_AT,
+    stale: o.stale ?? false,
     moved_px: null,
     snap_margin: null,
     snap_radius_px: null,
@@ -355,6 +360,7 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
       margin: 0.201,
       located_at: '2026-08-16T10:00:00Z',
       source_stamp: BUILT_AT,
+      stale: false, // re-placed against the current build — the row's chip clears
     };
     await json(route, { job_id: JOB_ID, kind: 'locate_region', state: 'queued' }, 202);
   });
@@ -923,6 +929,51 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await page.reload();
     await expect(byId(page, TID.regionsList)).toBeVisible({ timeout: 15_000 });
     await expect(byId(page, TID.regionsStale)).toHaveCount(0);
+  });
+
+  test('R46.10: stale is said per ROW — a chip on the rows it names, and "Re-place all stale" queues exactly those', async ({
+    page,
+  }) => {
+    const stub = await openRegions(page, {
+      stale: true,
+      regions: [
+        craftedRegion({ id: 'r-1', name: 'field A', stale: true }),
+        craftedRegion({ id: 'r-2', name: 'field B', x: 450, y: 340 }),
+        craftedRegion({
+          id: 'r-3',
+          name: 'field C',
+          x: 700,
+          y: 500,
+          stale: true,
+          status: 'confirmed',
+        }),
+      ],
+    });
+
+    // 1 · the global banner stays, and the chip names EXACTLY the stale rows — a current-state
+    //     warning, on the page (R47.7), not behind a hover
+    await expect(byId(page, TID.regionsStale)).toBeVisible();
+    await expect(rowOf(page, 'r-1').getByTestId(TID.regionStale)).toBeVisible();
+    await expect(rowOf(page, 'r-2').getByTestId(TID.regionStale)).toHaveCount(0);
+    await expect(rowOf(page, 'r-3').getByTestId(TID.regionStale)).toBeVisible();
+
+    // 2 · Re-place all stale — the same queue as the multi-add, walking ONLY the stale rows, in
+    //     list order, as relocates (no path ever rides: the project owns the videos)
+    await expect(byId(page, TID.regionsReplaceStale)).toContainText('(2)');
+    await byId(page, TID.regionsReplaceStale).click();
+    await expect.poll(() => stub.relocates.length, { timeout: 15_000 }).toBe(2);
+    expect(stub.relocates.map((b) => b.region_id)).toEqual(['r-1', 'r-3']);
+    expect(stub.locates).toHaveLength(0);
+
+    // 3 · each re-placed row is machine-proposed AGAIN (R46.6) — r-3's confirmation is taken
+    //     back — and its chip clears; the row that was never stale is untouched
+    await expect(rowOf(page, 'r-1')).toHaveAttribute('data-status', 'unconfirmed', {
+      timeout: SHORT,
+    });
+    await expect(rowOf(page, 'r-3')).toHaveAttribute('data-status', 'unconfirmed');
+    await expect(rowOf(page, 'r-1').getByTestId(TID.regionStale)).toHaveCount(0);
+    await expect(rowOf(page, 'r-3').getByTestId(TID.regionStale)).toHaveCount(0);
+    await expect(byId(page, TID.regionsQueue)).toHaveCount(0);
   });
 
   // ───────────────────────────────────────────────────────────────────────────────────────────
