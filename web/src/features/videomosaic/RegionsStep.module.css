@@ -402,8 +402,14 @@
 }
 
 .triedLabel {
-  composes: dLabel;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin-bottom: 6px;
+  font: 600 var(--fs-label) / 1 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-faint);
 }
 
 /* R47.1 — a wide table scrolls INSIDE the rail; the page never grows a horizontal scrollbar. */
