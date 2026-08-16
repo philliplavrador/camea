@@ -1088,6 +1088,85 @@ test('clicking a busiest-pads row selects that pad, with the same announcement a
   }
 });
 
+test('the shelf sorts and filters as a view — "As added" is the default, renaming keeps working', async ({
+  page,
+}) => {
+  // ⚠️ Stubbed, deterministically: the two fixture recordings share an assay and near-identical
+  // facts, so a real shelf cannot show a filter or prove an order flipped. The stub is the same
+  // wire shape the earlier copy/missing tests use.
+  const row = (over: Record<string, unknown>) => ({
+    id: 'rec',
+    label: '',
+    run_id: '',
+    assay: '',
+    source_path: 'D:/his/data.raw.h5',
+    stored_path: 'recordings/rec/data.raw.h5',
+    copy_state: 'stored',
+    copy_pct: 0,
+    copy_error: '',
+    added: '',
+    bytes: 0,
+    missing: false,
+    source_present: true,
+    duration_s: 300,
+    n_channels: 726,
+    n_samples: 10,
+    n_spikes: 0,
+    ...over,
+  });
+  await page.route('**/api/mea/*/recordings', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        analysis_id: 'x',
+        recordings: [
+          row({ id: 'rec_a', label: 'zzz quiet', assay: 'Network', n_spikes: 10,
+            added: '2026-08-01T10:00:00Z' }),
+          row({ id: 'rec_b', label: 'aaa busy', assay: 'ActivityScan', n_spikes: 999,
+            added: '2026-08-10T10:00:00Z' }),
+        ],
+      }),
+    });
+  });
+
+  await toFilesStep(page, 'shelf sort');
+  await page.getByTestId(TID.npCreate).click();
+  await page.waitForURL(/\/project\/[^/]+$/, { timeout: 30_000 });
+  const id = page.url().split('/').pop()!;
+  try {
+    const labels = page.getByTestId(TID.meaRecordingLabel);
+    await expect(page.getByTestId(TID.meaRecording)).toHaveCount(2, { timeout: FIRST_PAINT });
+
+    // Default = the document's own order, exactly what the shelf always was.
+    await expect(page.getByTestId(TID.meaShelfSort)).toHaveValue('as-added');
+    await expect(labels.first()).toHaveText('zzz quiet');
+
+    // Sort by spikes: the busier row rises. Client-side — no request leaves the page.
+    await page.getByTestId(TID.meaShelfSort).selectOption('spikes');
+    await expect(labels.first()).toHaveText('aaa busy');
+
+    // ...and by name.
+    await page.getByTestId(TID.meaShelfSort).selectOption('name');
+    await expect(labels.first()).toHaveText('aaa busy');
+
+    // Filter by type: two assays on the shelf, so the control is there; one type stays visible.
+    await page.getByTestId(TID.meaShelfFilter).selectOption('Network');
+    await expect(page.getByTestId(TID.meaRecording)).toHaveCount(1);
+    await expect(labels.first()).toHaveText('zzz quiet');
+
+    // Renaming still works on a sorted, filtered view (the row keeps its minted id).
+    await labels.first().click();
+    await expect(page.getByTestId(TID.meaRenameInput)).toBeVisible({ timeout: SHORT });
+    await page.getByTestId(TID.meaRenameInput).press('Escape');
+    await expect(page.getByTestId(TID.meaRenameInput)).toHaveCount(0);
+  } finally {
+    await page.unrouteAll();
+    await deleteProject(page, id);
+  }
+});
+
 test('the spread chart counts pads per legend band, and a click highlights the band', async ({
   page,
 }) => {

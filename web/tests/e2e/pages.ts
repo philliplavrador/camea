@@ -99,6 +99,9 @@ export const TID = {
   //                                        showed him — `mea-add-dialog`.
   // ── the shelf (002) ─────────────────────────────────────────────────────────
   meaShelf: 'mea-shelf',
+  meaShelfTools: 'mea-shelf-tools', //      sort + type filter; a client-side VIEW, shown from 2 rows
+  meaShelfSort: 'mea-shelf-sort', //        default 'as-added' — the document's own order
+  meaShelfFilter: 'mea-shelf-filter', //    by assay; appears only when the shelf holds two types
   meaRecording: 'mea-recording', //         one row; data-recording-id, data-copy, data-missing
   meaRecordingLabel: 'mea-recording-label', //  a BUTTON — click it to rename the row in place
   meaRenameInput: 'mea-rename-input', //    Enter/blur saves, Esc cancels; blank reverts quietly

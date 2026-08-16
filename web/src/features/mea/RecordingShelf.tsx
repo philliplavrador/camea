@@ -24,6 +24,8 @@ import type { MeaShelfEntry } from '../../api';
 import { useToast } from '../../app';
 import { Button, LiveWarning } from '../../design';
 import { ImportRecordings } from './ImportRecordings';
+import { SHELF_SORTS, orderShelf, shelfAssays } from './shelfOrder';
+import type { ShelfSort } from './shelfOrder';
 import styles from './RecordingShelf.module.css';
 
 /** How often to re-read the shelf while a copy is running. Off entirely when nothing is copying —
@@ -71,6 +73,11 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<MeaShelfEntry | null>(null);
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
+  // ⭐ **The sort and the type filter are a VIEW** (`shelfOrder.ts`) — client-side, derived on
+  // every render, so the 700 ms copy-poll replacing `rows` cannot fight them; keys stay the
+  // minted row ids. The default is the document's own order, exactly what the shelf always was.
+  const [sort, setSort] = useState<ShelfSort>('as-added');
+  const [assay, setAssay] = useState('');
   /** Which row's name to put focus back on when an edit closes. ⭐ The input and the name-button are
    *  different elements, so React unmounts the focused one and focus would otherwise fall to
    *  `<body>` — i.e. a keyboard user who renames a row has to Tab from the top of the page again. */
@@ -233,6 +240,11 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
   }
 
   const list = rows ?? [];
+  const assays = shelfAssays(list);
+  // A filter value whose assay left the shelf (its last row was removed) falls back to All —
+  // silently, because a select holding a value its menu no longer offers is a stuck control.
+  const effectiveAssay = assays.includes(assay) ? assay : '';
+  const shown = orderShelf(list, sort, effectiveAssay);
   const addButton = (
     <Button
       variant="primary"
@@ -271,8 +283,49 @@ export function RecordingShelf({ analysisId, onOpen }: RecordingShelfProps) {
         </LiveWarning>
       )}
 
+      {/* Plain controls; a one-row shelf has nothing to arrange and shows none. R7.6's spirit:
+          "Sort" and "Type" say what they do — no `?`. */}
+      {list.length >= 2 && (
+        <div className={styles.tools} data-testid="mea-shelf-tools">
+          <label className={styles.tool}>
+            Sort
+            <select
+              className={styles.select}
+              value={sort}
+              onChange={(e) => setSort(e.target.value as ShelfSort)}
+              data-testid="mea-shelf-sort"
+            >
+              {SHELF_SORTS.map(([k, words]) => (
+                <option key={k} value={k}>
+                  {words}
+                </option>
+              ))}
+            </select>
+          </label>
+          {/* A type filter with one type filters nothing — it appears when there are two. */}
+          {assays.length >= 2 && (
+            <label className={styles.tool}>
+              Type
+              <select
+                className={styles.select}
+                value={effectiveAssay}
+                onChange={(e) => setAssay(e.target.value)}
+                data-testid="mea-shelf-filter"
+              >
+                <option value="">All</option>
+                {assays.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
+
       <ul className={styles.rows}>
-        {list.map((r) => {
+        {shown.map((r) => {
           const words = copyWords(r);
           return (
             <li

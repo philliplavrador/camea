@@ -45,6 +45,37 @@
   color: var(--text);
 }
 
+/* ── the header tools: sort and type. A VIEW of the shelf, never a write (shelfOrder.ts) ────── */
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+}
+
+.select {
+  font-family: var(--font-sans);
+  font-size: var(--fs-readout);
+  color: var(--text);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+}
+
+.select:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
 .rows {
   list-style: none;
   margin: 0;
