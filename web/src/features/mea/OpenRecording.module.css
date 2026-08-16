@@ -41,6 +41,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The decoder situation, said once before any pad is clicked. Quiet: nothing on this screen is
+   wrong — the chip map and the spike counts need no decoder. */
+.decoderNote {
+  margin: 0;
+  font-size: var(--fs-readout);
+  color: var(--text-dim);
+}
+
 .split {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

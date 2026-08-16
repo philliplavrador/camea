@@ -144,6 +144,8 @@ export const TID = {
   meaOpenFacts: 'mea-open-facts',
   meaOpenUnplaced: 'mea-open-unplaced', // "N of them could not be placed on the chip" — MAXWELL
   //                                        §7.6; shown ONLY when the file total exceeds the pads'
+  meaOpenNoDecoder: 'mea-open-no-decoder', // the waveform situation said ONCE, before any pad
+  //                                        click — quiet, on the page, MeaTrace's own words
   meaOpenError: 'mea-open-error', //        🔴 refused BY NAME — never an empty chip map
   meaCloseRecording: 'mea-close-recording',
   meaChipMap: 'mea-chip-map',

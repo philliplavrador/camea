@@ -3737,7 +3737,7 @@
     "/api/mea/{analysis_id}/recordings/{recording_id}/layout": {
       "get": {
         "summary": "Get Mea Layout",
-        "description": "The chip as this recording describes it \u2014 every routed pad, at its own \u00b5m position.\n\n\u2b50 **ONLY THE ROUTED PADS.** A MaxOne routes ~1k channels out of tens of thousands of pads, so\nmost of the chip carries no data at all \u2014 and a pad that was never routed is not a measurement\nof silence, it is the *absence* of a measurement. Drawing them would invent data.\n\n\u2b50 `stride` and `pitch_um` are **derived from the file's own numbering and verified against every\nrouted pad**, never taken from a datasheet. \u26a0\ufe0f And never measured from the routed spacing: one of\nthis project's recordings routed every other pad, so the smallest routed gap is twice the truth.\n\n\u26d4 Needs no proprietary decoder \u2014 the mapping table is plain HDF5.",
+        "description": "The chip as this recording describes it \u2014 every routed pad, at its own \u00b5m position.\n\n\u2b50 **ONLY THE ROUTED PADS.** A MaxOne routes ~1k channels out of tens of thousands of pads, so\nmost of the chip carries no data at all \u2014 and a pad that was never routed is not a measurement\nof silence, it is the *absence* of a measurement. Drawing them would invent data.\n\n\u2b50 `stride` and `pitch_um` are **derived from the file's own numbering and verified against every\nrouted pad**, never taken from a datasheet. \u26a0\ufe0f And never measured from the routed spacing: one of\nthis project's recordings routed every other pad, so the smallest routed gap is twice the truth.\n\n\u26d4 Needs no proprietary decoder \u2014 the mapping table is plain HDF5. \u2b50 But it REPORTS whether\none is present (`decoder_present`, the videomosaic attach's own fact, computed the same way),\nso the screen can say the waveform situation once, up front, before anyone clicks a pad.",
         "operationId": "get_mea_layout_api_mea__analysis_id__recordings__recording_id__layout_get",
         "parameters": [
           {
@@ -7915,6 +7915,12 @@
             "title": "N Spikes",
             "description": "Across the whole recording, every channel.",
             "default": 0
+          },
+          "decoder_present": {
+            "type": "boolean",
+            "title": "Decoder Present",
+            "description": "\u2b50 A MaxWell decode plug-in is on this machine \u2014 the same fact the videomosaic attach reports, computed the same way (`mearecording.plugin_present()`). Says NOTHING about whether it decodes correctly \u2014 only a trace's `health` can say that. Served here so the open-recording screen can say the waveform situation ONCE, before anyone clicks a pad (R3.8: a fact about his data, on the page), instead of springing it per trace.",
+            "default": false
           }
         },
         "type": "object",

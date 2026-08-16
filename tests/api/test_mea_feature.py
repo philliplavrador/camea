@@ -677,6 +677,18 @@ def test_layout_carries_the_header_facts_and_needs_no_decoder(client, session, m
     assert lay["n_spikes"] > 0
 
 
+def test_layout_says_whether_the_decoder_is_on_this_machine(client, session):
+    """⭐ The same fact the videomosaic attach reports (`decoder_present`), computed the same way
+    (`mearecording.plugin_present()`) — served with the layout so the open screen can say the
+    waveform situation ONCE, before anyone clicks a pad. ⚠️ Asserted against this machine's own
+    truth, not a hard-coded False: a machine with MaxLab Live installed must pass too."""
+    from camea.core import mearecording as mr
+
+    aid, rid = _opened(client, session)
+    lay = _layout(client, aid, rid)
+    assert lay["decoder_present"] is mr.plugin_present()
+
+
 # ---- what happened on it -------------------------------------------------------------------------
 def test_activity_is_one_row_per_pad_in_LAYOUT_ORDER(client, session):
     """⭐ The two routes are joined by ORDER as well as by channel, so the UI never has to guess."""

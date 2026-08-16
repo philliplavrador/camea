@@ -96,6 +96,21 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
         </LiveWarning>
       )}
 
+      {/* ⭐ **THE WAVEFORM SITUATION, SAID ONCE, BEFORE ANY PAD IS CLICKED** (R3.8: a fact about
+          his data, on the page — never behind a `?`). The server already knows at open time whether
+          the MaxWell decode plug-in is on this machine, so nothing here springs it on him per
+          trace. Quiet on purpose: the chip map and every spike count need no decoder and are
+          exactly right — nothing on this screen is wrong. The per-trace warnings in MeaTrace stay;
+          this is the same fact, a screen earlier, in the same words. */}
+      {!error && layout && !layout.decoder_present && (
+        <p className={styles.decoderNote} data-testid="mea-open-no-decoder">
+          MaxWell compresses the raw recording with its own method, and the software that unpacks
+          it (part of MaxLab Live) is not installed on this machine — so waveforms cannot be shown.
+          The chip map and the spike marks come from the chip&rsquo;s own detector and are
+          unaffected.
+        </p>
+      )}
+
       {!error && layout && activity && (
         <div className={styles.split}>
           <ChipMap

@@ -2013,7 +2013,9 @@ export interface paths {
          *     routed pad**, never taken from a datasheet. ⚠️ And never measured from the routed spacing: one of
          *     this project's recordings routed every other pad, so the smallest routed gap is twice the truth.
          *
-         *     ⛔ Needs no proprietary decoder — the mapping table is plain HDF5.
+         *     ⛔ Needs no proprietary decoder — the mapping table is plain HDF5. ⭐ But it REPORTS whether
+         *     one is present (`decoder_present`, the videomosaic attach's own fact, computed the same way),
+         *     so the screen can say the waveform situation once, up front, before anyone clicks a pad.
          */
         get: operations["get_mea_layout_api_mea__analysis_id__recordings__recording_id__layout_get"];
         put?: never;
@@ -4219,6 +4221,12 @@ export interface components {
              * @default 0
              */
             n_spikes: number;
+            /**
+             * Decoder Present
+             * @description ⭐ A MaxWell decode plug-in is on this machine — the same fact the videomosaic attach reports, computed the same way (`mearecording.plugin_present()`). Says NOTHING about whether it decodes correctly — only a trace's `health` can say that. Served here so the open-recording screen can say the waveform situation ONCE, before anyone clicks a pad (R3.8: a fact about his data, on the page), instead of springing it per trace.
+             * @default false
+             */
+            decoder_present: boolean;
         };
         /**
          * MeaChipPad

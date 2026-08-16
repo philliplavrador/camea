@@ -692,8 +692,12 @@ def get_mea_layout(analysis_id: str, recording_id: str) -> dict:
     routed pad**, never taken from a datasheet. ⚠️ And never measured from the routed spacing: one of
     this project's recordings routed every other pad, so the smallest routed gap is twice the truth.
 
-    ⛔ Needs no proprietary decoder — the mapping table is plain HDF5.
+    ⛔ Needs no proprietary decoder — the mapping table is plain HDF5. ⭐ But it REPORTS whether
+    one is present (`decoder_present`, the videomosaic attach's own fact, computed the same way),
+    so the screen can say the waveform situation once, up front, before anyone clicks a pad.
     """
+    from camea.core import mearecording as mr  # noqa: PLC0415
+
     rec, entry = _open(analysis_id, recording_id)
     try:
         info = rec.info()
@@ -718,6 +722,7 @@ def get_mea_layout(analysis_id: str, recording_id: str) -> dict:
             "duration_s": info.duration_s,
             "sampling_hz": info.sampling_hz,
             "n_spikes": info.n_spikes,
+            "decoder_present": mr.plugin_present(),
         }
     finally:
         rec.close()

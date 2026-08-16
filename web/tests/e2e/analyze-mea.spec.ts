@@ -773,6 +773,44 @@ test('🔴 with no decoder the waveform SAYS SO — and the spike ticks are draw
   }
 });
 
+test('a missing decoder is said ONCE, on opening — before any pad is clicked', async ({ page }) => {
+  // ⭐ Item R3.8: the app can know at open time whether the MaxLab waveform decoder is on this
+  // machine, so it says so up front instead of springing it per trace. Both states are driven from
+  // the REAL layout payload with only the flag flipped, so this holds on any machine — with or
+  // without MaxLab Live installed.
+  let present = false;
+  await page.route('**/api/mea/*/recordings/*/layout**', async (route) => {
+    const real = await route.fetch();
+    const body = await real.json();
+    body.decoder_present = present;
+    await route.fulfill({ response: real, json: body });
+  });
+
+  const id = await openFirstRecording(page, 'decoder said early');
+  try {
+    const note = page.getByTestId(TID.meaOpenNoDecoder);
+    await expect(note).toBeVisible({ timeout: SHORT });
+    // No pad has been clicked — the fact is already on the page, in MeaTrace's own vocabulary.
+    await expect(page.getByTestId(TID.meaTraceIdle)).toBeVisible();
+    await expect(note).toContainText('part of MaxLab Live');
+    await expect(note).toContainText('not installed on this machine');
+    await expect(note).toContainText(/unaffected/i);
+    // ⛔ Quiet and on the page — never behind a `?`, and never a fault word (§7.5).
+    await expect(note.getByTestId(TID.help)).toHaveCount(0);
+    await expect(note).not.toContainText(/dead|failed|broken|flat|inactive/i);
+
+    // ...and with the decoder present, the screen says nothing about it.
+    present = true;
+    await page.getByTestId(TID.meaCloseRecording).click();
+    await rowFor(page, MEA_FIXTURE.labels[0]).getByTestId(TID.meaOpenButton).click();
+    await expect(page.getByTestId(TID.meaChipMap)).toBeVisible({ timeout: FIRST_PAINT });
+    await expect(page.getByTestId(TID.meaOpenNoDecoder)).toHaveCount(0);
+  } finally {
+    await page.unrouteAll();
+    await deleteProject(page, id);
+  }
+});
+
 test('⛔ there is NO chip-seating warning anywhere on this screen', async ({ page }) => {
   // ⛔ **NOT AN OMISSION — A REQUIREMENT.** `features/electrodes/MeaTracePanel` says the chip's
   // seating is provisional because it works from a mosaic and nobody has established which corner

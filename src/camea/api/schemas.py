@@ -3047,6 +3047,14 @@ class MeaChipLayout(Res):
     duration_s: float = 0.0
     sampling_hz: float = 0.0
     n_spikes: int = Field(default=0, description="Across the whole recording, every channel.")
+    decoder_present: bool = Field(
+        default=False,
+        description="⭐ A MaxWell decode plug-in is on this machine — the same fact the videomosaic "
+        "attach reports, computed the same way (`mearecording.plugin_present()`). Says NOTHING "
+        "about whether it decodes correctly — only a trace's `health` can say that. Served here so "
+        "the open-recording screen can say the waveform situation ONCE, before anyone clicks a pad "
+        "(R3.8: a fact about his data, on the page), instead of springing it per trace.",
+    )
 
 
 class MeaPadActivity(Res):
