@@ -86,9 +86,16 @@ export interface MeaTraceProps {
   recordingId: string;
   /** The channel of the pad he clicked, or null when nothing is selected yet. */
   channel: number | null;
+  /**
+   * ⭐ **The stretch the close-up is actually showing** — the SERVED range, the same one the
+   * readout states, so anything built on it (the chip's "colours follow the view" mode) can never
+   * disagree with the picture. `null` = the whole recording, or nothing selected. Reported when
+   * the data lands, not on the gesture, for the same reason the announcement waits.
+   */
+  onViewChange?: (window: { t0: number; t1: number } | null) => void;
 }
 
-export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
+export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: MeaTraceProps) {
   // The whole recording, fetched once per pad: the strip's picture, and the source of `duration_s`.
   const [whole, setWhole] = useState<MeaChannelTrace | null>(null);
   // The close-up. Always present whenever `whole` is — see the header on why.
@@ -232,6 +239,18 @@ export function MeaTrace({ analysisId, recordingId, channel }: MeaTraceProps) {
     if (!data?.recorded) return;
     setSaid(readout(data.t0_s, data.t1_s, data.duration_s, data.spikes?.length ?? 0));
   }, [data]);
+
+  // ⭐ Report the stretch actually being shown, when its data lands. `data === whole` is the
+  // whole-recording view by construction (the arrival fetch and Home both hand the same object
+  // back), so the identity test is exact and costs nothing.
+  useEffect(() => {
+    if (!onViewChange) return;
+    if (channel == null || data == null || whole == null || !data.recorded || data === whole) {
+      onViewChange(null);
+      return;
+    }
+    onViewChange({ t0: data.t0_s, t1: data.t1_s });
+  }, [channel, data, whole, onViewChange]);
 
   const onSelect = useCallback(
     (v: vs.TimeView) => go(vs.push(stack, v)),

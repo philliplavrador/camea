@@ -730,8 +730,24 @@ def get_mea_layout(analysis_id: str, recording_id: str) -> dict:
 
 @router.get("/api/mea/{analysis_id}/recordings/{recording_id}/activity",
             response_model=MeaChipActivity)
-def get_mea_activity(analysis_id: str, recording_id: str) -> dict:
+def get_mea_activity(analysis_id: str, recording_id: str,
+                     t0: float | None = Query(
+                         default=None, ge=0,
+                         description="Window start, seconds. With `t0`/`t1` the tally covers "
+                                     "only `[t0, t1)` and `rate_hz` divides by that window — "
+                                     "the chip map's 'colours follow the view' mode."),
+                     t1: float | None = Query(
+                         default=None,
+                         description="Window end, seconds; clamped to the recording. Omit both "
+                                     "for the whole recording, exactly as it always was.")) -> dict:
     """The per-pad tally the chip map is coloured by — one row per routed pad, in `layout` order.
+
+    ⭐ **`t0`/`t1` MAKE THE SAME TALLY OVER A STRETCH OF TIME** (2026-08-16): the trace panel zooms
+    into a burst and the chip re-colours by who fired during it. The window arrives from the
+    request and nothing about it is assumed, remembered, or special-cased (I1); it is clamped to
+    the recording and an empty window is refused by name, the trace route's own rule. ⛔ With
+    neither given the answer is byte-identical to what this route always returned — the window
+    fields are simply null.
 
     ⭐ **A GET, NOT A JOB, AND THAT WAS MEASURED** (plan 003 § Open asked). One pass over the spike
     table of a real 300 s recording: **2.3–21 ms** end to end including the layout, over all five
@@ -750,7 +766,20 @@ def get_mea_activity(analysis_id: str, recording_id: str) -> dict:
     rec, _entry = _open(analysis_id, recording_id)
     try:
         info = rec.info()
-        act = rec.activity()
+        windowed = t0 is not None or t1 is not None
+        if windowed:
+            lo = float(t0) if t0 is not None else 0.0
+            hi = min(float(t1), info.duration_s) if t1 is not None else info.duration_s
+            if hi <= lo:
+                raise ApiError(422, "refused", "the requested window is empty")
+            act = rec.activity(lo, hi)
+            # The scope's own spike total — every spike in the window, mapped channel or not —
+            # so `n_spikes_unplaced` below compares like with like.
+            sp = rec.spikes()
+            scope_total = int(((sp["t_s"] >= lo) & (sp["t_s"] < hi)).sum()) if sp.size else 0
+        else:
+            act = rec.activity()
+            scope_total = info.n_spikes
         # ⭐ **THE SPIKES ON NO SHOWN PAD, COUNTED OUT LOUD** (docs/MAXWELL.md §7.6). The file's
         # total counts every spike the detector logged; the pads' tally counts only those whose
         # channel is in the routed mapping, and on real files the two genuinely differ (§5.3:
@@ -762,12 +791,16 @@ def get_mea_activity(analysis_id: str, recording_id: str) -> dict:
             "recording_id": recording_id,
             "pads": [{"channel": int(a["channel"]), "n_spikes": int(a["n_spikes"]),
                       "rate_hz": float(a["rate_hz"])} for a in act],
-            "duration_s": info.duration_s,
+            # What `rate_hz` was divided by — the window's length when one was asked for, so the
+            # UI's "in this … " wording stays honest by construction (MAXWELL §7.3).
+            "duration_s": (hi - lo) if windowed else info.duration_s,
             "n_spikes": info.n_spikes,
             "n_pads": int(act.size),
             "n_silent": int((act["n_spikes"] == 0).sum()),
             "max_rate_hz": float(act["rate_hz"].max()) if act.size else 0.0,
-            "n_spikes_unplaced": info.n_spikes - placed,
+            "n_spikes_unplaced": scope_total - placed,
+            "t0_s": lo if windowed else None,
+            "t1_s": hi if windowed else None,
         }
     finally:
         rec.close()

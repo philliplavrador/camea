@@ -140,12 +140,23 @@ export async function meaChipLayout(analysisId: string, recordingId: string)
  * One row per routed pad, **in the same order as `meaChipLayout`'s `pads`**, so the two zip
  * together without a join. ⭐ It comes from MaxWell's spike table, which needs no proprietary
  * decoder — so this is trustworthy even on a machine where the waveform reads as a flat line.
+ *
+ * ⭐ **With `window` the tally covers only `[t0, t1)`** and `rate_hz` divides by that stretch —
+ * the chip map's "colours follow the view" mode. The reply says which it was: `t0_s`/`t1_s` are
+ * the served window, null on a whole-recording tally. ⚠️ A legend drawn from a windowed reply must
+ * state the STRETCH's length beside its silent count, never the recording's (MAXWELL §7.3).
  */
-export async function meaChipActivity(analysisId: string, recordingId: string)
-  : Promise<MeaChipActivity> {
+export async function meaChipActivity(
+  analysisId: string,
+  recordingId: string,
+  window: { t0?: number; t1?: number } = {},
+): Promise<MeaChipActivity> {
   return unwrap(
     await api.GET('/api/mea/{analysis_id}/recordings/{recording_id}/activity', {
-      params: { path: { analysis_id: analysisId, recording_id: recordingId } },
+      params: {
+        path: { analysis_id: analysisId, recording_id: recordingId },
+        query: { t0: window.t0 ?? null, t1: window.t1 ?? null },
+      },
     }),
   );
 }

@@ -574,14 +574,22 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
         )}
       </div>
 
-      {/* Under the stage: the legend and its companions share a row and wrap on a narrow window. */}
+      {/* Under the stage: the legend and its companions share a row and wrap on a narrow window.
+          ⚠️ `windowed` rides on the activity payload itself (`t0_s` set = a stretch, not the whole
+          recording — the "colours follow the view" mode), so the wording below can never disagree
+          with the numbers it sits beside: both come from the same object. MAXWELL §7.3. */}
       <div className={styles.below}>
-        <ChipLegend scale={scale} durationS={activity.duration_s} />
+        <ChipLegend
+          scale={scale}
+          durationS={activity.duration_s}
+          windowed={activity.t0_s != null}
+        />
         <SpreadChart
           bands={bands}
           selected={band}
           onToggle={(i) => setBand((b) => (b === i ? null : i))}
           durationS={activity.duration_s}
+          windowed={activity.t0_s != null}
         />
         <BusiestPads pads={pads} selected={selected} onPick={jumpTo} />
       </div>
@@ -595,16 +603,20 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
  *
  * ⭐ And the ring is in the legend beside the colours, saying what it means in his terms.
  *
- * ⭐ **The recording's length sits beside the silent count** — MAXWELL §7.3: a silent tally from a
+ * ⭐ **The tally's own length sits beside the silent count** — MAXWELL §7.3: a silent tally from a
  * 30 s window and one from a 300 s run are not the same kind of fact, so the window is stated
- * wherever the count is.
+ * wherever the count is. With "colours follow the view" on, the tally covers the trace's stretch
+ * and this line says THAT length — `durationS` is what the rates were divided by either way, so
+ * the number is honest by construction; `windowed` only decides the words around it.
  */
 function ChipLegend({
   scale,
   durationS,
+  windowed,
 }: {
   scale: ReturnType<typeof activityScale>;
   durationS: number;
+  windowed: boolean;
 }) {
   return (
     <div className={styles.legend} data-testid="mea-chip-legend">
@@ -622,7 +634,15 @@ function ChipLegend({
         <span>
           {SILENT_MEANING} — <b>{scale.nSilent.toLocaleString()}</b> of{' '}
           {(scale.nSilent + scale.nLive).toLocaleString()} recorded pads
-          {durationS > 0 && <> · in this {formatSeconds(durationS)} recording</>}
+          {durationS > 0 && (
+            <>
+              {' '}
+              · in{' '}
+              {windowed
+                ? `the ${formatSeconds(durationS)} stretch shown`
+                : `this ${formatSeconds(durationS)} recording`}
+            </>
+          )}
         </span>
       </div>
       <p className={styles.caveat}>{SCALE_CAVEAT}</p>

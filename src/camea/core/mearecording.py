@@ -910,9 +910,16 @@ class MeaRecording:
             out.append(TtlPulse(start_s=open_t, end_s=info.duration_s, bits=open_v))
         return out
 
-    def activity(self) -> np.ndarray:
+    def activity(self, t0: float | None = None, t1: float | None = None) -> np.ndarray:
         """How much happened on each routed pad — ``(channel, n_spikes, rate_hz)``, in
         :meth:`mapping` order so the two zip together without a join.
+
+        ⭐ **With ``t0``/``t1`` (seconds), the tally covers only ``[t0, t1)``** and ``rate_hz``
+        divides by that window's length — the chip map's "colours follow the view" mode. The
+        window arrives from the caller and nothing about it is assumed or remembered (I1);
+        docs/MAXWELL.md §7.3 is why the window length must then be shown beside any silent
+        count. ⛔ With neither given, the whole-recording behaviour is exactly what it always
+        was — same spikes, same divisor.
 
         ⭐ **THIS LIVES IN CORE, NOT IN THE FEATURE, BECAUSE IT IS A FACT ABOUT THE FILE.** It is a
         pure function of the spike table and the routed set — the same tally whoever asks — and the
@@ -937,6 +944,14 @@ class MeaRecording:
         counts = np.zeros(ch.size, dtype=np.int64)
 
         sp = self.spikes()
+        if t0 is None and t1 is None:
+            dur = self.info().duration_s
+        else:
+            lo = 0.0 if t0 is None else float(t0)
+            hi = self.info().duration_s if t1 is None else float(t1)
+            dur = hi - lo
+            if sp.size:
+                sp = sp[(sp["t_s"] >= lo) & (sp["t_s"] < hi)]
         if sp.size and ch.size:
             # A lookup by sorted position rather than a Python dict: ~1k pads against a few hundred
             # thousand spikes, and the dict version measured ~40x slower on the real recordings.
@@ -951,7 +966,6 @@ class MeaRecording:
             hit = sorted_ch[at] == want
             np.add.at(counts, order[at[hit]], 1)
 
-        dur = self.info().duration_s
         out = np.empty(ch.size, dtype=[("channel", "<i4"), ("n_spikes", "<i8"),
                                        ("rate_hz", "<f8")])
         out["channel"] = ch

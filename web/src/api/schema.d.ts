@@ -2037,6 +2037,13 @@ export interface paths {
          * Get Mea Activity
          * @description The per-pad tally the chip map is coloured by — one row per routed pad, in `layout` order.
          *
+         *     ⭐ **`t0`/`t1` MAKE THE SAME TALLY OVER A STRETCH OF TIME** (2026-08-16): the trace panel zooms
+         *     into a burst and the chip re-colours by who fired during it. The window arrives from the
+         *     request and nothing about it is assumed, remembered, or special-cased (I1); it is clamped to
+         *     the recording and an empty window is refused by name, the trace route's own rule. ⛔ With
+         *     neither given the answer is byte-identical to what this route always returned — the window
+         *     fields are simply null.
+         *
          *     ⭐ **A GET, NOT A JOB, AND THAT WAS MEASURED** (plan 003 § Open asked). One pass over the spike
          *     table of a real 300 s recording: **2.3–21 ms** end to end including the layout, over all five
          *     readable recordings in the mirror (the worst is 982 channels × 244,925 spikes at 21 ms). Nothing
@@ -4125,10 +4132,20 @@ export interface components {
             max_rate_hz: number;
             /**
              * N Spikes Unplaced
-             * @description ⭐ **Spikes that are on no pad in `pads`** — the total minus the pads' own sum, derived on every request and never stored. Real on his files (docs/MAXWELL.md §5.3 measured 0%–29.86%; one attached recording logs 22,367 spikes of which only 15,688 sit on a mapped channel): the detector can log spikes on channels outside the routed mapping. ⛔ The UI must say this number beside the file total whenever it is non-zero — §7.6 explicitly forbids 'fixing' the mismatch by printing only the placed total, because that hides a fact about the file.
+             * @description ⭐ **Spikes that are on no pad in `pads`** — the scope's own total minus the pads' sum, derived on every request and never stored (the scope is the window when `t0_s`/`t1_s` are set, else the whole file). Real on his files (docs/MAXWELL.md §5.3 measured 0%–29.86%; one attached recording logs 22,367 spikes of which only 15,688 sit on a mapped channel): the detector can log spikes on channels outside the routed mapping. ⛔ The UI must say this number beside the file total whenever it is non-zero — §7.6 explicitly forbids 'fixing' the mismatch by printing only the placed total, because that hides a fact about the file.
              * @default 0
              */
             n_spikes_unplaced: number;
+            /**
+             * T0 S
+             * @description ⭐ Set (with `t1_s`) when the tally was asked for over a window `[t0, t1)` — the 'colours follow the view' mode — as served, clamped to the recording. null on a whole-recording tally. `duration_s` is then the window's length, because it is still what `rate_hz` was divided by; ⛔ MAXWELL §7.3: any silent count shown from a windowed tally must carry that window's length beside it, not the recording's.
+             */
+            t0_s?: number | null;
+            /**
+             * T1 S
+             * @description The served window's end, seconds. null on a whole-recording tally.
+             */
+            t1_s?: number | null;
         };
         /**
          * MeaChipLayout
@@ -9428,7 +9445,12 @@ export interface operations {
     };
     get_mea_activity_api_mea__analysis_id__recordings__recording_id__activity_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Window start, seconds. With `t0`/`t1` the tally covers only `[t0, t1)` and `rate_hz` divides by that window — the chip map's 'colours follow the view' mode. */
+                t0?: number | null;
+                /** @description Window end, seconds; clamped to the recording. Omit both for the whole recording, exactly as it always was. */
+                t1?: number | null;
+            };
             header?: never;
             path: {
                 analysis_id: string;

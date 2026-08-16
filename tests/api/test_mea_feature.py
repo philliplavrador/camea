@@ -755,6 +755,59 @@ def test_a_pad_that_heard_NOTHING_is_reported_as_zero_not_dropped(client, sessio
     assert all(p["rate_hz"] == 0.0 for p in silent)
 
 
+def test_activity_with_a_window_counts_only_that_stretch_and_says_so(client, session):
+    """⭐ **"Colours follow the view" (2026-08-16).** With `t0`/`t1` the same tally covers only
+    `[t0, t1)`: the reply names the served window, `duration_s` becomes what the rates were
+    divided by (MAXWELL §7.3 — the UI must put THAT length beside a windowed silent count), and
+    the two halves of a recording sum, pad for pad, to the whole of it. The file's own total is
+    untouched by the window."""
+    aid, rid = _opened(client, session)
+    whole = _activity(client, aid, rid)
+
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/activity", params={"t0": 0.0, "t1": 1.5})
+    assert r.status_code == 200, r.text
+    first = r.json()
+    assert (first["t0_s"], first["t1_s"]) == (0.0, 1.5)
+    assert first["duration_s"] == pytest.approx(1.5)
+    for pad in first["pads"]:
+        assert pad["rate_hz"] == pytest.approx(pad["n_spikes"] / 1.5)
+    assert first["n_silent"] == sum(1 for p in first["pads"] if p["n_spikes"] == 0)
+    assert first["max_rate_hz"] == pytest.approx(max(p["rate_hz"] for p in first["pads"]))
+
+    # `t0` alone is a window too — the end clamps to the recording, and says so.
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/activity", params={"t0": 1.5})
+    assert r.status_code == 200, r.text
+    second = r.json()
+    assert second["t0_s"] == 1.5
+    assert second["t1_s"] == pytest.approx(whole["duration_s"])
+
+    for a, b, w in zip(first["pads"], second["pads"], whole["pads"], strict=True):
+        assert a["channel"] == b["channel"] == w["channel"]
+        assert a["n_spikes"] + b["n_spikes"] == w["n_spikes"]
+    assert first["n_spikes"] == second["n_spikes"] == whole["n_spikes"]
+
+
+def test_activity_without_a_window_is_exactly_what_it_always_was(client, session):
+    """⛔ The whole-recording tally is the contract every existing caller relies on: no window
+    fields set, `duration_s` the recording's own, counts identical to before the params existed."""
+    aid, rid = _opened(client, session)
+    act = _activity(client, aid, rid)
+    assert act["t0_s"] is None and act["t1_s"] is None
+    assert act["duration_s"] == pytest.approx(3.0)
+
+
+def test_an_empty_activity_window_is_refused_not_zeroed(client, session):
+    """An empty window answered with zeros would render a uniformly quiet chip — the exact
+    laundering MAXWELL exists to prevent. Refused by name, the trace route's own rule."""
+    aid, rid = _opened(client, session)
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/activity", params={"t0": 2.0, "t1": 1.0})
+    assert r.status_code == 422
+    assert err(r)["code"] == "refused"
+    # A window entirely past the end of the recording is empty too, not invented.
+    r = client.get(f"/api/mea/{aid}/recordings/{rid}/activity", params={"t0": 99.0})
+    assert r.status_code == 422
+
+
 def test_the_scale_is_the_recordings_own_and_nothing_declares_a_maximum(client, session):
     """⛔ **I1.** `max_rate_hz` is the busiest pad in THIS file — the two fixture recordings have
     different spike tables (different seeds), so if anything had baked a scale in, these two would

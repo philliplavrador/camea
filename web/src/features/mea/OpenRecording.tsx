@@ -15,14 +15,32 @@
 // (`features/mea/recordings.py :: open_path`), so nothing here has to know or care.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { meaChipActivity, meaChipLayout } from '../../api';
 import type { MeaChipActivity, MeaChipLayout } from '../../api';
-import { Button, LiveWarning } from '../../design';
+import { Button, Help, LiveWarning } from '../../design';
 import { ChipMap } from './ChipMap';
 import { formatSeconds } from './format';
 import { MeaTrace } from './MeaTrace';
 import styles from './OpenRecording.module.css';
+
+/**
+ * How long the view has to sit still before the chip is re-coloured for it. The trace panel
+ * already settles its own fetch (90 ms) and reports only served data, so this only has to absorb
+ * a walk through history — not every pointermove of a drag.
+ */
+const FOLLOW_SETTLE_MS = 150;
+
+/** The `?` on the mode toggle (R7: a mode control earns one). Plain words, no jargon. */
+const FOLLOW_VIEW_HELP =
+  "Normally the chip's colours count every spike in the whole recording.\n" +
+  '\n' +
+  'Turn this on and the colours count only the stretch of time the trace panel is showing — ' +
+  'zoom in on a burst and the chip shows which pads fired during it. The legend, the counts and ' +
+  'the bars beside the map follow the same stretch, and the length written beside the no-spikes ' +
+  "count switches to that stretch's length.\n" +
+  '\n' +
+  'Turn it off and the picture is the whole recording again.';
 
 export interface OpenRecordingProps {
   analysisId: string;
@@ -36,6 +54,16 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
   const [activity, setActivity] = useState<MeaChipActivity | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [channel, setChannel] = useState<number | null>(null);
+  // ── "Colors follow the view" (2026-08-16) ───────────────────────────────────────────────────
+  // Default OFF: the whole-recording picture is the settled default and the mode is a choice.
+  const [followView, setFollowView] = useState(false);
+  /** The stretch the trace panel is actually showing (its SERVED range), or null = the whole. */
+  const [traceView, setTraceView] = useState<{ t0: number; t1: number } | null>(null);
+  /** The windowed tally the chip is coloured by while following; null = use the whole recording. */
+  const [viewActivity, setViewActivity] = useState<MeaChipActivity | null>(null);
+  // The existing ticket idiom (MeaTrace's): a late windowed reply holding a stale ticket is
+  // dropped, so a slow wide request can never recolour the view he already left.
+  const followTicket = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,6 +71,9 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
     setActivity(null);
     setError(null);
     setChannel(null);
+    setTraceView(null);
+    setViewActivity(null);
+    followTicket.current++;
     void Promise.all([
       meaChipLayout(analysisId, recordingId),
       meaChipActivity(analysisId, recordingId),
@@ -59,6 +90,36 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
       cancelled = true;
     };
   }, [analysisId, recordingId]);
+
+  /** What the trace panel reports — kept identity-stable so an unchanged range refires nothing. */
+  const onTraceView = useCallback((w: { t0: number; t1: number } | null) => {
+    setTraceView((prev) =>
+      prev === w || (prev != null && w != null && prev.t0 === w.t0 && prev.t1 === w.t1) ? prev : w,
+    );
+  }, []);
+
+  // ── the follow fetch: debounced, ticketed, honest ───────────────────────────────────────────
+  // Off, or on the whole recording, the windowed tally is CLEARED rather than left stale — the
+  // chip falls back to the whole-recording activity it opened with. A reply that fails clears it
+  // too: wrong-but-current colours claiming to follow the view would be a quiet lie, and the
+  // legend's wording follows the same object, so screen and words always move together.
+  useEffect(() => {
+    const mine = ++followTicket.current;
+    if (!followView || traceView == null) {
+      setViewActivity(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      void meaChipActivity(analysisId, recordingId, { t0: traceView.t0, t1: traceView.t1 })
+        .then((a) => {
+          if (mine === followTicket.current) setViewActivity(a);
+        })
+        .catch(() => {
+          if (mine === followTicket.current) setViewActivity(null);
+        });
+    }, FOLLOW_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [followView, traceView, analysisId, recordingId]);
 
   return (
     <section className={styles.open} data-testid="mea-open-recording">
@@ -113,14 +174,37 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
 
       {!error && layout && activity && (
         <div className={styles.split}>
-          <ChipMap
-            layout={layout}
-            activity={activity}
-            selected={channel}
-            onSelect={setChannel}
-          />
+          <div className={styles.mapCol}>
+            {/* ⭐ **COLORS FOLLOW THE VIEW** — zoom the trace and the chip re-colours by who fired
+                in that stretch. Default OFF; a mode control, so it earns a `?` (R7). The legend
+                and the spread re-band from the same windowed tally, so the words, the window
+                length and the colours can never disagree. */}
+            <div className={styles.followRow} data-testid="mea-follow-view">
+              <label className={styles.follow}>
+                <input
+                  type="checkbox"
+                  checked={followView}
+                  onChange={(e) => setFollowView(e.target.checked)}
+                  data-testid="mea-follow-view-tick"
+                />
+                Colors follow the view
+              </label>
+              <Help body={FOLLOW_VIEW_HELP} label="What 'Colors follow the view' does" />
+            </div>
+            <ChipMap
+              layout={layout}
+              activity={viewActivity ?? activity}
+              selected={channel}
+              onSelect={setChannel}
+            />
+          </div>
           <div className={styles.side}>
-            <MeaTrace analysisId={analysisId} recordingId={recordingId} channel={channel} />
+            <MeaTrace
+              analysisId={analysisId}
+              recordingId={recordingId}
+              channel={channel}
+              onViewChange={onTraceView}
+            />
           </div>
         </div>
       )}

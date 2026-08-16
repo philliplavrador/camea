@@ -3103,13 +3103,26 @@ class MeaChipActivity(Res):
     )
     n_spikes_unplaced: int = Field(
         default=0,
-        description="⭐ **Spikes that are on no pad in `pads`** — the total minus the pads' own "
-        "sum, derived on every request and never stored. Real on his files (docs/MAXWELL.md §5.3 "
+        description="⭐ **Spikes that are on no pad in `pads`** — the scope's own total minus the "
+        "pads' sum, derived on every request and never stored (the scope is the window when "
+        "`t0_s`/`t1_s` are set, else the whole file). Real on his files (docs/MAXWELL.md §5.3 "
         "measured 0%–29.86%; one attached recording logs 22,367 spikes of which only 15,688 sit on "
         "a mapped channel): the detector can log spikes on channels outside the routed mapping. "
         "⛔ The UI must say this number beside the file total whenever it is non-zero — §7.6 "
         "explicitly forbids 'fixing' the mismatch by printing only the placed total, because that "
         "hides a fact about the file.",
+    )
+    t0_s: float | None = Field(
+        default=None,
+        description="⭐ Set (with `t1_s`) when the tally was asked for over a window `[t0, t1)` — "
+        "the 'colours follow the view' mode — as served, clamped to the recording. null on a "
+        "whole-recording tally. `duration_s` is then the window's length, because it is still what "
+        "`rate_hz` was divided by; ⛔ MAXWELL §7.3: any silent count shown from a windowed tally "
+        "must carry that window's length beside it, not the recording's.",
+    )
+    t1_s: float | None = Field(
+        default=None,
+        description="The served window's end, seconds. null on a whole-recording tally.",
     )
 
 

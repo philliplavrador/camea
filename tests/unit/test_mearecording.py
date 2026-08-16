@@ -237,6 +237,23 @@ def test_activity_is_all_zeros_when_nothing_was_detected(tmp_path):
         assert act["rate_hz"].tolist() == [0.0, 0.0, 0.0, 0.0]
 
 
+def test_activity_over_a_window_counts_only_that_stretch(rec):
+    """⭐ The "colours follow the view" tally (2026-08-16): same pads, same order, counts within
+    `[t0, t1)` only, and the rate divides by the WINDOW's length — the window arrives from the
+    caller and nothing about it is assumed or remembered. Without arguments the behaviour is
+    exactly what it always was, which the other activity tests above hold it to."""
+    with mr.MeaRecording(rec) as r:
+        # Spikes sit at 0.1 s (ch 0), 0.25 s (ch 1) and 0.9 s (ch 0) of a 4 s recording.
+        act = r.activity(0.0, 0.5)
+        assert act["channel"].tolist() == r.activity()["channel"].tolist()
+        assert act["n_spikes"].tolist() == [1, 1, 0, 0]          # the 0.9 s spike is outside
+        assert act["rate_hz"].tolist() == pytest.approx([2.0, 2.0, 0.0, 0.0])
+        # One bound alone is a window too: [0.5, end).
+        late = r.activity(t0=0.5)
+        assert late["n_spikes"].tolist() == [1, 0, 0, 0]
+        assert late["rate_hz"].tolist() == pytest.approx([1 / 3.5, 0.0, 0.0, 0.0])
+
+
 def test_activity_needs_no_decoder(rec):
     """⭐ The whole reason the chip map is worth drawing before the MaxWell decoder is found: the
     spike table is uncompressed, so this is exactly right on a machine where `trace()` is a rail."""

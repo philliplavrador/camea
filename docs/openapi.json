@@ -3786,7 +3786,7 @@
     "/api/mea/{analysis_id}/recordings/{recording_id}/activity": {
       "get": {
         "summary": "Get Mea Activity",
-        "description": "The per-pad tally the chip map is coloured by \u2014 one row per routed pad, in `layout` order.\n\n\u2b50 **A GET, NOT A JOB, AND THAT WAS MEASURED** (plan 003 \u00a7 Open asked). One pass over the spike\ntable of a real 300 s recording: **2.3\u201321 ms** end to end including the layout, over all five\nreadable recordings in the mirror (the worst is 982 channels \u00d7 244,925 spikes at 21 ms). Nothing\nhere is slow enough to need a spinner, let alone a job \u2014 so it is a plain GET and the screen\ndraws on the first paint.\n\n\u2b50 **AND IT NEEDS NO PROPRIETARY DECODER**, because the spike table is written uncompressed by\nthe on-chip detector. This is the reason the chip map is worth building before the decoder\nproblem is solved: it is exactly right on a machine where the waveform is a rail.\n\n\u26d4 A count. Not a rate per neuron, not a burst, not a verdict on whether the culture is healthy\n(I1) \u2014 and `max_rate_hz` is the busiest pad *in this recording*, so the UI can scale its colours\nto the file in front of it. There is no number in Camea for how active a chip should be.",
+        "description": "The per-pad tally the chip map is coloured by \u2014 one row per routed pad, in `layout` order.\n\n\u2b50 **`t0`/`t1` MAKE THE SAME TALLY OVER A STRETCH OF TIME** (2026-08-16): the trace panel zooms\ninto a burst and the chip re-colours by who fired during it. The window arrives from the\nrequest and nothing about it is assumed, remembered, or special-cased (I1); it is clamped to\nthe recording and an empty window is refused by name, the trace route's own rule. \u26d4 With\nneither given the answer is byte-identical to what this route always returned \u2014 the window\nfields are simply null.\n\n\u2b50 **A GET, NOT A JOB, AND THAT WAS MEASURED** (plan 003 \u00a7 Open asked). One pass over the spike\ntable of a real 300 s recording: **2.3\u201321 ms** end to end including the layout, over all five\nreadable recordings in the mirror (the worst is 982 channels \u00d7 244,925 spikes at 21 ms). Nothing\nhere is slow enough to need a spinner, let alone a job \u2014 so it is a plain GET and the screen\ndraws on the first paint.\n\n\u2b50 **AND IT NEEDS NO PROPRIETARY DECODER**, because the spike table is written uncompressed by\nthe on-chip detector. This is the reason the chip map is worth building before the decoder\nproblem is solved: it is exactly right on a machine where the waveform is a rail.\n\n\u26d4 A count. Not a rate per neuron, not a burst, not a verdict on whether the culture is healthy\n(I1) \u2014 and `max_rate_hz` is the busiest pad *in this recording*, so the UI can scale its colours\nto the file in front of it. There is no number in Camea for how active a chip should be.",
         "operationId": "get_mea_activity_api_mea__analysis_id__recordings__recording_id__activity_get",
         "parameters": [
           {
@@ -3806,6 +3806,43 @@
               "type": "string",
               "title": "Recording Id"
             }
+          },
+          {
+            "name": "t0",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Window start, seconds. With `t0`/`t1` the tally covers only `[t0, t1)` and `rate_hz` divides by that window \u2014 the chip map's 'colours follow the view' mode.",
+              "title": "T0"
+            },
+            "description": "Window start, seconds. With `t0`/`t1` the tally covers only `[t0, t1)` and `rate_hz` divides by that window \u2014 the chip map's 'colours follow the view' mode."
+          },
+          {
+            "name": "t1",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Window end, seconds; clamped to the recording. Omit both for the whole recording, exactly as it always was.",
+              "title": "T1"
+            },
+            "description": "Window end, seconds; clamped to the recording. Omit both for the whole recording, exactly as it always was."
           }
         ],
         "responses": {
@@ -7812,8 +7849,32 @@
           "n_spikes_unplaced": {
             "type": "integer",
             "title": "N Spikes Unplaced",
-            "description": "\u2b50 **Spikes that are on no pad in `pads`** \u2014 the total minus the pads' own sum, derived on every request and never stored. Real on his files (docs/MAXWELL.md \u00a75.3 measured 0%\u201329.86%; one attached recording logs 22,367 spikes of which only 15,688 sit on a mapped channel): the detector can log spikes on channels outside the routed mapping. \u26d4 The UI must say this number beside the file total whenever it is non-zero \u2014 \u00a77.6 explicitly forbids 'fixing' the mismatch by printing only the placed total, because that hides a fact about the file.",
+            "description": "\u2b50 **Spikes that are on no pad in `pads`** \u2014 the scope's own total minus the pads' sum, derived on every request and never stored (the scope is the window when `t0_s`/`t1_s` are set, else the whole file). Real on his files (docs/MAXWELL.md \u00a75.3 measured 0%\u201329.86%; one attached recording logs 22,367 spikes of which only 15,688 sit on a mapped channel): the detector can log spikes on channels outside the routed mapping. \u26d4 The UI must say this number beside the file total whenever it is non-zero \u2014 \u00a77.6 explicitly forbids 'fixing' the mismatch by printing only the placed total, because that hides a fact about the file.",
             "default": 0
+          },
+          "t0_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T0 S",
+            "description": "\u2b50 Set (with `t1_s`) when the tally was asked for over a window `[t0, t1)` \u2014 the 'colours follow the view' mode \u2014 as served, clamped to the recording. null on a whole-recording tally. `duration_s` is then the window's length, because it is still what `rate_hz` was divided by; \u26d4 MAXWELL \u00a77.3: any silent count shown from a windowed tally must carry that window's length beside it, not the recording's."
+          },
+          "t1_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T1 S",
+            "description": "The served window's end, seconds. null on a whole-recording tally."
           }
         },
         "type": "object",

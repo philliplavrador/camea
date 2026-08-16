@@ -1394,6 +1394,49 @@ test('the spread chart counts pads per legend band, and a click highlights the b
   }
 });
 
+test('Colors follow the view: off by default, and the window length stays honest when on', async ({
+  page,
+}) => {
+  // ⭐ The mode (2026-08-16): zoom the trace and the chip re-colours by who fired in that stretch.
+  // What a canvas test CAN honestly pin is the words: MAXWELL §7.3 says the length beside the
+  // no-spikes count must be the length the tally was actually counted over — so when the mode is
+  // on and he zooms, "in this 3.0 s recording" must become "in the … stretch shown", in both the
+  // legend and the spread chart, and revert when the tally is the whole recording again.
+  const id = await openFirstRecording(page, 'follow the view');
+  try {
+    const row = page.getByTestId(TID.meaFollowView);
+    const tick = page.getByTestId(TID.meaFollowViewTick);
+    await expect(row).toBeVisible();
+    await expect(tick).not.toBeChecked(); // default OFF — the whole recording is the settled default
+    // R7: a mode control earns a `?`.
+    await expect(row.getByTestId(TID.help)).toBeVisible();
+
+    const silentLine = page.getByTestId(TID.meaChipLegendSilent);
+    await expect(silentLine).toContainText(/in this .* recording/);
+
+    await pickFirstPad(page);
+    await tick.check();
+    // On, but still showing the whole recording: the tally (and its words) must not pretend a
+    // window exists where there is none.
+    await expect(silentLine).toContainText(/in this .* recording/);
+
+    await dragAcross(page, TID.meaTraceDetail, 0.2, 0.7);
+    await expect(silentLine).toContainText(/in the .* stretch shown/, { timeout: SHORT });
+    await expect(silentLine).not.toContainText('recording');
+    // The spread chart re-words from the same payload, so the two blocks cannot disagree.
+    const silentBar = page
+      .getByTestId(TID.meaChipSpread)
+      .locator(`[data-testid="${TID.meaChipSpreadBar}"][data-band="silent"]`);
+    await expect(silentBar).toHaveAttribute('aria-label', /stretch shown/);
+
+    // Off again: the whole-recording tally and its wording come straight back.
+    await tick.uncheck();
+    await expect(silentLine).toContainText(/in this .* recording/, { timeout: SHORT });
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
 test('Home is itself undoable — one Back and he has his stretch again', async ({ page }) => {
   // 🔴 **THE ONE THAT LOOKS LIKE A BUG AND IS NOT.** `home` PUSHES the first view rather than
   // rewinding to it (matplotlib's `_Stack.home`), so a mis-aimed "Whole recording" never costs him

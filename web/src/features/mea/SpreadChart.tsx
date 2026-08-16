@@ -27,14 +27,23 @@ export interface SpreadChartProps {
   /** Index of the highlighted band, or null. */
   selected: number | null;
   onToggle: (index: number) => void;
-  /** The recording's length, seconds — MAXWELL §7.3 says it sits beside the silent count. */
+  /** The tally's own length, seconds — MAXWELL §7.3 says it sits beside the silent count. */
   durationS: number;
+  /** ⭐ True when the tally covers a stretch of the trace, not the whole recording ("colours
+   *  follow the view"). Same source as the legend's flag — the activity payload's own `t0_s` —
+   *  so the two blocks re-band and re-word together and can never disagree. */
+  windowed: boolean;
 }
 
-export function SpreadChart({ bands, selected, onToggle, durationS }: SpreadChartProps) {
+export function SpreadChart({ bands, selected, onToggle, durationS, windowed }: SpreadChartProps) {
   if (bands.every((b) => b.count === 0)) return null;
   const tallest = Math.max(...bands.map((b) => b.count));
-  const inThis = durationS > 0 ? ` in this ${formatSeconds(durationS)} recording` : '';
+  const inThis =
+    durationS > 0
+      ? windowed
+        ? ` in the ${formatSeconds(durationS)} stretch shown`
+        : ` in this ${formatSeconds(durationS)} recording`
+      : '';
 
   return (
     <div className={styles.spread} data-testid="mea-chip-spread">

@@ -146,6 +146,9 @@ export const TID = {
   //                                        §7.6; shown ONLY when the file total exceeds the pads'
   meaOpenNoDecoder: 'mea-open-no-decoder', // the waveform situation said ONCE, before any pad
   //                                        click — quiet, on the page, MeaTrace's own words
+  meaFollowView: 'mea-follow-view', //      the "Colors follow the view" mode row, above the chip;
+  //                                        carries the `?` (R7 — a mode control earns one)
+  meaFollowViewTick: 'mea-follow-view-tick', // its checkbox; default OFF
   meaOpenError: 'mea-open-error', //        🔴 refused BY NAME — never an empty chip map
   meaCloseRecording: 'mea-close-recording',
   meaChipMap: 'mea-chip-map',
@@ -510,6 +513,9 @@ export const TID = {
   regionDrag: 'region-drag', //              the draggable body of the SELECTED rectangle
   regionDropped: 'region-dropped', //        "dragged, not yet snapped" state
   regionSnap: 'region-snap', //              re-runs the bounded local match at the settled scale
+  regionSnapReach: 'region-snap-reach', //   how far Snap searches: nearby (drag-derived default) /
+  //                                         wider / far — SCREEN budgets, converted at snap time
+  //                                         (R45.7); buttons addressed by data-reach
   regionRevert: 'region-revert',
   regionSnapBanner: 'region-snap-banner', // the measured distance + NCC, like the sweep's snap
   regionSnapMargin: 'region-snap-margin',
