@@ -474,6 +474,14 @@ export const TID = {
   regionsBrowse: 'regions-browse', //        picker, so the typed box is the only drivable door
   regionsName: 'regions-name', //            optional label; defaults to the file name
   regionsLocate: 'regions-locate', //        starts the 202 locate job
+  regionsPickFiles: 'regions-pick-files', // the native multi-select — several recordings, located
+  //                                         one after another through the one lease
+  regionsNoDialog: 'regions-no-dialog', //   the one-line "no file dialog in this mode" note (R38)
+  regionsQueue: 'regions-queue', //          the queue readout: "Placing 2 of 6 — 4 waiting"
+  regionsQueueStop: 'regions-queue-stop', // "Stop after this one" — drains what is still waiting
+  regionsQueueFails: 'regions-queue-fails', // ⛔ R46.7 — every refused file with its sentence,
+  //                                         verbatim; outlives the queue it happened in
+  regionsQueueFail: 'regions-queue-fail', // one refused file's line
   regionsProgress: 'regions-progress', //    the job block (bar + phase + cancel)
   regionsPhase: 'regions-phase',
   regionsEta: 'regions-eta',

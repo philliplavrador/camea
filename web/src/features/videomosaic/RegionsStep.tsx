@@ -45,6 +45,7 @@ import {
   locateRegion,
   outputUrl,
   pickOpenFilePath,
+  pickOpenFilePaths,
   relocateRegion,
   snapRegion,
   updateRegion,
@@ -52,6 +53,7 @@ import {
 } from '../../api';
 import type {
   ElectrodeMapPayload,
+  JobRef,
   RegionRecord,
   RegionsPayload,
   VideoMosaicDocument,
@@ -86,6 +88,12 @@ const f4 = (v: number): string => v.toFixed(4);
 
 /** The file's own name, whatever separators its path used. */
 const basenameOf = (p: string): string => p.split(/[\\/]/).filter(Boolean).pop() ?? p;
+
+/** One waiting item of a several-at-once run: what to POST, and what a refusal calls it. */
+interface QueueJob {
+  label: string;
+  start: () => Promise<JobRef>;
+}
 
 // ── props ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -134,9 +142,27 @@ export function RegionsStep({
 
   // the one job this step can hold (locate, locate-again OR snap — all `locate_region`, one lease)
   const [jobId, setJobId] = useState<string | null>(null);
-  const [jobKind, setJobKind] = useState<'locate' | 'snap' | 'relocate' | null>(null);
+  const [jobKind, setJobKind] = useState<'locate' | 'snap' | 'relocate' | 'batch' | null>(null);
   const job = useJob(jobId);
   const running = jobId != null && !job.isTerminal;
+
+  // ⭐ SEVERAL AT ONCE (2026-08-16). The lease is the server's — one locate at a time — so the
+  // queue lives HERE: each item is POSTed only when the one before it has landed, every finished
+  // row appears as it lands (the ordinary refresh), and a refusal is recorded beside its file
+  // name WITHOUT killing what is still waiting (R46.7: the sentence is about THAT file, verbatim).
+  // "Stop after this one" drains the rest; the single-path box beside it is untouched (R38).
+  const [batch, setBatch] = useState<{ placing: number; total: number } | null>(null);
+  const [batchFails, setBatchFails] = useState<{ file: string; message: string }[]>([]);
+  const [stopAfter, setStopAfter] = useState(false);
+  const [noDialog, setNoDialog] = useState(false);
+  const batchQueueRef = useRef<QueueJob[]>([]);
+  const batchActiveRef = useRef(false);
+  const batchDoneRef = useRef(0);
+  const batchTotalRef = useRef(0);
+  const batchCurrentRef = useRef('');
+  const stopRef = useRef(false);
+  /** Something this step may not do while a job runs OR a queue is mid-walk. */
+  const busy = running || batch != null;
 
   // the selection, the pending drop, the readouts
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -203,20 +229,68 @@ export function RegionsStep({
     [selectedId],
   );
 
-  // ── the job: locate and snap land the same way ──────────────────────────────────────────────
+  // ── the queue driver: POST the next item, or fold the tent ──────────────────────────────────
+  const advanceBatch = useCallback(async () => {
+    for (;;) {
+      if (stopRef.current) batchQueueRef.current = [];
+      const next = batchQueueRef.current.shift();
+      if (!next) {
+        batchActiveRef.current = false;
+        stopRef.current = false;
+        setStopAfter(false);
+        setBatch(null);
+        return;
+      }
+      batchCurrentRef.current = next.label;
+      setBatch({ placing: batchDoneRef.current + 1, total: batchTotalRef.current });
+      try {
+        const ref = await next.start();
+        setJobKind('batch');
+        setJobId(ref.job_id);
+        return; // the job effect below advances us when this one lands
+      } catch (e) {
+        // ⛔ R46.7 — the refusal is a sentence about THIS file, kept beside its name. The queue
+        // is not the file: the loop carries straight on to the next one.
+        batchDoneRef.current += 1;
+        setBatchFails((f) => [...f, { file: next.label, message: errMsg(e) }]);
+      }
+    }
+  }, []);
+
+  const startBatch = useCallback(
+    (items: QueueJob[]) => {
+      if (running || batchActiveRef.current || items.length === 0) return;
+      batchQueueRef.current = [...items];
+      batchDoneRef.current = 0;
+      batchTotalRef.current = items.length;
+      batchActiveRef.current = true;
+      stopRef.current = false;
+      setStopAfter(false);
+      setBatchFails([]);
+      setJobError(null);
+      setBanner(null);
+      void advanceBatch();
+    },
+    [advanceBatch, running],
+  );
+
+  // ── the job: locate, locate-again and snap land the same way ────────────────────────────────
   useEffect(() => {
     if (!jobId || !job.isTerminal) return;
     const kind = jobKind;
+    const inBatch = kind === 'batch';
     if (job.state === 'failed') {
-      setJobError(
+      const msg =
         job.error?.message ??
-          (kind === 'snap' ? 'The snap failed.' : 'Locating the recording failed.'),
-      );
-      setJobId(null);
-      setJobKind(null);
-      return;
-    }
-    if (job.state === 'done') {
+        (kind === 'snap' ? 'The snap failed.' : 'Locating the recording failed.');
+      if (inBatch) {
+        // ⛔ A queue item that could not be placed is recorded with its sentence — and the rest
+        // of the queue still runs. One bad file must not cost him the other five.
+        setBatchFails((f) => [...f, { file: batchCurrentRef.current, message: msg }]);
+      } else {
+        setJobError(msg);
+      }
+    } else if (job.state === 'done') {
       const result = job.job?.result;
       if (result && result.kind === 'locate_region' && result.analysis_id === analysisId) {
         const r = result.region;
@@ -240,13 +314,27 @@ export function RegionsStep({
       }
       void refresh();
     }
-    setJobId(null); // done or cancelled
+    setJobId(null); // done, failed or cancelled
     setJobKind(null);
-  }, [jobId, jobKind, job.isTerminal, job.state, job.job, job.error, analysisId, refresh]);
+    if (inBatch) {
+      batchDoneRef.current += 1;
+      void advanceBatch();
+    }
+  }, [
+    jobId,
+    jobKind,
+    job.isTerminal,
+    job.state,
+    job.job,
+    job.error,
+    analysisId,
+    refresh,
+    advanceBatch,
+  ]);
 
   // ── adding a recording ──────────────────────────────────────────────────────────────────────
   const locate = useCallback(async () => {
-    if (running) return;
+    if (busy) return;
     const p = forSubmit(path);
     if (!p) return;
     setJobError(null);
@@ -260,7 +348,7 @@ export function RegionsStep({
       // shown verbatim. The typed path stays in the box (R42.5).
       setJobError(errMsg(e));
     }
-  }, [analysisId, label, path, running]);
+  }, [analysisId, busy, label, path]);
 
   const browse = useCallback(async () => {
     // Native open-file dialog; headless answers 501 and the wrapper falls back to prompt (R38).
@@ -269,12 +357,32 @@ export function RegionsStep({
     setPath(normalisePath(picked));
   }, []);
 
+  // ⭐ SEVERAL AT ONCE — the native multi-select, queued through the one lease. `null` = there is
+  // no file explorer in this mode (headless / VSCode remote), said in one line — deliberately not
+  // a prompt, which can only carry one path; the typed box beside it is the always-working door
+  // (R38), and it is left exactly as it was.
+  const pickSeveral = useCallback(async () => {
+    setNoDialog(false);
+    const picked = await pickOpenFilePaths({ title: 'Which recordings do you want to locate?' });
+    if (picked == null) {
+      setNoDialog(true);
+      return;
+    }
+    const paths = picked.map((p) => normalisePath(p)).filter((p) => forSubmit(p) !== '');
+    startBatch(
+      paths.map((p) => ({
+        label: basenameOf(p),
+        start: () => locateRegion(analysisId, forSubmit(p)),
+      })),
+    );
+  }, [analysisId, startBatch]);
+
   // ⭐ "Locate again" — re-run one row's placement from the project's own copy of its recording.
   // R46.6: the machine proposes again, so the row comes back `unconfirmed` with fresh evidence —
   // no are-you-sure, because the Confirm button IS the confirm step.
   const relocate = useCallback(
     async (r: RegionRecord) => {
-      if (running) return;
+      if (busy) return;
       setJobError(null);
       setBanner(null);
       try {
@@ -286,7 +394,7 @@ export function RegionsStep({
         setJobError(errMsg(e));
       }
     },
-    [analysisId, running],
+    [analysisId, busy],
   );
 
   const cancel = useCallback(async () => {
@@ -300,7 +408,7 @@ export function RegionsStep({
 
   // ── snap: the drop is posted, never assumed ─────────────────────────────────────────────────
   const snap = useCallback(async () => {
-    if (running || !selected) return;
+    if (busy || !selected) return;
     const at = drop && drop.id === selected.id ? drop : { x: selected.x, y: selected.y };
     setJobError(null);
     setBanner(null);
@@ -311,7 +419,7 @@ export function RegionsStep({
     } catch (e) {
       setJobError(errMsg(e));
     }
-  }, [analysisId, drop, running, selected]);
+  }, [analysisId, busy, drop, selected]);
 
   // ── the keyboard ────────────────────────────────────────────────────────────────────────────
   // `S` snaps, exactly as it does in the sweep. ⭐ R47 adds the compare keys: HOLD `Space` to swap
@@ -458,7 +566,7 @@ export function RegionsStep({
     if (next !== i) select(list[next]);
   };
   deleteKeyRef.current = () => {
-    if (selected && !running) void remove(selected);
+    if (selected && !busy) void remove(selected);
   };
 
   // The rail is the scroller (R47.1): however the selection moved, its row stays visible in it.
@@ -790,6 +898,56 @@ export function RegionsStep({
               </div>
             )}
 
+            {/* ⭐ THE QUEUE READOUT — visible whenever a several-at-once run is mid-walk. One job
+                at a time through the one lease; each landed row appears above as it lands. */}
+            {batch && (
+              <div data-testid="regions-queue">
+                <Panel title="Placing recordings" className={vm.progress}>
+                  <div className={styles.queueLine}>
+                    Placing {batch.placing} of {batch.total}
+                    {batch.total - batch.placing > 0
+                      ? ` — ${batch.total - batch.placing} waiting`
+                      : ''}
+                  </div>
+                  <div className={styles.queueActions}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      data-testid="regions-queue-stop"
+                      disabled={stopAfter}
+                      onClick={() => {
+                        stopRef.current = true;
+                        setStopAfter(true);
+                      }}
+                    >
+                      {stopAfter ? 'stopping after this one…' : 'Stop after this one'}
+                    </Button>
+                  </div>
+                </Panel>
+              </div>
+            )}
+
+            {/* ⛔ R46.7 — each file that could not be placed stays LISTED, with the server's own
+                sentence beside it. It outlives the queue: cleared only when a new run starts. */}
+            {batchFails.length > 0 && (
+              <div data-testid="regions-queue-fails">
+                <LiveWarning variant="loud">
+                  <strong>
+                    {batchFails.length === 1
+                      ? 'One recording could not be placed.'
+                      : `${batchFails.length} recordings could not be placed.`}
+                  </strong>
+                  <ul className={styles.failList}>
+                    {batchFails.map((f, i) => (
+                      <li key={`${f.file}-${i}`} data-testid="regions-queue-fail">
+                        <b>{f.file}</b> — {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </LiveWarning>
+              </div>
+            )}
+
             {/* The way on comes first once the document has earned it (R47): settling the chip's
                 seating is what the located recordings are FOR, and it has its own step now. */}
             {onNext && (
@@ -1001,7 +1159,7 @@ export function RegionsStep({
                   placeholder="paste the path of a fixed-field recording…"
                   data-testid="regions-path"
                   value={path}
-                  disabled={running}
+                  disabled={busy}
                   onChange={(e) => {
                     setPath(normalisePath(e.target.value));
                     setJobError(null);
@@ -1017,12 +1175,27 @@ export function RegionsStep({
                   variant="ghost"
                   size="sm"
                   onClick={() => void browse()}
-                  disabled={running}
+                  disabled={busy}
                   data-testid="regions-browse"
                 >
                   Browse…
                 </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void pickSeveral()}
+                  disabled={busy}
+                  title="Pick several recordings at once — they are located one after another"
+                  data-testid="regions-pick-files"
+                >
+                  Pick files…
+                </Button>
               </div>
+              {noDialog && (
+                <p className={styles.noDialog} data-testid="regions-no-dialog">
+                  there is no file dialog in this mode — paste one path at a time instead
+                </p>
+              )}
               <div className={styles.addRow}>
                 <input
                   className={cx(styles.input, styles.nameInput)}
@@ -1033,7 +1206,7 @@ export function RegionsStep({
                   placeholder="name (optional)"
                   data-testid="regions-name"
                   value={label}
-                  disabled={running}
+                  disabled={busy}
                   onChange={(e) => setLabel(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
@@ -1047,7 +1220,7 @@ export function RegionsStep({
                 <Button
                   variant="primary"
                   onClick={() => void locate()}
-                  disabled={running || forSubmit(path) === ''}
+                  disabled={busy || forSubmit(path) === ''}
                   data-testid="regions-locate"
                 >
                   Locate on the mosaic

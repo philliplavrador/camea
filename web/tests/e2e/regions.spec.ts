@@ -230,6 +230,8 @@ interface Stub {
   hold: boolean;
   /** ⛔ R46.7 — the POST itself refuses with an INSTRUCTION ("build first", "map first"). */
   refuse: string | null;
+  /** Per-path refusals for a several-at-once run: exact path → the sentence it gets. */
+  refuseFor: Record<string, string>;
   /** ⛔ R46.7 — the job runs and cannot place it: a refusal, in a sentence. */
   jobFail: string | null;
   /** What the finished job hands back (set by the locate/snap handlers). */
@@ -263,6 +265,7 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
     stale: opts.stale ?? false,
     hold: false,
     refuse: null,
+    refuseFor: {},
     jobFail: null,
     jobRegion: null,
     locates: [],
@@ -323,14 +326,15 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
   await page.route(new RegExp(`${ROUTES.regions}/locate$`), async (route, req) => {
     const body = req.postDataJSON() as { path: string; name?: string };
     stub.locates.push(body as unknown as Record<string, unknown>);
-    if (stub.refuse) {
+    const perFile = stub.refuseFor[body.path];
+    if (stub.refuse || perFile) {
       // The backend's own sentence, in the 4xx envelope the client turns into an ApiError message.
-      await json(route, { error: { code: 'refused', message: stub.refuse } }, 409);
+      await json(route, { error: { code: 'refused', message: stub.refuse ?? perFile } }, 409);
       return;
     }
     stub.jobRegion = craftedRegion({
       id: `r-${stub.regions.length + 1}`,
-      name: body.name?.trim() || 'survey.avi',
+      name: body.name?.trim() || body.path.split(/[\\/]/).pop() || 'survey.avi',
     });
     await json(route, { job_id: JOB_ID, kind: 'locate_region', state: 'queued' }, 202);
   });
@@ -637,6 +641,87 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(rowOf(page, 'r-1').getByTestId(TID.regionLocateAgain)).toBeDisabled();
     stub.hold = false;
     await expect(byId(page, TID.regionsProgress)).toHaveCount(0, { timeout: SHORT });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  // ⭐ SEVERAL AT ONCE (2026-08-16). The native multi-select feeds a client-driven queue through
+  // the one lease: a visible readout, per-file refusals that do NOT kill the queue, and a
+  // "Stop after this one". The single-path box stays exactly as it was (R38).
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+
+  test('several at once: the queue reads out, a refused file keeps its sentence, and the rest still land', async ({
+    page,
+  }) => {
+    const stub = await openRegions(page);
+    const SENTENCE =
+      'no confident placement: the best score was 0.21 — the recording may not overlap this mosaic';
+    stub.refuseFor['C:/recordings/two.avi'] = SENTENCE;
+    // the native dialog, stubbed: three files in one gesture
+    await page.route(/\/api\/dialog\/open-file$/, (r) =>
+      json(r, {
+        path: null,
+        paths: ['C:/recordings/one.avi', 'C:/recordings/two.avi', 'C:/recordings/three.avi'],
+      }),
+    );
+
+    // 1 · the first locate is held RUNNING so the readout is observable: 1 placing, 2 waiting
+    stub.hold = true;
+    await byId(page, TID.regionsPickFiles).click();
+    await expect(byId(page, TID.regionsQueue)).toBeVisible({ timeout: SHORT });
+    await expect(byId(page, TID.regionsQueue)).toContainText('Placing 1 of 3');
+    await expect(byId(page, TID.regionsQueue)).toContainText('2 waiting');
+    await expect(byId(page, TID.regionsProgress)).toBeVisible();
+    expect(stub.locates).toHaveLength(1);
+    expect(String(stub.locates[0].path)).toMatch(/one\.avi$/);
+
+    // 2 · release: one lands; two REFUSES with its sentence; three still runs and lands.
+    stub.hold = false;
+    await expect(byId(page, TID.regionsQueue)).toHaveCount(0, { timeout: 15_000 });
+    await expect(byId(page, TID.regionRow)).toHaveCount(2);
+    await expect(rowOf(page, 'r-1')).toContainText('one.avi');
+    await expect(rowOf(page, 'r-2')).toContainText('three.avi');
+    expect(stub.locates).toHaveLength(3);
+
+    // ⛔ R46.7 — the refused file stays LISTED with the backend's sentence, verbatim, after the
+    // queue is gone; and the queue was not killed by it.
+    const fails = byId(page, TID.regionsQueueFails);
+    await expect(fails).toBeVisible();
+    await expect(fails).toContainText('two.avi');
+    await expect(fails).toContainText(SENTENCE);
+    await expect(byId(page, TID.regionsQueueFail)).toHaveCount(1);
+
+    // 3 · the single-path flow is untouched (R38): the box is back, typeable, and Browse remains
+    await expect(byId(page, TID.regionsPath)).toBeEnabled();
+    await expect(byId(page, TID.regionsBrowse)).toBeEnabled();
+
+    // 4 · "Stop after this one": a fresh run, stopped during its first job — the rest are drained
+    stub.hold = true;
+    await byId(page, TID.regionsPickFiles).click();
+    await expect(byId(page, TID.regionsQueue)).toContainText('Placing 1 of 3', { timeout: SHORT });
+    const posted = stub.locates.length;
+    await byId(page, TID.regionsQueueStop).click();
+    await expect(byId(page, TID.regionsQueueStop)).toContainText(/stopping/i);
+    stub.hold = false;
+    await expect(byId(page, TID.regionsQueue)).toHaveCount(0, { timeout: SHORT });
+    expect(stub.locates).toHaveLength(posted); // nothing more went to the wire after the stop
+    await expect(byId(page, TID.regionRow)).toHaveCount(3); // the one already placing still landed
+  });
+
+  test('Pick files says so in one line when there is no dialog — the typed box stays the door (R38)', async ({
+    page,
+  }) => {
+    await openRegions(page);
+    // headless: the dialog route answers 501, and pickOpenFilePaths deliberately has NO prompt
+    // fallback (a prompt carries one path, not a list)
+    await page.route(/\/api\/dialog\/open-file$/, (r) =>
+      json(r, { error: { code: 'unsupported', message: 'no window' } }, 501),
+    );
+    await byId(page, TID.regionsPickFiles).click();
+    const note = byId(page, TID.regionsNoDialog);
+    await expect(note).toBeVisible({ timeout: SHORT });
+    await expect(note).toContainText(/paste/i);
+    await expect(byId(page, TID.regionsQueue)).toHaveCount(0);
+    await expect(byId(page, TID.regionsPath)).toBeEnabled();
   });
 
   // ───────────────────────────────────────────────────────────────────────────────────────────

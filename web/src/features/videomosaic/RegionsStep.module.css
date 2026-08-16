@@ -61,6 +61,36 @@
   font-family: var(--font-sans);
 }
 
+/* One line, said once: this mode has no native dialog, and the typed box is the door (R38). */
+.noDialog {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font: 500 var(--fs-micro) / 1.4 var(--font-sans);
+}
+
+/* ── the several-at-once queue ─────────────────────────────────────────────── */
+
+.queueLine {
+  font: 600 var(--fs-readout) / 1.4 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--data);
+}
+
+.queueActions {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Each refused file with its sentence, verbatim — a list, because there may be several. */
+.failList {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 /* ── the list ─────────────────────────────────────────────────────────────── */
 
 .list {
