@@ -57,6 +57,7 @@ import { ApiError } from '../../api/client';
 import { TRACE_PAD, TraceChart } from '../../core/trace/TraceChart';
 import { TraceNav } from '../../core/trace/TraceNav';
 import { readout } from '../../core/trace/readout';
+import { nextSpike, prevSpike } from '../../core/trace/spikeStep';
 import { useTimeBrush } from '../../core/trace/useTimeBrush';
 import * as vs from '../../core/trace/viewStack';
 import { Button, LiveWarning, Panel } from '../../design';
@@ -249,6 +250,46 @@ export function MeaTracePanel({
 
   const onSelect = useCallback((v: vs.TimeView) => go(vs.push(stack, v)), [go, stack]);
 
+  /** One clamp shared by the keys and spike stepping, so they cannot disagree. */
+  const clampTo = useCallback(
+    (t0: number, t1: number): vs.TimeView => {
+      const w0 = whole?.t0_s ?? 0;
+      const w1 = whole?.t1_s ?? 0;
+      const w = Math.min(Math.max(t1 - t0, minSpanS), w1 - w0);
+      const a = Math.min(Math.max(t0, w0), w1 - w);
+      return { t0: a, t1: a + w };
+    },
+    [whole, minSpanS],
+  );
+
+  // ── spike to spike — same behaviour as the Analyze MEA viewer, same core helper ────────────
+  // ⭐ Steps against the WHOLE recording's spike list (`whole.spikes` covers the full served
+  // range), so a jump lands far beyond the loaded close-up. A jump is a push; Back undoes it.
+  const allSpikes = useMemo(() => whole?.spikes ?? [], [whole]);
+  const stepSpike = useCallback(
+    (dir: 1 | -1) => {
+      if (!view || !whole) return;
+      const span = view.t1 - view.t0;
+      const mid = (view.t0 + view.t1) / 2;
+      const eps = Math.max(1e-9, span * 1e-6);
+      const t = dir > 0 ? nextSpike(allSpikes, mid, eps) : prevSpike(allSpikes, mid, eps);
+      if (t == null) return;
+      const v = clampTo(t - span / 2, t + span / 2);
+      if (v.t0 === view.t0 && v.t1 === view.t1) return;
+      go(vs.push(stack, v));
+    },
+    [allSpikes, clampTo, go, stack, view, whole],
+  );
+  const spikeSteps = useMemo(() => {
+    if (!view) return { prev: false, next: false };
+    const mid = (view.t0 + view.t1) / 2;
+    const eps = Math.max(1e-9, (view.t1 - view.t0) * 1e-6);
+    return {
+      prev: prevSpike(allSpikes, mid, eps) != null,
+      next: nextSpike(allSpikes, mid, eps) != null,
+    };
+  }, [allSpikes, view]);
+
   const brush = useTimeBrush({
     t0: view?.t0 ?? 0,
     t1: view?.t1 ?? 0,
@@ -273,14 +314,15 @@ export function MeaTracePanel({
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (!view || !whole) return;
-      const w0 = whole.t0_s ?? 0;
-      const w1 = whole.t1_s ?? 0;
       const span = view.t1 - view.t0;
-      const clampTo = (t0: number, t1: number): vs.TimeView => {
-        const w = Math.min(Math.max(t1 - t0, minSpanS), w1 - w0);
-        const a = Math.min(Math.max(t0, w0), w1 - w);
-        return { t0: a, t1: a + w };
-      };
+      // ⭐ `n`/`p` step spike to spike — the same two keys as the Analyze MEA viewer. Scoped to
+      // the focused close-up, so R45.3's arrow keys and R47.3's Space on the surrounding screens
+      // are untouched; `0` stays free (R12.6) and Esc still belongs to the drag (R14).
+      if (e.key === 'n' || e.key === 'N' || e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        stepSpike(e.key === 'n' || e.key === 'N' ? 1 : -1);
+        return;
+      }
       // ⚠️ **A KEY THAT CANNOT MOVE MUST PUSH NOTHING** — at a boundary `clampTo` returns the view
       // he is already on, and pushing it would light up Back and bury real history in duplicates.
       const moved = (v: vs.TimeView): vs.ViewStack | null =>
@@ -304,7 +346,7 @@ export function MeaTracePanel({
         go(next);
       }
     },
-    [go, minSpanS, stack, view, whole],
+    [clampTo, go, stack, stepSpike, view, whole],
   );
 
   // ── Ctrl+wheel zooms about the pointer ────────────────────────────────────────────────────
@@ -374,7 +416,9 @@ export function MeaTracePanel({
         'are looking at closely. Drag sideways across either picture to zoom into that stretch; ' +
         'Back walks you out again, like the back button in a browser. Arrow keys move by half a ' +
         'screen, + and - zoom, Backspace goes back, and holding Ctrl while you scroll zooms ' +
-        'about the pointer.\n' +
+        'about the pointer. Prev spike and Next spike jump the view to the nearest detected ' +
+        'spike on either side, anywhere in the recording, without changing the zoom — N and P ' +
+        'do the same from the keyboard, and Back undoes a jump.\n' +
         '\n' +
         'Only the electrodes that were wired up during the recording have a trace — a few ' +
         'hundred out of the many thousands on the chip. Clicking any of the others correctly ' +
@@ -532,6 +576,10 @@ export function MeaTracePanel({
               onHome={() => go(vs.home(stack))}
               onBack={() => go(vs.back(stack))}
               onForward={() => go(vs.forward(stack))}
+              onPrevSpike={() => stepSpike(-1)}
+              onNextSpike={() => stepSpike(1)}
+              canPrevSpike={spikeSteps.prev}
+              canNextSpike={spikeSteps.next}
             />
 
             <dl className={styles.facts}>

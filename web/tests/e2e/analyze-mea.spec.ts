@@ -1131,6 +1131,48 @@ test('a plain click is not a zoom, and leaves no history behind it', async ({ pa
   }
 });
 
+test('Next spike recenters the view at the same width — and Back undoes the jump', async ({
+  page,
+}) => {
+  // ⭐ Spike stepping (2026-08-16). The step consults the WHOLE recording's spike list (the same
+  // one the strip's density row draws), so a jump works beyond the loaded close-up; the view
+  // recenters on the target at its current width and pushes history like any other move.
+  const id = await openFirstRecording(page, 'spike stepping');
+  try {
+    await pickFirstPad(page); // channel 0 — the fixture's busiest pad, so spikes exist (a
+    //                           FIXTURE fact, permitted in tests/)
+    const whole = await posText(page);
+
+    // Zoom in first: on the opening view the centre is mid-recording and a whole-width window
+    // cannot recenter, so the honest starting point is a narrow one.
+    await dragAcross(page, TID.meaTraceDetail, 0.05, 0.25);
+    const zoomed = await posChangedFrom(page, whole);
+
+    const next = page.getByTestId(TID.meaTraceNextSpike);
+    await expect(next).toBeEnabled();
+    await next.click();
+    const jumped = await posChangedFrom(page, zoomed);
+    // 🔴 The width did NOT change — a jump is a recentring, never a zoom.
+    expect(widthOf(jumped)).toBeCloseTo(widthOf(zoomed), 2);
+
+    // Back undoes the jump exactly, like any other move.
+    await page.getByTestId(TID.meaTraceBack).click();
+    await expect.poll(() => posText(page), { timeout: SHORT }).toBe(zoomed);
+
+    // ...and the keyboard spells the same gesture: N forward, P back again.
+    await page.getByTestId(TID.meaTraceDetail).focus();
+    await page.keyboard.press('n');
+    const byKey = await posChangedFrom(page, zoomed);
+    expect(widthOf(byKey)).toBeCloseTo(widthOf(zoomed), 2);
+    await page.keyboard.press('p');
+    await expect
+      .poll(() => posText(page).then(widthOf), { timeout: SHORT })
+      .toBeCloseTo(widthOf(zoomed), 2);
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
 // =================================================================================================
 // 7 · the chip-map quality-of-life bundle (2026-08-15)
 // =================================================================================================

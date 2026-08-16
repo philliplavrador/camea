@@ -189,6 +189,10 @@ export const TID = {
   meaTraceHome: 'mea-trace-home', //        "Whole recording" — ⭐ itself undoable with one Back
   meaTraceBack: 'mea-trace-back', //        "← Back"; DISABLED, never hidden, at the top of history
   meaTraceForward: 'mea-trace-forward', //  "Forward →"; disabled until a Back has been taken
+  meaTracePrevSpike: 'mea-trace-prev-spike', // recenter on the nearest spike leftward, current
+  //                                        width; steps the WHOLE recording's spike list, so a
+  //                                        jump works beyond the loaded close-up. Keys: P / N.
+  meaTraceNextSpike: 'mea-trace-next-spike', // …and rightward. Both DISABLED past the last spike.
   meaTracePos: 'mea-trace-pos', //          the readout: "0.00–3.00 s of 3 s · 3.00 s wide · N spikes
   //                                        in view" — the range the SERVER SERVED, not the one asked
   meaTraceSaid: 'mea-trace-said', //        visually hidden role=status: a keyboard zoom is announced

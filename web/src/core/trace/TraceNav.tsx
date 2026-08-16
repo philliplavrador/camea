@@ -33,6 +33,17 @@ export interface TraceNavProps {
   onHome: () => void;
   onBack: () => void;
   onForward: () => void;
+  /**
+   * ⭐ Spike stepping (2026-08-16): recenter the view on the nearest detected spike either side,
+   * at the current width. Optional WITH the enablement flags — a panel that passes neither renders
+   * exactly the row it always did, which is what keeps any third consumer untouched. The panels
+   * step against the WHOLE recording's spike list (`core/trace/spikeStep`), so a jump works far
+   * beyond the loaded close-up.
+   */
+  onPrevSpike?: () => void;
+  onNextSpike?: () => void;
+  canPrevSpike?: boolean;
+  canNextSpike?: boolean;
 }
 
 export function TraceNav({
@@ -45,6 +56,10 @@ export function TraceNav({
   onHome,
   onBack,
   onForward,
+  onPrevSpike,
+  onNextSpike,
+  canPrevSpike = false,
+  canNextSpike = false,
 }: TraceNavProps): React.JSX.Element {
   // ⚠️ The buttons on one row and the readout on its own, rather than all four in a line: the
   // readout grows as he zooms in (it gains decimals, deliberately — see `readout`), and a row that
@@ -74,6 +89,29 @@ export function TraceNav({
         >
           Forward →
         </Button>
+        {/* ⚠️ DISABLED, never hidden, at either end of the spike table — same rule as Back. */}
+        {onPrevSpike && onNextSpike && (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onPrevSpike}
+              disabled={!canPrevSpike}
+              data-testid="mea-trace-prev-spike"
+            >
+              Prev spike
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onNextSpike}
+              disabled={!canNextSpike}
+              data-testid="mea-trace-next-spike"
+            >
+              Next spike
+            </Button>
+          </>
+        )}
       </div>
       <span className={styles.pos} data-testid="mea-trace-pos">
         {readout(t0, t1, duration, nSpikes)}

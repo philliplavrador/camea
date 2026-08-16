@@ -52,6 +52,7 @@ import { TRACE_PAD, TraceChart } from '../../core/trace/TraceChart';
 // their second consumer, and a feature may not import another feature's files.
 import { TraceNav } from '../../core/trace/TraceNav';
 import { readout } from '../../core/trace/readout';
+import { nextSpike, prevSpike } from '../../core/trace/spikeStep';
 import { useTimeBrush } from '../../core/trace/useTimeBrush';
 import * as vs from '../../core/trace/viewStack';
 import { Button, LiveWarning, Panel } from '../../design';
@@ -257,6 +258,49 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
     [go, stack],
   );
 
+  /** A candidate range, clamped to the recording and the zoom floor. Shared by the keys, the
+   *  wheel could use it too, and spike stepping — one clamp, so they cannot disagree. */
+  const clampTo = useCallback(
+    (t0: number, t1: number): vs.TimeView => {
+      const w0 = whole?.t0_s ?? 0;
+      const w1 = whole?.t1_s ?? 0;
+      const w = Math.min(Math.max(t1 - t0, minSpanS), w1 - w0);
+      const a = Math.min(Math.max(t0, w0), w1 - w);
+      return { t0: a, t1: a + w };
+    },
+    [whole, minSpanS],
+  );
+
+  // ── spike to spike ─────────────────────────────────────────────────────────────────────────
+  // ⭐ Steps against the WHOLE recording's spike list (`whole.spikes` covers the full served
+  // range), so a jump lands far beyond the loaded close-up. The view recenters on the target at
+  // its current width and PUSHES — Back undoes a jump like any other move.
+  const allSpikes = useMemo(() => whole?.spikes ?? [], [whole]);
+  const stepSpike = useCallback(
+    (dir: 1 | -1) => {
+      if (!view || !whole) return;
+      const span = view.t1 - view.t0;
+      const mid = (view.t0 + view.t1) / 2;
+      const eps = Math.max(1e-9, span * 1e-6);
+      const t = dir > 0 ? nextSpike(allSpikes, mid, eps) : prevSpike(allSpikes, mid, eps);
+      if (t == null) return;
+      const v = clampTo(t - span / 2, t + span / 2);
+      // Pinned at an edge the jump may resolve to the view he is already on — push nothing.
+      if (v.t0 === view.t0 && v.t1 === view.t1) return;
+      go(vs.push(stack, v));
+    },
+    [allSpikes, clampTo, go, stack, view, whole],
+  );
+  const spikeSteps = useMemo(() => {
+    if (!view) return { prev: false, next: false };
+    const mid = (view.t0 + view.t1) / 2;
+    const eps = Math.max(1e-9, (view.t1 - view.t0) * 1e-6);
+    return {
+      prev: prevSpike(allSpikes, mid, eps) != null,
+      next: nextSpike(allSpikes, mid, eps) != null,
+    };
+  }, [allSpikes, view]);
+
   const brush = useTimeBrush({
     t0: view?.t0 ?? 0,
     t1: view?.t1 ?? 0,
@@ -282,11 +326,13 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (!view || !whole) return;
       const span = view.t1 - view.t0;
-      const clampTo = (t0: number, t1: number): vs.TimeView => {
-        const w = Math.min(Math.max(t1 - t0, minSpanS), whole.t1_s - whole.t0_s);
-        const a = Math.min(Math.max(t0, whole.t0_s), whole.t1_s - w);
-        return { t0: a, t1: a + w };
-      };
+      // ⭐ `n`/`p` step spike to spike (2026-08-16). Free keys on this panel: arrows pan, +/− zoom,
+      // Backspace/Home are history, `0` is untouchable (R12.6) and Esc belongs to the drag (R14).
+      if (e.key === 'n' || e.key === 'N' || e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        stepSpike(e.key === 'n' || e.key === 'N' ? 1 : -1);
+        return;
+      }
       // ⚠️ **A KEY THAT CANNOT MOVE MUST PUSH NOTHING.** `vs.push` always returns a new stack, so
       // `next !== stack` never catches a no-op — and at a boundary `clampTo` returns the view he is
       // already on. Pressing ArrowLeft on the opening view (which spans the whole recording, i.e.
@@ -315,7 +361,7 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
         go(next);
       }
     },
-    [go, minSpanS, stack, view, whole],
+    [clampTo, go, stack, stepSpike, view, whole],
   );
 
   // ── Ctrl+wheel zooms about the pointer ────────────────────────────────────────────────────
@@ -380,7 +426,11 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
         'so you cannot zoom by accident.\n' +
         '\n' +
         'Arrow keys move by half a screen, + and - zoom, Backspace goes back, and holding Ctrl ' +
-        'while you scroll zooms about the pointer.'
+        'while you scroll zooms about the pointer.\n' +
+        '\n' +
+        'Prev spike and Next spike jump the view to the nearest detected spike on either side, ' +
+        'anywhere in the recording, without changing the zoom — N and P do the same from the ' +
+        'keyboard, and Back undoes a jump.'
       }
     >
       <div className={styles.body}>
@@ -558,6 +608,10 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
               onHome={() => go(vs.home(stack))}
               onBack={() => go(vs.back(stack))}
               onForward={() => go(vs.forward(stack))}
+              onPrevSpike={() => stepSpike(-1)}
+              onNextSpike={() => stepSpike(1)}
+              canPrevSpike={spikeSteps.prev}
+              canNextSpike={spikeSteps.next}
             />
 
             {/* Where the keystroke happened, so a keyboard-only zoom is announced. The obligation
