@@ -75,6 +75,16 @@ export function OpenRecording({ analysisId, recordingId, onClose }: OpenRecordin
             {layout.n_spikes.toLocaleString()} spikes
           </span>
         )}
+        {/* ⭐ MAXWELL §7.6: the file's total counts every spike the detector logged; the chip map
+            can only colour the ones whose channel is in the routed mapping, and on real files the
+            two genuinely differ (22,367 vs 15,688 on one of his). Said whenever non-zero, beside
+            the total — ⛔ never "fixed" by printing only the placed total, which §7.6 forbids. */}
+        {layout && activity && (activity.n_spikes_unplaced ?? 0) > 0 && (
+          <span className={styles.unplaced} data-testid="mea-open-unplaced">
+            {(activity.n_spikes_unplaced ?? 0).toLocaleString()} of them could not be placed on the
+            chip
+          </span>
+        )}
       </header>
 
       {/* 🔴 A recording that has lost its file refuses to open and SAYS SO, naming it. Never an

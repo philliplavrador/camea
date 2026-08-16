@@ -140,6 +140,8 @@ export const TID = {
   meaOpen: 'mea-open-recording', //         the viewer root
   meaOpenLabel: 'mea-open-label',
   meaOpenFacts: 'mea-open-facts',
+  meaOpenUnplaced: 'mea-open-unplaced', // "N of them could not be placed on the chip" — MAXWELL
+  //                                        §7.6; shown ONLY when the file total exceeds the pads'
   meaOpenError: 'mea-open-error', //        🔴 refused BY NAME — never an empty chip map
   meaCloseRecording: 'mea-close-recording',
   meaChipMap: 'mea-chip-map',

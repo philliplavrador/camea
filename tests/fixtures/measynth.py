@@ -66,7 +66,14 @@ def routed() -> list[tuple[int, int]]:
     return list(_ROUTED)
 
 
-def _spike_table(n_samples: int, seed: int) -> np.ndarray:
+#: A channel id deliberately OUTSIDE the routed mapping (routed ids are 0..len(_ROUTED)-1).
+#: Real MaxWell files log spikes on such channels (docs/MAXWELL.md §5.3: 0%–29.86% of a file's
+#: table), and `write_recording(unplaced=N)` reproduces that so the "N could not be placed on the
+#: chip" line is testable on a synthetic file.
+UNROUTED_CHANNEL = 99
+
+
+def _spike_table(n_samples: int, seed: int, unplaced: int = 0) -> np.ndarray:
     """A handful of spikes, unevenly spread across the routed channels.
 
     ⭐ **Uneven on purpose.** Plan 003 colours the chip map by spikes-per-second and needs a live end
@@ -74,9 +81,16 @@ def _spike_table(n_samples: int, seed: int) -> np.ndarray:
     same colour and the test would pass on a broken ramp. Channel 0 is busiest, and the last routed
     channel is deliberately **silent** — a pad that was recorded and heard nothing is a different
     fact from a pad that was never routed, and both must render as facts.
+
+    `unplaced` adds that many spikes on :data:`UNROUTED_CHANNEL` — a channel that is not in the
+    mapping at all, which is what makes a file total genuinely larger than the pads' sum.
     """
     rng = np.random.default_rng(seed)
     rows: list[tuple[int, int, float]] = []
+    if unplaced:
+        frames = rng.integers(1, n_samples, size=unplaced)
+        amps = -rng.uniform(20.0, 120.0, size=unplaced)
+        rows += [(int(f), UNROUTED_CHANNEL, float(a)) for f, a in zip(frames, amps, strict=True)]
     for ch, _el in _ROUTED[:-1]:                       # the last one stays silent
         # Poisson around a rate that falls off across the array, so the counts differ from seed to
         # seed (two recordings on one shelf must not show the same number) while the busy end and
@@ -102,7 +116,7 @@ _FIRST_FRAME = 1_000_000
 
 
 def write_recording(path: str | Path, *, n_samples: int = 60_000, run_id: str = "",
-                    seed: int = 7) -> Path:
+                    seed: int = 7, unplaced: int = 0) -> Path:
     """Write one synthetic ``data.raw.h5`` at `path`, creating its parents. -> the path.
 
     `n_samples` at :data:`FS_HZ` is the duration the shelf shows (60,000 = 3.0 s). It costs nothing
@@ -146,7 +160,7 @@ def write_recording(path: str | Path, *, n_samples: int = 60_000, run_id: str = 
         rg.create_dataset("raw", shape=(n_ch, n_samples), dtype="<u2",
                           chunks=(n_ch, min(n_samples, 4096)))
 
-        g["spikes"] = _spike_table(n_samples, seed)
+        g["spikes"] = _spike_table(n_samples, seed, unplaced)
         f["assay/run_id"] = np.array([(run_id or p.parent.name).encode()])
     return p
 
@@ -168,5 +182,5 @@ def write_session(root: str | Path, *, plate: str = "P0000", assay: str = "Netwo
             for i, r in enumerate(runs)]
 
 
-__all__ = ["FS_HZ", "LSB_V", "N_ROWS", "PITCH_UM", "STRIDE", "routed", "write_recording",
-           "write_session"]
+__all__ = ["FS_HZ", "LSB_V", "N_ROWS", "PITCH_UM", "STRIDE", "UNROUTED_CHANNEL", "routed",
+           "write_recording", "write_session"]

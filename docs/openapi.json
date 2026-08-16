@@ -2832,6 +2832,45 @@
         }
       }
     },
+    "/api/videomosaic/regions/relocate": {
+      "post": {
+        "summary": "Post Relocate Region",
+        "description": "`POST /api/videomosaic/regions/relocate` -> **202 `JobRef`**. *\"Locate this one again\"* \u2014\nre-run one region's placement from the project's OWN copy of its recording.\n\n\u2b50 The video is resolved by NAME inside `<project>/videos/` (R46.9: the project holds its\nfiles). \u26d4 Never by the absolute path the document happens to remember \u2014 that string goes\nstale the moment a project store moves, while the filename inside `videos/` moves WITH the\nproject.\n\n\u2b50 R46.6: the re-located region is machine-proposed again. It lands `unconfirmed` with fresh\nevidence and its still rewritten, whatever it was before \u2014 the Confirm button is the one\nconfirm step, so there is no are-you-sure here.",
+        "operationId": "post_relocate_region_api_videomosaic_regions_relocate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelocateRegionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRef"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/videomosaic/regions": {
       "patch": {
         "summary": "Patch Region",
@@ -7769,6 +7808,12 @@
             "title": "Max Rate Hz",
             "description": "The busiest pad in THIS recording. \u26d4 Derived every time, never a constant: see the class docstring.",
             "default": 0.0
+          },
+          "n_spikes_unplaced": {
+            "type": "integer",
+            "title": "N Spikes Unplaced",
+            "description": "\u2b50 **Spikes that are on no pad in `pads`** \u2014 the total minus the pads' own sum, derived on every request and never stored. Real on his files (docs/MAXWELL.md \u00a75.3 measured 0%\u201329.86%; one attached recording logs 22,367 spikes of which only 15,688 sit on a mapped channel): the detector can log spikes on channels outside the routed mapping. \u26d4 The UI must say this number beside the file total whenever it is non-zero \u2014 \u00a77.6 explicitly forbids 'fixing' the mismatch by printing only the placed total, because that hides a fact about the file.",
+            "default": 0
           }
         },
         "type": "object",
@@ -10246,6 +10291,24 @@
               }
             ],
             "title": "Elapsed Ms"
+          },
+          "snap_radius_px": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snap Radius Px",
+            "description": "The half-width the last snap ACTUALLY searched, in mosaic px (after the server's clamp) \u2014 recorded so the result can say what was looked at, not what was asked for."
+          },
+          "stale": {
+            "type": "boolean",
+            "title": "Stale",
+            "description": "DERIVED when served, never stored: this region's `source_stamp` is not the current build's `built_at` (R46.10, per row). The payload-level `stale` says whether ANY row is; this says which.",
+            "default": false
           }
         },
         "additionalProperties": true,
@@ -10504,6 +10567,26 @@
         ],
         "title": "RejectedMatch",
         "description": "What the matcher wanted, on a tile the app **diverted** to the solver's answer. It is the\n*evidence for* the divert and the QC report needs it in full."
+      },
+      "RelocateRegionRequest": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "region_id": {
+            "type": "string",
+            "title": "Region Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "region_id"
+        ],
+        "title": "RelocateRegionRequest",
+        "description": "`POST /api/videomosaic/regions/relocate` \u2014 *\"locate this one again.\"* Re-runs a region's\nplacement from the project's OWN copy of its recording, resolved by NAME inside\n`<project>/videos/` (R46.9) \u2014 never by a remembered absolute path, which goes stale the\nmoment a project moves. \u2b50 R46.6: the result is machine-proposed again \u2014 `unconfirmed`,\nfresh evidence, still rewritten, whatever the region was before."
       },
       "RenameAnalysisRequest": {
         "properties": {

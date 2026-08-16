@@ -664,6 +664,30 @@ def test_activity_counts_add_up_to_the_recordings_own_total(client, session):
     aid, rid = _opened(client, session)
     act = _activity(client, aid, rid)
     assert sum(p["n_spikes"] for p in act["pads"]) == act["n_spikes"] > 0
+    # Every spike in this fixture is on a routed channel, so nothing is unplaced — and the field
+    # says so with a zero rather than being absent.
+    assert act["n_spikes_unplaced"] == 0
+
+
+def test_spikes_on_no_shown_pad_are_counted_and_the_total_is_untouched(client, tmp_path, measynth):
+    """🔴 **MAXWELL §7.6 — the number that was being printed wrong.** A real file's total counts
+    every spike the detector logged; the pads' tally omits every spike on a channel outside the
+    routed mapping (measured 22,367 vs 15,688 on one of his). The route must serve the difference
+    explicitly, derived — and ⛔ must NOT reconcile the header by shrinking the file total, which
+    §7.6 forbids by name."""
+    p = measynth.write_recording(tmp_path / "MEA" / "P0000" / "Network" / "000009" / "data.raw.h5",
+                                 unplaced=7)
+    a = _create(client, "unplaced", paths=[p.as_posix()])
+    aid = a["analysis_id"]
+    rid = _shelf(client, aid)[0]["id"]
+
+    act = _activity(client, aid, rid)
+    placed = sum(q["n_spikes"] for q in act["pads"])
+    assert act["n_spikes_unplaced"] == 7
+    assert act["n_spikes"] == placed + 7, "the file total stays the file's own"
+    # The layout header states the same file total — the two surfaces must not disagree.
+    lay = _layout(client, aid, rid)
+    assert lay["n_spikes"] == act["n_spikes"]
 
 
 def test_activity_rate_is_spikes_per_second_of_this_recording(client, session):

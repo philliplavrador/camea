@@ -2668,6 +2668,14 @@ class RegionRecord(Open):
     moved_px: float | None = None
     snap_margin: float | None = None
     elapsed_ms: float | None = None
+    snap_radius_px: int | None = Field(
+        default=None, description="The half-width the last snap ACTUALLY searched, in mosaic px "
+        "(after the server's clamp) — recorded so the result can say what was looked at, not "
+        "what was asked for.")
+    stale: bool = Field(
+        default=False, description="DERIVED when served, never stored: this region's "
+        "`source_stamp` is not the current build's `built_at` (R46.10, per row). The "
+        "payload-level `stale` says whether ANY row is; this says which.")
 
 
 class LocateRegionRequest(Req):
@@ -2720,6 +2728,17 @@ class LocateRegionResult(Res):
     analysis_id: str
     region: RegionRecord
     doc: Document | None = None
+
+
+class RelocateRegionRequest(Req):
+    """`POST /api/videomosaic/regions/relocate` — *"locate this one again."* Re-runs a region's
+    placement from the project's OWN copy of its recording, resolved by NAME inside
+    `<project>/videos/` (R46.9) — never by a remembered absolute path, which goes stale the
+    moment a project moves. ⭐ R46.6: the result is machine-proposed again — `unconfirmed`,
+    fresh evidence, still rewritten, whatever the region was before."""
+
+    analysis_id: str
+    region_id: str
 
 
 # =================================================================================================
@@ -3074,6 +3093,16 @@ class MeaChipActivity(Res):
         description="The busiest pad in THIS recording. ⛔ Derived every time, never a constant: "
         "see the class docstring.",
     )
+    n_spikes_unplaced: int = Field(
+        default=0,
+        description="⭐ **Spikes that are on no pad in `pads`** — the total minus the pads' own "
+        "sum, derived on every request and never stored. Real on his files (docs/MAXWELL.md §5.3 "
+        "measured 0%–29.86%; one attached recording logs 22,367 spikes of which only 15,688 sit on "
+        "a mapped channel): the detector can log spikes on channels outside the routed mapping. "
+        "⛔ The UI must say this number beside the file total whenever it is non-zero — §7.6 "
+        "explicitly forbids 'fixing' the mismatch by printing only the placed total, because that "
+        "hides a fact about the file.",
+    )
 
 
 class MeaChannelTrace(Res):
@@ -3237,6 +3266,7 @@ __all__ = [
     "RegionUpdateRequest",
     "RegionZoom",
     "RegionsPayload",
+    "RelocateRegionRequest",
     "SnapRegionRequest",
     # electrodes (both features)
     "ElectrodeDevice",

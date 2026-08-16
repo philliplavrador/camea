@@ -746,6 +746,12 @@ def get_mea_activity(analysis_id: str, recording_id: str) -> dict:
     try:
         info = rec.info()
         act = rec.activity()
+        # ⭐ **THE SPIKES ON NO SHOWN PAD, COUNTED OUT LOUD** (docs/MAXWELL.md §7.6). The file's
+        # total counts every spike the detector logged; the pads' tally counts only those whose
+        # channel is in the routed mapping, and on real files the two genuinely differ (§5.3:
+        # 0%–29.86%). Derived here, every request, never stored — and ⛔ never "fixed" by
+        # returning only the placed total, which would hide a fact about the file.
+        placed = int(act["n_spikes"].sum()) if act.size else 0
         return {
             "analysis_id": analysis_id,
             "recording_id": recording_id,
@@ -756,6 +762,7 @@ def get_mea_activity(analysis_id: str, recording_id: str) -> dict:
             "n_pads": int(act.size),
             "n_silent": int((act["n_spikes"] == 0).sum()),
             "max_rate_hz": float(act["rate_hz"].max()) if act.size else 0.0,
+            "n_spikes_unplaced": info.n_spikes - placed,
         }
     finally:
         rec.close()

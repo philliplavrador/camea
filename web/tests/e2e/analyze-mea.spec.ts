@@ -642,6 +642,44 @@ test('picking a recording draws the chip, and the whole chip is in the picture',
   }
 });
 
+test('spikes the chip cannot place are said in the header — and only when there are any', async ({
+  page,
+}) => {
+  // 🔴 MAXWELL §7.6: the header's file total and the chip's coloured tally genuinely differ on real
+  // files (22,367 vs 15,688 on one of his) because the detector logs spikes on channels outside the
+  // routed mapping. The difference must be SAID beside the total — and ⛔ never "fixed" by printing
+  // only the placed total. The fixture places every spike, so first: no line on an honest zero.
+  const id = await openFirstRecording(page, 'unplaced spikes');
+  try {
+    await expect(page.getByTestId(TID.meaOpenFacts)).toContainText('spikes');
+    await expect(page.getByTestId(TID.meaOpenUnplaced)).toHaveCount(0);
+  } finally {
+    await deleteProject(page, id);
+  }
+
+  // Now the same screen with a file that HAS unplaced spikes — the real payload, with only the
+  // derived count raised, so the assertion is about the rendering of a state the backend produces.
+  await page.route('**/api/mea/*/recordings/*/activity**', async (route) => {
+    const real = await route.fetch();
+    const body = await real.json();
+    body.n_spikes_unplaced = 6679;
+    await route.fulfill({ response: real, json: body });
+  });
+  const id2 = await openFirstRecording(page, 'unplaced spikes said');
+  try {
+    const line = page.getByTestId(TID.meaOpenUnplaced);
+    await expect(line).toBeVisible({ timeout: SHORT });
+    await expect(line).toContainText('6,679');
+    await expect(line).toContainText('could not be placed on the chip');
+    // ⛔ The file total is still the file's own — the mismatch is stated, not reconciled away.
+    await expect(page.getByTestId(TID.meaOpenFacts)).toContainText('spikes');
+    await expect(line).not.toContainText(/dead|failed|broken|inactive/i);
+  } finally {
+    await page.unrouteAll();
+    await deleteProject(page, id2);
+  }
+});
+
 test('the legend names the colours in real units, and says what a ring means', async ({ page }) => {
   const id = await openFirstRecording(page, 'legend');
   try {

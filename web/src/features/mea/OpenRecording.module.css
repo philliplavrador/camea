@@ -33,6 +33,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The spikes the chip map cannot place (MAXWELL §7.6). A fact stated beside the total it
+   qualifies — same size as the facts, slightly warmer so the mismatch is not missable. */
+.unplaced {
+  font-size: var(--fs-readout);
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+}
+
 .split {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

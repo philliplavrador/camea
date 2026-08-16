@@ -1562,6 +1562,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/videomosaic/regions/relocate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post Relocate Region
+         * @description `POST /api/videomosaic/regions/relocate` -> **202 `JobRef`**. *"Locate this one again"* —
+         *     re-run one region's placement from the project's OWN copy of its recording.
+         *
+         *     ⭐ The video is resolved by NAME inside `<project>/videos/` (R46.9: the project holds its
+         *     files). ⛔ Never by the absolute path the document happens to remember — that string goes
+         *     stale the moment a project store moves, while the filename inside `videos/` moves WITH the
+         *     project.
+         *
+         *     ⭐ R46.6: the re-located region is machine-proposed again. It lands `unconfirmed` with fresh
+         *     evidence and its still rewritten, whatever it was before — the Confirm button is the one
+         *     confirm step, so there is no are-you-sure here.
+         */
+        post: operations["post_relocate_region_api_videomosaic_regions_relocate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/videomosaic/regions": {
         parameters: {
             query?: never;
@@ -4091,6 +4121,12 @@ export interface components {
              * @default 0
              */
             max_rate_hz: number;
+            /**
+             * N Spikes Unplaced
+             * @description ⭐ **Spikes that are on no pad in `pads`** — the total minus the pads' own sum, derived on every request and never stored. Real on his files (docs/MAXWELL.md §5.3 measured 0%–29.86%; one attached recording logs 22,367 spikes of which only 15,688 sit on a mapped channel): the detector can log spikes on channels outside the routed mapping. ⛔ The UI must say this number beside the file total whenever it is non-zero — §7.6 explicitly forbids 'fixing' the mismatch by printing only the placed total, because that hides a fact about the file.
+             * @default 0
+             */
+            n_spikes_unplaced: number;
         };
         /**
          * MeaChipLayout
@@ -5488,6 +5524,17 @@ export interface components {
             snap_margin?: number | null;
             /** Elapsed Ms */
             elapsed_ms?: number | null;
+            /**
+             * Snap Radius Px
+             * @description The half-width the last snap ACTUALLY searched, in mosaic px (after the server's clamp) — recorded so the result can say what was looked at, not what was asked for.
+             */
+            snap_radius_px?: number | null;
+            /**
+             * Stale
+             * @description DERIVED when served, never stored: this region's `source_stamp` is not the current build's `built_at` (R46.10, per row). The payload-level `stale` says whether ANY row is; this says which.
+             * @default false
+             */
+            stale: boolean;
         } & {
             [key: string]: unknown;
         };
@@ -5583,6 +5630,20 @@ export interface components {
             n_anchors?: number | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * RelocateRegionRequest
+         * @description `POST /api/videomosaic/regions/relocate` — *"locate this one again."* Re-runs a region's
+         *     placement from the project's OWN copy of its recording, resolved by NAME inside
+         *     `<project>/videos/` (R46.9) — never by a remembered absolute path, which goes stale the
+         *     moment a project moves. ⭐ R46.6: the result is machine-proposed again — `unconfirmed`,
+         *     fresh evidence, still rewritten, whatever the region was before.
+         */
+        RelocateRegionRequest: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Region Id */
+            region_id: string;
         };
         /**
          * RenameAnalysisRequest
@@ -8679,6 +8740,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SnapRegionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_relocate_region_api_videomosaic_regions_relocate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RelocateRegionRequest"];
             };
         };
         responses: {
