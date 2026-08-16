@@ -51,3 +51,33 @@ Nothing in the app is broken — it is the *tests* that race, not the shelf, and
 cover (`removing a recording deletes Camea's copy and leaves his original`, which is the one that
 must never regress) has its own tests that do not flake. The cost is a red gate that clears itself
 on a rerun, which is exactly how a real failure gets waved through later.
+
+## 2026-08-16 — the traceback is caught, and the family is wider than two tests
+
+Two more members, seen across two consecutive `uv run pytest tests/unit tests/api` runs (each
+failing test passed in isolation immediately afterwards):
+
+| run | result |
+|---|---|
+| full fast suites | `test_the_copy_lands_inside_the_project_and_nowhere_else` failed (579 passed) |
+| full fast suites, `--tb=long` | `test_spikes_on_no_shown_pad_are_counted_and_the_total_is_untouched` failed (579 passed) |
+
+And this time the traceback landed — the route answered **500 `io_error`**:
+
+```
+[Errno 13] Permission denied:
+'…\pytest-of-phill\…\state\projects\unplaced-52d7a2\document.camea.json'
+```
+
+⭐ **That points away from the "shelf says something different for a moment" guess and at Windows
+file locking on the DOCUMENT**: `os.replace` (and opens) against `document.camea.json` raise
+`PermissionError` on Windows while another handle is on the file — and the copy jobs'
+`_patch_recording` write-back runs on worker threads seconds after the request that started them
+returned, so under a busy machine a test's own document read can collide with a previous test's
+late write-back, or with its own. The mechanism would hit any test that touches a project document
+while copy jobs are settling, which fits a different member failing each run.
+
+The first job is now to reproduce it deliberately (hammer a document with a reader while a
+`_patch_recording` loop writes) rather than to guess further; the likely shape of a fix is a short
+bounded retry on `PermissionError` around the document read/replace in core — which is shared code
+and wants its own change, not a drive-by.
