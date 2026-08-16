@@ -1333,11 +1333,31 @@ distribution, not just a colour.
 * ⛔ **`data_store/…/events` is present but EMPTY** — shape `(0,)`, dtype
   `(frameno, eventtype, eventid, eventmessage)` — in all six of the 260801 files.
 
-🔴 ⭐ **BUT THE TOP-LEVEL `bits` GROUP IS WHERE MaxWell WRITES DIGITAL INPUT, AND ONE FILE HAS ONE.**
-`260801/P002731/Network/000689` carries `bits/0000` = `[(frameno 53167027, bits 6), (frameno 53169027,
-bits 0)]` — a **100.0 ms digital pulse** at t = **167.8997–167.9997 s** relative to the first stored
-sample *(measured here)*. The `bits` group is empty in the other five 260801 files. ⚠️ **The other 27
-files were not checked for it.**
+🔴 ⭐ **BUT THE TOP-LEVEL `bits` GROUP IS WHERE MaxWell WRITES DIGITAL INPUT, AND MOST NETWORK RUNS
+OUTSIDE 260801 HAVE ONE.** `260801/P002731/Network/000689` carries `bits/0000` = `[(frameno 53167027,
+bits 6), (frameno 53169027, bits 0)]` — a **100.0 ms digital pulse** at t = **167.8997–167.9997 s**
+relative to the first stored sample *(measured here)*. The `bits` group is empty in the other five
+260801 files.
+
+⭐ **All 33 mirror files surveyed 2026-08-15** *(measured here — read-only `h5py` walk of every
+`data.raw.h5`, group layout throughout, no `bits`-as-dataset file found)*:
+
+* **15 of 33 carry events**; 18 have an empty `bits` group (every ActivityScan is empty, and so is
+  the **first** Network run of each 260529/260620 plate — 000042/47/52/57/60/66 — consistent with
+  the external input being switched on from the second run of a session onward).
+* The rich ones are **not** single pulses: 260529 Network runs carry **9,796–9,942 events** each,
+  260620 runs **6,586–10,220** (except `000061` with just **14**). First events land at framenos in
+  the 18–70 M range, i.e. the trains start mid-recording, not at sample 0.
+* The stream is a **pulse train, not a single mark**: e.g. `000043` opens `(33387449, 6) →
+  (+400 frames, 0)` and repeats — **20 ms high at 20 kHz** — while `000063` opens `(40416151, 6) →
+  (+2000, 0)` — **100 ms high**. So the pulse width varies by run.
+* `bits` values seen: **0, 2, 4, 6** — two distinct bit lines (0b010 and 0b100), sometimes toggling
+  one frame apart. ⇒ Two digital inputs were wired, not one; do not collapse them into a single
+  boolean without recording which line.
+* ⚠️ A perfectly regular train can say *where-modulo-period*, not *where* — the same aliasing rule as
+  the electrode comb (R46.3's logic). The alignment value is in the train's **irregularities**
+  (gaps, the two lines' interleaving, the mid-recording start), so keep the raw event list, not a
+  smoothed indicator.
 
 ⚠️ This is what spikeinterface's `MaxwellEventExtractor` reads — *"Class for reading TTL events from
 Maxwell files"*, `bits = h5_file['bits']; bit_states = bits['bits']` *(community)*. ⛔ On these files it
@@ -1699,8 +1719,10 @@ what is asserted here.
    conditions rather than biology, and the lamp-episode fractions (8.7% vs 54%) are consistent with
    that. The 1 ms mass-synchrony control rules out instantaneous coincidence only — ⛔ **it does not
    clear the lamp**, whose documented artefact is seconds-long episodes.
-10. ⚠️ **Does `bits` carry a TTL in the other 27 files?** Only the six 260801 files were checked (§5.6).
-    ⭐ Cheap to answer and directly useful to issue 003.
+10. ✅ **ANSWERED 2026-08-15 — `bits` carries events in 15 of the 33 files** (§5.6): thousands-strong
+    pulse trains on two digital lines in most 260529/260620 Network runs, empty in every ActivityScan
+    and in each session's first Network run. What the two lines *mark* (2P frame clock? lamp? both?)
+    is still unestablished — that is the remaining half of the question.
 11. ⚠️ **Is the decoder failure specific to writer `22.2.22` / format `20190530`?** No public report of
     this failure mode exists anywhere (§6), and SpikeInterface's CI runs Maxwell tests against 2021
     fixtures. ⇒ The scope of the failure is unestablished, and "the public plug-in is broken" is a claim
