@@ -1,0 +1,27 @@
+/*
+ * The navigation row under a trace close-up — TraceNav's own styles, lifted with it out of
+ * `features/mea/` (2026-08-15) so the videomosaic voltage panel can mount the same component.
+ * The rules are `MeaTrace.module.css`'s, verbatim: same mono/tabular grammar (R3). Tokens only.
+ */
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pos {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  /* Left, not centred: it gains decimals as he zooms in, and a centred number that grows shifts
+     both its ends every time the view changes. */
+  text-align: left;
+}

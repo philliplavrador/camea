@@ -1,12 +1,17 @@
 /*
  * THE MEA TRACE PANEL. Numbers, not prose (R3/R7) — same readout grammar as the electrode panel
  * it sits under: mono measurement ink, dim micro-cap labels. Tokens only, no hex.
+ *
+ * ⛔ `.scrub` is GONE, with the slider it styled (the plan-004 viewer, ported 2026-08-15). The
+ * strip below is not a scrubber — it has no handle and no track, and it must not grow one. The
+ * nav row's styles live with `core/trace/TraceNav`.
  */
 
 .body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
 }
 
 .hint {
@@ -27,24 +32,34 @@
   gap: 4px;
 }
 
-.scrub {
-  width: 100%;
-  accent-color: var(--accent);
-  cursor: pointer;
+/* The whole recording, end to end. Deliberately short: it is a place-finder, not a second chart,
+   and the close-up underneath is the one he reads. */
+.strip {
+  cursor: ew-resize;
+  touch-action: none; /* the pointer belongs to the drag, not to the page */
 }
 
-.controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+/* The close-up takes the keyboard, so it needs a visible focus ring like any other control. */
+.detail {
+  cursor: ew-resize;
+  touch-action: none;
+  border-radius: 4px;
 }
 
-.pos {
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
+.detail:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Announced to a screen reader, seen by nobody. `clip` rather than `display:none` because a
+   hidden live region is not announced at all. */
+.said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .facts {

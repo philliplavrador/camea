@@ -1,6 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE NAVIGATION ROW — Home / ← Back / Forward →, and the readout, where the slider used to be.
 //
+// ⭐ **CORE, NOT A FEATURE** (lifted out of `features/mea/` on 2026-08-15, with `readout`). The
+// videomosaic voltage panel is the second screen to carry this row, and ⛔ a feature may not
+// import another feature's files — the same argument, and the same fix, as `core/trace/TraceChart`
+// (plan 003). Nothing about the component changed in the move: same props, same testids.
+//
 // ⭐ **HIS REQUEST, IN HIS WORDS** (2026-08-15): *"I don't like the slider bar … I have the whole
 // trace, and then I can make a rectangle around the area I want to zoom in, then I can go back."*
 // The going back is the feature, so it is three visible buttons rather than a gesture — a hidden
@@ -16,7 +21,7 @@
 
 import { Button } from '../../design';
 import { readout } from './readout';
-import styles from './MeaTrace.module.css';
+import styles from './TraceNav.module.css';
 
 export interface TraceNavProps {
   t0: number;

@@ -48,12 +48,14 @@ import { meaChannelTrace, meaEnvelopes, startMeaEnvelopes } from '../../api';
 import type { MeaChannelTrace } from '../../api';
 import { ApiError } from '../../api/client';
 import { TRACE_PAD, TraceChart } from '../../core/trace/TraceChart';
+// ⭐ TraceNav + readout live in core/trace since 2026-08-15 — the videomosaic voltage panel is
+// their second consumer, and a feature may not import another feature's files.
+import { TraceNav } from '../../core/trace/TraceNav';
+import { readout } from '../../core/trace/readout';
 import { useTimeBrush } from '../../core/trace/useTimeBrush';
 import * as vs from '../../core/trace/viewStack';
 import { Button, LiveWarning, Panel } from '../../design';
 import { SILENT_MEANING, formatRate } from './activityScale';
-import { TraceNav } from './TraceNav';
-import { readout } from './readout';
 import styles from './MeaTrace.module.css';
 
 /**

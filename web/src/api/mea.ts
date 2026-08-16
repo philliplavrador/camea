@@ -13,12 +13,17 @@
 //     consulting it — see the note on `ElectrodeTracePayload` in types.ts.
 
 import { api, unwrap } from './client';
+import type { components } from './schema';
 import type {
   ElectrodeTracePayload,
   JobRef,
   MeaAttachment,
   MeaOrientation,
 } from './types';
+
+// ── the trace-viewer port (2026-08-15): the whole recording, and the cache that affords it ──────
+export type VideoMeaEnvelopeStatus = components['schemas']['VideoMeaEnvelopeStatus'];
+export type VideoMeaEnvelopeRow = components['schemas']['VideoMeaEnvelopeRow'];
 
 /** What electrical data a project has. `attached: false` is a normal first-visit state, not a 404. */
 export async function getMea(analysisId: string): Promise<MeaAttachment> {
@@ -55,13 +60,22 @@ export async function attachMea(
 /**
  * One electrode's stored trace and its spikes, for a window.
  *
- * `electrode` is the Camea grid id the user clicked (`"col-row"`). The window is capped server-side
- * — ask for what the chart is showing, not the whole recording.
+ * `electrode` is the Camea grid id the user clicked (`"col-row"`).
+ *
+ * ⭐ **`maxPoints` IS HOW YOU ASK FOR MORE THAN 30 SECONDS** (same contract as the Analyze MEA
+ * route, ported 2026-08-15). Leave it out and you get raw samples, capped at `max_window_s`. Pass
+ * it — the number of columns you can actually draw — and the server folds the window into that
+ * many min/max pairs (`min_uv`/`max_uv`, `resolution: "envelope"`) and the cap does not apply. A
+ * window too wide to read live needs the per-run cache; without one this is a **409** whose detail
+ * names `needs: envelope` — offer `startMeaEnvelopeRead`, never an error screen.
+ *
+ * ⚠️ Label your axis from the RETURNED `t0_s`/`t1_s`, never from what you asked for — the raw path
+ * clamps silently and the envelope path snaps to stored bucket edges.
  */
 export async function getElectrodeTrace(
   analysisId: string,
   electrode: string,
-  opts: { runId?: string; t0?: number; t1?: number } = {},
+  opts: { runId?: string; t0?: number; t1?: number; maxPoints?: number } = {},
 ): Promise<ElectrodeTracePayload> {
   return unwrap(
     await api.GET('/api/videomosaic/{analysis_id}/mea/trace', {
@@ -72,8 +86,38 @@ export async function getElectrodeTrace(
           run_id: opts.runId ?? null,
           t0: opts.t0 ?? 0,
           t1: opts.t1 ?? null,
+          max_points: opts.maxPoints ?? null,
         },
       },
+    }),
+  );
+}
+
+/**
+ * Which attached recordings can be shown whole yet (`GET .../mea/envelopes`), and the way to start
+ * the one-off read for the ones that cannot (`POST`, below).
+ *
+ * ⚠️ `ready: false` never means a recording is broken — only that the whole of it cannot be drawn
+ * at once yet, while narrow windows still read live.
+ */
+export async function getMeaEnvelopes(analysisId: string): Promise<VideoMeaEnvelopeStatus> {
+  return unwrap(
+    await api.GET('/api/videomosaic/{analysis_id}/mea/envelopes', {
+      params: { path: { analysis_id: analysisId } },
+    }),
+  );
+}
+
+/**
+ * ⭐ The backfill — read every attached recording end to end, once (~a minute each, as background
+ * jobs). The voltage panel's "Read it now" button. Calling it twice costs nothing; recordings that
+ * already have a cache are skipped. R44: the cache lives in the project store, never beside his
+ * recording.
+ */
+export async function startMeaEnvelopeRead(analysisId: string): Promise<VideoMeaEnvelopeStatus> {
+  return unwrap(
+    await api.POST('/api/videomosaic/{analysis_id}/mea/envelopes', {
+      params: { path: { analysis_id: analysisId }, query: { force: false } },
     }),
   );
 }

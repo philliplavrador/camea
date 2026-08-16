@@ -10,9 +10,13 @@
 //      about the experiment, not as a failure or an empty chart.
 //   2. ⚠️ **the waveform may not have decoded.** MaxWell compresses the raw stream with a
 //      proprietary filter, and on SOME of this project's recordings the publicly available decoder
-//      returns a rail (~98% of samples one fill value). `health.flat` says so per window and per
-//      channel, and a railed window looks EXACTLY like a genuinely silent electrode — which is why
-//      this is stated and the trace is dimmed rather than quietly drawn.
+//      returns a rail (~98% of samples one fill value). `health.flat` says so, and a railed window
+//      looks EXACTLY like a genuinely silent electrode — which is why this is stated and the trace
+//      is dimmed rather than quietly drawn. ⚠️ The percentage NAMES WHAT IT MEASURED
+//      (`health_scope`): a narrow window is read live and carries its own figure; a wide view
+//      comes from the cache and carries the whole recording's. The rail fraction genuinely
+//      differs with window length, so a number quoted without its scope changes as he zooms with
+//      nothing on screen to explain it.
 //      ⛔ **NOT "the decoder is broken" — corrected 2026-08-15.** Measured exactly over the whole
 //      of all five recordings in his project: 000690/691/692 rail (94-100%), but **000688 and
 //      000689 decode cleanly** (1.1% and 4.4%). It is those recordings, not the decoder. Read
@@ -24,16 +28,64 @@
 // The spike ticks are the one thing here that is unconditionally trustworthy: MaxWell's on-chip
 // detector wrote them at acquisition and they need no proprietary decoder. When the waveform is
 // suspect they are still exactly right, which is why they are drawn even then.
+//
+// ⭐ **THE WHOLE RECORDING, AND YOU DRAG A STRETCH TO ZOOM IN** (the plan-004 viewer, ported here
+// 2026-08-15). Two pictures — a 56 px strip holding the whole recording end to end, and a close-up
+// underneath — with matplotlib's navigation between them: drag sideways on either to zoom,
+// Back / Forward / Whole recording, ←/→ pan, +/− zoom, Backspace back, Home home, Ctrl+wheel about
+// the pointer. ⛔ **The 1 s window, the scrubber and both step buttons are gone.** Do not
+// reintroduce a scrubber; the strip is not one and must not grow a handle. ⛔ The BARE wheel is
+// deliberately not bound (R47.1 — the rail is the only scroller, and a chart must not steal it).
+//
+// 🔴 **THE OLD PANEL'S DOUBLE-FETCH IS DEAD BY CONSTRUCTION.** It recorded "have I jumped to the
+// first spike yet" in STATE (`jumped`), so the arrival effect re-ran once per state write and the
+// same window was fetched twice. This panel opens on the whole recording — his 2026-08-15 ruling:
+// no jump to the first spike — so there is no one-shot flag at all, and the only refs here
+// (`ticket`) exist to DROP stale replies, not to schedule work.
+//
+// ⭐ **SHARING `core/trace/*` — NOT `features/mea/MeaTrace` REUSED.** The two panels diverge on the
+// identity question: this one works from a mosaic whose chip seating is unresolved and must say
+// so (warning 3); that one works in the chip's own frame where doubt would be a lie. A shared
+// panel would need a flag meaning "am I allowed to be certain", and a component that can be told
+// to doubt its own subject is the wrong shape. The pieces that agree — chart, brush, view stack,
+// nav row — are core, and both mount them.
 
-import { useCallback, useEffect, useState } from 'react';
-import { getElectrodeTrace } from '../../api';
-import type { ElectrodeTracePayload, MeaRecordingSummary } from '../../api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { getElectrodeTrace, getMeaEnvelopes, startMeaEnvelopeRead } from '../../api';
+import type { ElectrodeTracePayload, MeaRecordingSummary, MeaSyncEpisode } from '../../api';
+import { ApiError } from '../../api/client';
+import { TRACE_PAD, TraceChart } from '../../core/trace/TraceChart';
+import { TraceNav } from '../../core/trace/TraceNav';
+import { readout } from '../../core/trace/readout';
+import { useTimeBrush } from '../../core/trace/useTimeBrush';
+import * as vs from '../../core/trace/viewStack';
 import { Button, LiveWarning, Panel } from '../../design';
-import { TraceChart } from '../../core/trace/TraceChart';
 import styles from './MeaTracePanel.module.css';
 
-/** How much of the recording one view shows. Kept small: the window is fetched, not cached whole. */
-const WINDOW_S = 1.0;
+/**
+ * How many min/max columns to ask the server for. A **rendering** choice — roughly a wide canvas,
+ * doubled so a resize does not immediately look coarse — never a fact about a recording (I1).
+ */
+const COLUMNS = 1200;
+
+/** The narrowest stretch worth zooming to, in stored samples. Derived against the file's own
+ *  `sampling_hz` at the point of use, so no duration and no rate is ever written down here. */
+const MIN_SPAN_SAMPLES = 20;
+
+/** How long to sit still before fetching the view he has landed on. Long enough that walking back
+ *  through history with the keyboard does not fire a request per keystroke. */
+const SETTLE_MS = 90;
+
+/** How often to ask whether the one-off read has finished, while it runs. */
+const POLL_MS = 2000;
+
+// ⚠️ **MODULE CONSTANTS, NOT `[]` AT THE CALL SITE.** `TraceChart` keys its paint on prop
+// identity, so a fresh array literal in JSX repaints the canvas on every parent render — and this
+// panel re-renders on every pointermove of a drag. The strip has no business repainting while the
+// close-up is being dragged.
+const NO_TRACE: number[] = [];
+const NO_SPIKES: never[] = [];
+const NO_EPISODES: MeaSyncEpisode[] = [];
 
 export interface MeaTracePanelProps {
   analysisId: string;
@@ -48,77 +100,281 @@ export function MeaTracePanel({
   recordings,
 }: MeaTracePanelProps): React.JSX.Element | null {
   const [runId, setRunId] = useState<string | null>(null);
-  const [t0, setT0] = useState(0);
+  // The whole recording, fetched once per selection: the strip's picture and the opening close-up.
+  const [whole, setWhole] = useState<ElectrodeTracePayload | null>(null);
+  // The close-up. Always present whenever `whole` is — the "did not decode" warning is driven by
+  // the close-up's `health`, so a panel with no close-up open would silently stop warning (R3.8).
   const [data, setData] = useState<ElectrodeTracePayload | null>(null);
+  const [stack, setStack] = useState<vs.ViewStack>(vs.EMPTY_STACK);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  // ⭐ Which (electrode, run) we have already jumped to the activity for. A 300 s recording opened
-  // at t=0 usually shows a dead window, and stepping a second at a time would take 200 clicks to
-  // reach the spikes — so the FIRST view of an electrode lands where it actually fired. Recorded
-  // per selection so the jump happens once and never fights the user's own scrubbing.
-  const [jumped, setJumped] = useState<string | null>(null);
+  const [needsEnvelope, setNeedsEnvelope] = useState(false);
+  const [building, setBuilding] = useState(false);
+  // Bumped when the backfill finishes, purely to re-run the arrival fetch — without it the panel
+  // keeps saying "not read yet" after the job it started has finished.
+  const [reload, setReload] = useState(0);
+  const [said, setSaid] = useState('');
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  // Every close-up fetch carries a ticket; a late reply holding a stale one is dropped. A ref,
+  // not state: it schedules nothing and must not re-render anything.
+  const ticket = useRef(0);
 
   const active = runId ?? recordings[0]?.run_id ?? null;
   const current = recordings.find((r) => r.run_id === active) ?? recordings[0];
-  const duration = current?.duration_s ?? 0;
 
+  const view = vs.current(stack);
+  const duration = whole?.duration_s ?? 0;
+  const samplingHz = whole?.sampling_hz ?? 0;
+  const minSpanS = samplingHz > 0 ? MIN_SPAN_SAMPLES / samplingHz : 0;
+
+  // ── arrival: the whole recording, in one request ──────────────────────────────────────────
+  // ⭐ `maxPoints` with no `t1` is the server's way of saying "all of it, folded to this many
+  // columns". It doubles as the opening close-up, so a click costs ONE request — and there is no
+  // jump-to-first-spike step to schedule, so nothing here can fetch twice.
   useEffect(() => {
     if (!electrode || !active) {
+      setWhole(null);
       setData(null);
+      setStack(vs.EMPTY_STACK);
       return;
     }
     let cancelled = false;
-    setBusy(true);
     setError(null);
-    void getElectrodeTrace(analysisId, electrode, { runId: active, t0, t1: t0 + WINDOW_S })
+    setNeedsEnvelope(false);
+    setWhole(null);
+    setData(null);
+    setStack(vs.EMPTY_STACK);
+    void getElectrodeTrace(analysisId, electrode, { runId: active, t0: 0, maxPoints: COLUMNS })
       .then((d) => {
         if (cancelled) return;
+        setWhole(d);
         setData(d);
-        const key = `${electrode}@${active}`;
-        const first = d.first_spike_s;
-        if (jumped !== key && first != null && (d.spikes?.length ?? 0) === 0) {
-          setJumped(key);
-          setT0(Math.max(0, Math.floor(first * 10) / 10));
-        } else if (jumped !== key) {
-          setJumped(key);
-        }
+        // ⚠️ Home is what the SERVER returned, not what we asked for — the envelope snaps to its
+        // stored bucket edges, and an axis labelled from the request would be a lie.
+        setStack(vs.stackOf({ t0: d.t0_s ?? 0, t1: d.t1_s ?? 0 }));
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setBusy(false);
+        if (cancelled) return;
+        if (e instanceof ApiError && e.status === 409) {
+          // The one-off read has not been done for this recording yet. A fact and an offer, not
+          // an error: the button below starts the job.
+          setNeedsEnvelope(true);
+          setError(e.message);
+          return;
+        }
+        setError(e instanceof Error ? e.message : String(e));
       });
     return () => {
       cancelled = true;
     };
-  }, [analysisId, electrode, active, t0, jumped]);
+  }, [analysisId, electrode, active, reload]);
 
-  // A new selection re-arms the jump: each electrode gets shown where IT fired.
+  // ⚠️ **WAIT FOR THE BACKFILL AND THEN SHOW THE RECORDING.** Starting the job is not the feature;
+  // seeing the trace afterwards is. Polls until this run's row reads `ready`, then re-runs the
+  // arrival fetch. Stops (without pretending success) when nothing is running any more.
   useEffect(() => {
-    setT0(0);
-    setJumped(null);
-  }, [electrode, active]);
+    if (!building) return;
+    let stop = false;
+    const tick = () => {
+      void getMeaEnvelopes(analysisId)
+        .then((s) => {
+          if (stop) return;
+          const rows = s.recordings ?? [];
+          const mine = rows.find((r) => r.run_id === active);
+          const running = rows.some((r) => r.job_id);
+          if (mine?.ready) {
+            setBuilding(false);
+            setNeedsEnvelope(false);
+            setError(null);
+            setSaid('The whole recording is ready.');
+            setReload((n) => n + 1);
+          } else if (!running) {
+            // Nothing is running and it still is not ready — the job failed or refused. Stop
+            // polling and leave the panel saying so rather than spinning for ever.
+            setBuilding(false);
+          }
+        })
+        .catch(() => setBuilding(false));
+    };
+    const timer = setInterval(tick, POLL_MS);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, [analysisId, active, building]);
 
-  const step = useCallback(
-    (dir: number) => {
-      setT0((v) => Math.max(0, Math.min(Math.max(0, duration - WINDOW_S), v + dir * WINDOW_S)));
+  // ── the close-up follows the view he is standing on ───────────────────────────────────────
+  useEffect(() => {
+    if (!electrode || !active || view == null || whole == null) return;
+    // The opening view IS the whole recording, which we already hold. Do not re-fetch it.
+    if (view.t0 === whole.t0_s && view.t1 === whole.t1_s) {
+      setData(whole);
+      return;
+    }
+    let cancelled = false;
+    const mine = ++ticket.current;
+    const timer = setTimeout(() => {
+      void getElectrodeTrace(analysisId, electrode, {
+        runId: active,
+        t0: view.t0,
+        t1: view.t1,
+        maxPoints: COLUMNS,
+      })
+        .then((d) => {
+          if (cancelled || mine !== ticket.current) return;
+          setData(d);
+        })
+        .catch((e: unknown) => {
+          if (cancelled || mine !== ticket.current) return;
+          setError(e instanceof Error ? e.message : String(e));
+        });
+    }, SETTLE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // ⚠️ `view` is safe as a dependency: `vs.current` hands back the entry object itself, whose
+    // identity only changes when a genuinely new view is pushed.
+  }, [analysisId, electrode, active, view, whole]);
+
+  // ── navigation ────────────────────────────────────────────────────────────────────────────
+  const go = useCallback((next: vs.ViewStack) => setStack(next), []);
+
+  // ⚠️ The announcement waits for the DATA — announcing at the moment of navigation would state a
+  // spike count that is not known yet (the MeaTrace lesson, kept).
+  useEffect(() => {
+    if (!data?.recorded) return;
+    setSaid(readout(data.t0_s ?? 0, data.t1_s ?? 0, data.duration_s ?? 0,
+                    data.spikes?.length ?? 0));
+  }, [data]);
+
+  const onSelect = useCallback((v: vs.TimeView) => go(vs.push(stack, v)), [go, stack]);
+
+  const brush = useTimeBrush({
+    t0: view?.t0 ?? 0,
+    t1: view?.t1 ?? 0,
+    pad: TRACE_PAD,
+    minSpanS,
+    onSelect,
+  });
+
+  // The strip's axis is ALWAYS the whole recording, so it needs its own brush against that axis.
+  const stripBrush = useTimeBrush({
+    t0: whole?.t0_s ?? 0,
+    t1: whole?.t1_s ?? 0,
+    pad: TRACE_PAD,
+    minSpanS,
+    onSelect,
+  });
+
+  // ── keyboard, and it is not optional ──────────────────────────────────────────────────────
+  // Same bindings as the Analyze MEA viewer: ←/→ pan half a screen, +/− zoom, Backspace back,
+  // Home home. `0` stays untouched (R12.6/R13.7). Esc belongs to the drag in flight (inside
+  // `useTimeBrush`) and to nothing else — R14 and R45.3 are untouched.
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (!view || !whole) return;
+      const w0 = whole.t0_s ?? 0;
+      const w1 = whole.t1_s ?? 0;
+      const span = view.t1 - view.t0;
+      const clampTo = (t0: number, t1: number): vs.TimeView => {
+        const w = Math.min(Math.max(t1 - t0, minSpanS), w1 - w0);
+        const a = Math.min(Math.max(t0, w0), w1 - w);
+        return { t0: a, t1: a + w };
+      };
+      // ⚠️ **A KEY THAT CANNOT MOVE MUST PUSH NOTHING** — at a boundary `clampTo` returns the view
+      // he is already on, and pushing it would light up Back and bury real history in duplicates.
+      const moved = (v: vs.TimeView): vs.ViewStack | null =>
+        v.t0 === view.t0 && v.t1 === view.t1 ? null : vs.push(stack, v);
+
+      let next: vs.ViewStack | null = null;
+      if (e.key === 'ArrowLeft') next = moved(clampTo(view.t0 - span / 2, view.t1 - span / 2));
+      else if (e.key === 'ArrowRight') next = moved(clampTo(view.t0 + span / 2, view.t1 + span / 2));
+      else if (e.key === '+' || e.key === '=') {
+        const mid = (view.t0 + view.t1) / 2;
+        next = moved(clampTo(mid - span / 4, mid + span / 4));
+      } else if (e.key === '-' || e.key === '_') {
+        const mid = (view.t0 + view.t1) / 2;
+        next = moved(clampTo(mid - span, mid + span));
+      } else if (e.key === 'Backspace') next = vs.back(stack);
+      else if (e.key === 'Home') next = vs.home(stack);
+      // ⛔ `Home` is exempt from the identity test on purpose: pressing it while already home is a
+      // real push in matplotlib, and it is undoable with one Back.
+      if (next && next !== stack) {
+        e.preventDefault();
+        go(next);
+      }
     },
-    [duration],
+    [go, minSpanS, stack, view, whole],
   );
 
-  if (recordings.length === 0) return null;
+  // ── Ctrl+wheel zooms about the pointer ────────────────────────────────────────────────────
+  // ⛔ The BARE wheel is deliberately not bound (R47.1): the rail is the only scroller on the
+  // screen, and stealing his scroll whenever the pointer crosses a chart is exactly the
+  // complaint R47 exists for.
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey || !view || !whole) return;
+      e.preventDefault();
+      const w0 = whole.t0_s ?? 0;
+      const w1 = whole.t1_s ?? 0;
+      const rect = el.getBoundingClientRect();
+      const w = Math.max(1, rect.width - TRACE_PAD.left - TRACE_PAD.right);
+      const f = Math.min(1, Math.max(0, (e.clientX - rect.left - TRACE_PAD.left) / w));
+      const at = view.t0 + f * (view.t1 - view.t0);
+      const k = e.deltaY > 0 ? 1.25 : 0.8;
+      const span = Math.min(Math.max((view.t1 - view.t0) * k, minSpanS), w1 - w0);
+      const t0 = Math.min(Math.max(at - f * span, w0), w1 - span);
+      go(vs.push(stack, { t0, t1: t0 + span }));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [go, minSpanS, stack, view, whole]);
+
+  const buildEnvelopes = useCallback(() => {
+    setBuilding(true);
+    setSaid('Reading the recording end to end. This takes about a minute.');
+    void startMeaEnvelopeRead(analysisId).catch((e: unknown) => {
+      setError(e instanceof Error ? e.message : String(e));
+      setBuilding(false);
+    });
+    // ⛔ No `finally` clearing `building` — the POST returns the moment the job is SUBMITTED. The
+    // polling effect above owns the flag, and it is what ends it.
+  }, [analysisId]);
 
   const flat = data?.health?.flat ?? false;
-  const provisional = data ? !(data.orientation?.confirmed ?? false) : false;
-  const spikes = data?.spikes ?? [];
+  const undecodable = Boolean(data?.decode_error);
+  const provisional = whole?.recorded ? !(whole.orientation?.confirmed ?? false) : false;
+  const spikes = useMemo(() => data?.spikes ?? [], [data]);
+  // ⚠️ Memoised for prop identity, like the arrays above — `?? []` inline would repaint both
+  // charts on every render of a drag.
+  const wholeEpisodes = useMemo(() => whole?.sync_episodes ?? NO_EPISODES, [whole]);
+  const dataEpisodes = useMemo(() => data?.sync_episodes ?? NO_EPISODES, [data]);
+  const bandFromDrag = useMemo(() => {
+    if (!brush.dragging || !view || !boxRef.current) return null;
+    const w = Math.max(1, boxRef.current.clientWidth - TRACE_PAD.left - TRACE_PAD.right);
+    const f = (x: number) => (x - TRACE_PAD.left) / w;
+    return {
+      t0: view.t0 + f(brush.x0) * (view.t1 - view.t0),
+      t1: view.t0 + f(brush.x1) * (view.t1 - view.t0),
+    };
+  }, [brush.dragging, brush.x0, brush.x1, view]);
+
+  if (recordings.length === 0) return null;
 
   return (
     <Panel
       title="Voltage"
       help={
-        'The trace this electrode recorded on the MEA, over a one-second window, with the ' +
+        'The voltage this electrode recorded on the MEA, across the whole session, with the ' +
         'spikes MaxWell detected marked underneath.\n' +
+        '\n' +
+        'The strip on top always shows the whole recording, with a box marking the stretch you ' +
+        'are looking at closely. Drag sideways across either picture to zoom into that stretch; ' +
+        'Back walks you out again, like the back button in a browser. Arrow keys move by half a ' +
+        'screen, + and - zoom, Backspace goes back, and holding Ctrl while you scroll zooms ' +
+        'about the pointer.\n' +
         '\n' +
         'Only the electrodes that were wired up during the recording have a trace — a few ' +
         'hundred out of the many thousands on the chip. Clicking any of the others correctly ' +
@@ -132,10 +388,7 @@ export function MeaTracePanel({
                 key={r.run_id}
                 size="sm"
                 variant={r.run_id === active ? 'primary' : 'ghost'}
-                onClick={() => {
-                  setRunId(r.run_id);
-                  setT0(0);
-                }}
+                onClick={() => setRunId(r.run_id)}
                 data-testid={`mea-run-${r.run_id}`}
               >
                 {r.label}
@@ -148,11 +401,25 @@ export function MeaTracePanel({
       <div className={styles.body}>
         {!electrode && <p className={styles.hint}>Click an electrode in the mosaic.</p>}
 
-        {electrode && error && (
+        {electrode && error && !needsEnvelope && (
           <LiveWarning variant="loud">Could not read the recording: {error}</LiveWarning>
         )}
 
-        {electrode && data && !data.recorded && (
+        {/* ⭐ Not an error: the one-off read has not happened for this recording. Say what is
+            missing and offer to do it, rather than showing a broken chart. */}
+        {electrode && needsEnvelope && (
+          <div data-testid="mea-trace-needs-envelope">
+            <LiveWarning variant="warn">
+              Camea has not read this recording end to end yet, so it cannot show you the whole of
+              it at once. It is a one-off job of about a minute per recording.{' '}
+              <Button size="sm" variant="ghost" onClick={buildEnvelopes} disabled={building}>
+                {building ? 'Reading…' : 'Read it now'}
+              </Button>
+            </LiveWarning>
+          </div>
+        )}
+
+        {electrode && whole && !whole.recorded && (
           <>
             <p className={styles.hint} data-testid="mea-not-recorded">
               Electrode <b>{electrode}</b> was not recorded.
@@ -165,7 +432,7 @@ export function MeaTracePanel({
           </>
         )}
 
-        {electrode && data?.recorded && (
+        {electrode && whole?.recorded && data && view && (
           <>
             {/* ⚠️ #3 — identity before signal: if the seating is unconfirmed, which electrode this
                 IS has not been established, and that outranks anything about the waveform. */}
@@ -176,66 +443,112 @@ export function MeaTracePanel({
               </LiveWarning></div>
             )}
 
-            {/* ⚠️ #2 — say it before they read the picture as a silent electrode. */}
-            {flat && (
-              <div data-testid="mea-flat"><LiveWarning variant="warn">
-                The waveform did not decode. {Math.round((data.health?.fill_fraction ?? 0) * 100)}%
-                of this window is a single repeated value, which no live electrode produces —
-                MaxWell&rsquo;s own decoder (part of MaxLab Live) is needed to read it properly. The
-                spike marks below are unaffected and remain correct.
+            {/* ⚠️ #2a — the raw stream could not be read at all (no decoder on this machine). */}
+            {undecodable && (
+              <div data-testid="mea-undecodable"><LiveWarning variant="warn">
+                The waveform could not be read at all. MaxWell compresses the raw recording with
+                its own method, and the software that unpacks it (part of MaxLab Live) is not
+                installed on this machine. The spike marks below come from the chip&rsquo;s own
+                detector and are unaffected.
               </LiveWarning></div>
             )}
 
-            <TraceChart
-              trace={data.trace_uv ?? []}
-              t0={data.t0_s ?? 0}
-              t1={data.t1_s ?? 0}
-              spikes={spikes}
-              syncEpisodes={data.sync_episodes ?? []}
-              suspect={flat}
-            />
+            {/* ⚠️ #2 — say it before they read the picture as a silent electrode, and NAME the
+                scope of the percentage: it genuinely changes between a live-read stretch and the
+                cached whole-recording figure. */}
+            {!undecodable && flat && (
+              <div data-testid="mea-flat"><LiveWarning variant="warn">
+                The waveform did not decode.{' '}
+                {Math.round((data.health?.fill_fraction ?? 0) * 100)}% of{' '}
+                {data.health_scope === 'recording' ? 'this recording' : 'the stretch shown'} is a
+                single repeated value, which no live electrode produces — MaxWell&rsquo;s own
+                decoder (part of MaxLab Live) is needed to read it properly. The spike marks below
+                are unaffected and remain correct.
+              </LiveWarning></div>
+            )}
 
-            {/* ⭐ A SCRUBBER, not just step buttons. The window is one second of three hundred;
-                without this, reaching the far end is 300 clicks. */}
-            <input
-              className={styles.scrub}
-              type="range"
-              min={0}
-              max={Math.max(0, duration - WINDOW_S)}
-              step={0.1}
-              value={t0}
-              onChange={(e) => setT0(Number(e.target.value))}
-              aria-label="Position in the recording"
-              data-testid="mea-scrub"
-            />
-
-            <div className={styles.controls}>
-              <Button size="sm" variant="ghost" onClick={() => step(-1)} disabled={t0 <= 0 || busy}>
-                ← earlier
-              </Button>
-              <span className={styles.pos}>
-                {(data.t0_s ?? 0).toFixed(1)}–{(data.t1_s ?? 0).toFixed(1)} s of {duration.toFixed(0)} s
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => step(1)}
-                disabled={t0 + WINDOW_S >= duration || busy}
-              >
-                later →
-              </Button>
+            {/* ── the whole recording, always ─────────────────────────────────────────────── */}
+            <div
+              className={styles.strip}
+              data-testid="mea-trace-overview"
+              {...stripBrush.handlers}
+            >
+              <TraceChart
+                trace={NO_TRACE}
+                minUv={whole.min_uv}
+                maxUv={whole.max_uv}
+                t0={whole.t0_s ?? 0}
+                t1={whole.t1_s ?? 0}
+                spikes={NO_SPIKES}
+                syncEpisodes={wholeEpisodes}
+                suspect={whole.health?.flat ?? false}
+                height={56}
+                testId="mea-trace-overview-chart"
+                // ⚠️ Its own label: the default announces the spike count, and this chart is given
+                // none because it draws none — "0 spikes" here would launder *unreadable* into
+                // *silent*, the exact lie this panel exists to refuse.
+                ariaLabel={
+                  `The whole recording, 0 to ${(whole.t1_s ?? 0).toFixed(0)} seconds. ` +
+                  `The stretch shown below is ${view.t0.toFixed(2)} to ${view.t1.toFixed(2)} seconds.`
+                }
+                band={view}
+                bandMinPx={2}
+              />
             </div>
 
+            {/* ── the close-up ────────────────────────────────────────────────────────────── */}
+            <div
+              ref={boxRef}
+              className={styles.detail}
+              data-testid="mea-trace-detail"
+              tabIndex={0}
+              role="application"
+              aria-label="The stretch of the recording you are looking at. Drag sideways to zoom in."
+              onKeyDown={onKeyDown}
+              {...brush.handlers}
+            >
+              <TraceChart
+                trace={data.trace_uv ?? NO_TRACE}
+                minUv={data.min_uv}
+                maxUv={data.max_uv}
+                t0={data.t0_s ?? 0}
+                t1={data.t1_s ?? 0}
+                spikes={spikes}
+                syncEpisodes={dataEpisodes}
+                suspect={flat || undecodable}
+                band={bandFromDrag}
+              />
+            </div>
+
+            {/* ⚠️ The readout states the range the server ACTUALLY SERVED — the same range the
+                picture above is drawn from. */}
+            <TraceNav
+              t0={data.t0_s ?? 0}
+              t1={data.t1_s ?? 0}
+              duration={duration}
+              nSpikes={spikes.length}
+              canBack={vs.canBack(stack)}
+              canForward={vs.canForward(stack)}
+              onHome={() => go(vs.home(stack))}
+              onBack={() => go(vs.back(stack))}
+              onForward={() => go(vs.forward(stack))}
+            />
+
             <dl className={styles.facts}>
-              <Fact label="Channel" value={String(data.channel)} />
-              <Fact label="Chip electrode" value={String(data.chip_electrode)} />
-              <Fact label="Spikes here" value={String(spikes.length)} />
+              <Fact label="Channel" value={String(whole.channel ?? '—')} />
+              <Fact label="Chip electrode" value={String(whole.chip_electrode ?? '—')} />
               <Fact
                 label="Spikes total"
-                value={(data.n_spikes_total ?? 0).toLocaleString()}
+                value={(whole.n_spikes_total ?? 0).toLocaleString()}
                 hint="across the whole recording"
               />
             </dl>
+
+            {/* A canvas that takes the keyboard must say what it did — announced, seen by nobody. */}
+            <span className={styles.said} role="status" aria-live="polite"
+                  data-testid="mea-trace-said">
+              {said}
+            </span>
           </>
         )}
       </div>
