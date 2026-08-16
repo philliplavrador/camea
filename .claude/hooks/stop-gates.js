@@ -140,6 +140,25 @@ const GATES = [
       'doc pointing at a moved file sends the next session to the wrong place:',
   },
   {
+    // ~120ms — two loopback probes, and a walk of src/camea for the newest .py mtime.
+    //
+    // ⭐ THE ONLY GATE THAT ASKS ABOUT THE WORLD RATHER THAN THE TREE. Everything else here
+    // decides from files; this one asks whether the process the author is looking at is
+    // running the code those files describe. uvicorn does not watch its own source, so a
+    // running backend serves whatever it imported at startup — and the symptom of that is
+    // not an error, it is the change appearing not to have happened.
+    //
+    // Silent when nothing is listening, which is most turns. See the script's header.
+    label: 'stale-app',
+    match: (p) => p.startsWith('src/camea/') && p.endsWith('.py'),
+    cmd: 'node scripts/check-app-fresh.js',
+    cost: '120ms',
+    hint:
+      'the app that is actually running is NOT the code in this tree. Read the lines below and ' +
+      'restart it before you tell him anything is done — a click-through against a stale ' +
+      'backend proves nothing, and "i dont see the updates" is what he says next:',
+  },
+  {
     // 120ms. A RATCHET, not a pass/fail: 13 of the 48 rulings had no citing test on
     // 2026-08-13 when this landed, and reddening the turn on somebody else's debt is how a
     // gate gets switched off. `--max 13` tolerates exactly that debt and fails on a 14th.

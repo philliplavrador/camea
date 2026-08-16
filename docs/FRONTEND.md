@@ -34,8 +34,19 @@ to the FastAPI process (loopback only — the backend refuses to bind anything b
 **Terminal 1 — the backend (headless), pointed at a dataset root:**
 
 ```bash
-uv run camea --headless --port 8000 --open <a-folder-that-contains-datasets>
+uv run camea --headless --reload --port 8000 --open <a-folder-that-contains-datasets>
 ```
+
+> ⭐ **`--reload` is not optional in a dev loop.** uvicorn watches nothing by default, so without
+> it every edit under `src/camea/` leaves the running server answering out of the code it imported
+> at startup — no error, no warning, just a change that appears not to have happened. `--reload`
+> puts uvicorn's watcher on `src/camea/` and restarts the server itself. It needs `--headless` or
+> `--browser` (the reloader restarts a child process; the native window owns the main thread).
+>
+> The backstop is `scripts/check-app-fresh.js`, wired into the Stop hook as the **`stale-app`**
+> gate: a turn that changes `src/camea/**.py` is blocked if the backend on `:8000` started before
+> that change, or if `:5173` is up with nothing behind it. Ports are overridable —
+> `CAMEA_DEV_PORT` / `CAMEA_DEV_WEB_PORT`.
 
 > ⚠️ **There is no `--data-dir` flag.** The app carries no dataset knowledge (HARD RULE 3). `--open`
 > puts a path in `settings.recent_datasets` — *"start me near here"* — and nothing else. It opens no

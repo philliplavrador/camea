@@ -49,25 +49,29 @@ function expectGates(path, want) {
 // ─── 1. Selection ────────────────────────────────────────────────────────────
 
 // The guarded four, and only the guarded four, pull in the engine gate.
-expectGates('src/camea/engine/t27.py', ['engine', 'ruff', 'pytest-unit', 'mypy']);
-expectGates('src/camea/engine/t33.py', ['engine', 'ruff', 'pytest-unit', 'mypy']);
-expectGates('src/camea/engine/quality.py', ['engine', 'ruff', 'pytest-unit', 'mypy']);
-expectGates('src/camea/engine/render.py', ['engine', 'ruff', 'pytest-unit', 'mypy']);
+// (Every path under src/camea/ also pulls `stale-app`: changing ANY of the app's Python
+// makes a running backend stale, engine included.)
+expectGates('src/camea/engine/t27.py', ['engine', 'ruff', 'stale-app', 'pytest-unit', 'mypy']);
+expectGates('src/camea/engine/t33.py', ['engine', 'ruff', 'stale-app', 'pytest-unit', 'mypy']);
+expectGates('src/camea/engine/quality.py', ['engine', 'ruff', 'stale-app', 'pytest-unit', 'mypy']);
+expectGates('src/camea/engine/render.py', ['engine', 'ruff', 'stale-app', 'pytest-unit', 'mypy']);
 // excluded.py lives in engine/ but is NOT guarded — it holds gaps(), a pure function, and
 // is ordinary code. A matcher that caught it would block every turn that touched it.
-expectGates('src/camea/engine/excluded.py', ['ruff', 'pytest-unit', 'mypy']);
+expectGates('src/camea/engine/excluded.py', ['ruff', 'stale-app', 'pytest-unit', 'mypy']);
 
 // An api change owes the generated-contract check; a core change does not.
 expectGates('src/camea/api/schemas.py', [
   'ruff',
+  'stale-app',
   'check:api',
   'pytest-unit',
   'pytest-api',
   'mypy',
 ]);
-expectGates('src/camea/core/dataset.py', ['ruff', 'pytest-unit', 'mypy']);
+expectGates('src/camea/core/dataset.py', ['ruff', 'stale-app', 'pytest-unit', 'mypy']);
 expectGates('src/camea/features/videomosaic/routes.py', [
   'ruff',
+  'stale-app',
   'pytest-unit',
   'pytest-api',
   'mypy',
@@ -85,6 +89,12 @@ expectGates('web/tests/e2e/regions.spec.ts', ['rulings', 'tsc', 'eslint', 'e2e']
 // An api test changing must NOT drag in the 64s unit suite. Scope is the point of the table.
 expectGates('tests/api/test_routes.py', ['ruff', 'pytest-api']);
 expectGates('tests/unit/test_document.py', ['ruff', 'pytest-unit']);
+
+// `stale-app` asks whether the RUNNING backend still matches the tree, so its scope is
+// exactly the Python that backend imports: not a test, not a fixture, not a non-.py file
+// that happens to sit in the package.
+expectGates('src/camea/py.typed', []);
+expectGates('tests/fixtures/make_synthetic.py', ['ruff']);
 
 // Nothing at all: the cheap path, one `git status` and done.
 expectGates('pyproject.toml', []);

@@ -80,6 +80,18 @@ Python is managed with **uv** (Python ≥ 3.12 — mandatory; spectralign needs 
 `uv sync --extra gpu` then `uv run camea` / `uv run pytest`. **The GPU extra must be
 `cupy-cuda12x[ctk]`** (what `--extra gpu` installs) — plain `cupy-cuda12x` silently falls back to
 NumPy. Proven: `uv run` gives `t27.on_gpu() == True` with no DLL surgery.
+⭐ **THE BACKEND DOES NOT PICK UP YOUR CHANGES BY ITSELF — start it with `--reload`.**
+uvicorn watches nothing: a running `camea` serves the Python it imported at startup, so after an
+edit under `src/camea/` the app answers happily *in the old code*, and the only symptom is that
+what you changed appears not to have happened. **Always start the dev backend as
+`uv run camea --headless --reload --port 8000`** — that puts uvicorn's watcher on `src/camea/` and
+restarts the server itself. The Stop hook's **`stale-app`** gate is the backstop: it blocks the turn
+when a backend is listening but started before your newest change, and when the Vite server is up
+with no backend behind it — a page that loads, paints, and answers nothing. Never tell him something
+is done off a click-through against a stale server. (The frontend needs none of this; Vite
+hot-reloads. The rule was written 2026-08-15, after a session shipped a whole feature and left the
+backend stopped — his first words on looking at it were *"i dont see the updates"*.)
+
 The frontend (`web/`) is TypeScript + React + Vite; Node 22. Its API client is **generated** from
 the backend's OpenAPI schema (`cd web && npm run gen:api`; `npm run check:api` fails on drift) —
 never hand-write a backend-owned type. Dev loop and stack are in `docs/FRONTEND.md`.
