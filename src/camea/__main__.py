@@ -19,9 +19,11 @@ own files, so without it a change to `src/camea/` is not live until somebody res
 and *nothing says so*. The app keeps answering, in the old code, and the only symptom is that what
 you changed did not happen. (2026-08-15: a whole feature was built, verified and committed against a
 backend that had been stopped; the author's first words on seeing it were *"i dont see the
-updates"*.) `--reload` puts uvicorn's watcher on `src/camea/` and restarts the server itself.
-`scripts/check-app-fresh.js` is the belt to this braces — it blocks a turn that leaves a stale or
-dead backend behind. **`--reload` needs `--headless` or `--browser`**: see `serve_reloading`.
+updates"*.) `--reload` watches `src/camea/` and restarts the server itself — **in all three modes**,
+because the server it restarts is a child process rather than a thread (see `ReloadSupervisor`).
+`scripts/check-app-fresh.js` is the belt to these braces: it blocks a turn that leaves a stale or
+dead backend behind. ⚠️ It reloads the **backend**. In `--window` the UI is the built bundle under
+`web/dist`, and nothing here rebuilds that.
 
 ⚠️ **`--window` MUST OWN THE MAIN THREAD.** `webview.start()` is a native message loop. So the server
 goes on a **daemon thread** and the window is the foreground; when the window closes, the process
@@ -80,8 +82,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--port", type=int, default=0,
                    help="bind port. 0 (the default) = an ephemeral free port.")
     p.add_argument("--reload", action="store_true",
-                   help="dev: watch src/camea and restart the server when it changes. Requires "
-                        "--headless or --browser (see the docstring for why not --window).")
+                   help="dev: watch src/camea and restart the server when it changes. Works in all "
+                        "three modes. It reloads the BACKEND — in --window the UI is the built "
+                        "bundle in web/dist, which this does not rebuild.")
     p.add_argument("--open", metavar="DIR", default=None,
                    help="a developer convenience: remember DIR as a dataset root at startup, exactly "
                         "as POST /api/datasets/scan would. It does NOT open a dataset — the app "
@@ -145,12 +148,16 @@ def newest_source_mtime(root: Path) -> float:
     return newest
 
 
-def serve_reloading(port: int, *, headless: bool, debug: bool = False) -> int:
-    """`--reload`: watch `src/camea` and restart the server on a change. Blocks until Ctrl-C.
+class ReloadSupervisor:
+    """`--reload`: watch `src/camea`, and replace the server process whenever it changes.
 
-    The ordinary path puts uvicorn on a daemon thread (see `serve`); a reloader cannot live there,
-    because reloading means replacing a *process*. That is why `--reload` refuses `--window`:
-    pywebview also demands the main thread, and only one of them can have it.
+    ⭐ **The server is a CHILD PROCESS, and that is what makes this work in every mode.** The
+    ordinary path puts uvicorn on a daemon thread (see `serve`), and a reloader cannot live there,
+    because reloading means replacing a *process*, not a thread. Once the server is a child,
+    though, the watcher is just a loop that can run wherever it is convenient: in the foreground
+    for `--headless` / `--browser` (`run_forever`), or on a daemon thread for `--window`
+    (`start_background`), where pywebview's native message loop owns the main thread and cannot
+    share it.
 
     🔴 **WHY THIS IS HAND-ROLLED AND NOT `uvicorn --reload`.** Measured 2026-08-15 on Windows,
     uvicorn 0.51.0. Its reloader detects the change and logs *"WatchFiles detected changes in … .
@@ -177,30 +184,49 @@ def serve_reloading(port: int, *, headless: bool, debug: bool = False) -> int:
     ⚠️ **A dead worker is not fatal here.** A syntax error kills the child on startup; this keeps
     watching so that *fixing* the file brings it back, which is the whole point of a reload loop.
 
+    ⚠️ **A dead server is not fatal here.** A syntax error kills the child on startup; the loop
+    keeps watching so that *fixing* the file brings it back, which is the whole point of a reload
+    loop.
+
     Watching `src/camea` and nothing else is deliberate. `web/` is Vite's job and it hot-reloads
-    already; `tests/` and `docs/` cannot change what the server serves.
+    already; `tests/` and `docs/` cannot change what the server serves. ⚠️ In `--window` the UI is
+    the **built** bundle under `web/dist`, which nothing here rebuilds — this reloads the backend,
+    not the frontend.
     """
-    import subprocess
 
-    watch = Path(camea.__file__).resolve().parent
-    # Read back by `_reload_target()` in the child, which does not get our argv.
-    env = {**os.environ, "CAMEA_HEADLESS": "1" if headless else "0"}
-    argv = [
-        sys.executable, "-m", "uvicorn",
-        "camea.__main__:_reload_target", "--factory",
-        "--host", HOST, "--port", str(port),
-        "--log-level", "info" if debug else "warning",
-    ]
-    if debug:
-        argv.append("--access-log")
+    def __init__(self, port: int, *, headless: bool, debug: bool = False) -> None:
+        self.port = port
+        self.watch = Path(camea.__file__).resolve().parent
+        # Read back by `_reload_target()` in the child, which does not get our argv.
+        self.env = {**os.environ, "CAMEA_HEADLESS": "1" if headless else "0"}
+        self.argv = [
+            sys.executable, "-m", "uvicorn",
+            "camea.__main__:_reload_target", "--factory",
+            "--host", HOST, "--port", str(port),
+            "--log-level", "info" if debug else "warning",
+        ]
+        if debug:
+            self.argv.append("--access-log")
+        self._child: Any = None
+        self._stamp = 0.0
+        self._stopping = threading.Event()
 
-    def start() -> tuple[Any, float]:
+    # --- the child ------------------------------------------------------------------------------
+
+    def _spawn(self) -> None:
+        import subprocess
+
         # The stamp is taken BEFORE the spawn, so a save that lands while the server is still
         # starting up is still newer than it and gets picked up on the next sweep.
-        stamp = newest_source_mtime(watch)
-        return subprocess.Popen(argv, env=env), stamp
+        self._stamp = newest_source_mtime(self.watch)
+        self._child = subprocess.Popen(self.argv, env=self.env)
 
-    def stop(child: Any) -> None:
+    def _kill(self) -> None:
+        import subprocess
+
+        child, self._child = self._child, None
+        if child is None or child.poll() is not None:
+            return
         child.terminate()
         try:
             child.wait(timeout=10)
@@ -208,41 +234,79 @@ def serve_reloading(port: int, *, headless: bool, debug: bool = False) -> int:
             child.kill()
             child.wait()
 
-    print(f"[camea] --reload: watching {watch} — the server restarts itself when it changes.")
-    child, stamp = start()
-    try:
-        while True:
-            time.sleep(RELOAD_POLL_S)
-            if child.poll() is not None:
-                print(f"[camea] the server exited ({child.returncode}). Still watching — save a "
-                      f"file under {watch} and it will start again.")
-                while child.poll() is not None and newest_source_mtime(watch) <= stamp:
-                    time.sleep(RELOAD_POLL_S)
-            elif newest_source_mtime(watch) <= stamp:
-                continue
-            else:
-                print("[camea] --reload: a source file changed. Restarting the server.")
-                stop(child)
-            child, stamp = start()
-    except KeyboardInterrupt:
-        print("\n[camea] stopping.")
-        if child.poll() is None:
-            stop(child)
+    def stop(self) -> None:
+        """Idempotent, and safe from another thread — what `--window` calls when the window closes."""
+        self._stopping.set()
+        self._kill()
+
+    # --- the loop -------------------------------------------------------------------------------
+
+    def _tick(self) -> None:
+        """One sweep. Restarts the child if a source file moved, or if it died and has since been
+        edited (a syntax error, then the fix)."""
+        child = self._child
+        if child is not None and child.poll() is None:
+            if newest_source_mtime(self.watch) <= self._stamp:
+                return
+            print("[camea] --reload: a source file changed. Restarting the server.")
+            self._kill()
+        elif child is not None:
+            if newest_source_mtime(self.watch) <= self._stamp:
+                return  # dead and unchanged — wait for an edit rather than spin on a broken start
+            print(f"[camea] --reload: the server had exited ({child.returncode}); "
+                  f"a source file changed. Starting it again.")
+        self._spawn()
+
+    def start_background(self) -> None:
+        """Serve + watch on a daemon thread. For `--window`, whose main thread is pywebview's."""
+        print(f"[camea] --reload: watching {self.watch} — the server restarts itself when it "
+              f"changes. (The window's UI is web/dist and is NOT rebuilt by this.)")
+        self._spawn()
+
+        def loop() -> None:
+            while not self._stopping.wait(RELOAD_POLL_S):
+                self._tick()
+
+        threading.Thread(target=loop, name="camea-reload", daemon=True).start()
+
+    def run_forever(self) -> int:
+        """Serve + watch in the foreground, until Ctrl-C. For `--headless` and `--browser`."""
+        print(f"[camea] --reload: watching {self.watch} — the server restarts itself when it "
+              f"changes.")
+        self._spawn()
+        try:
+            while not self._stopping.wait(RELOAD_POLL_S):
+                self._tick()
+        except KeyboardInterrupt:
+            print("\n[camea] stopping.")
+        finally:
+            self.stop()
         return 0
 
 
-def open_when_up(url: str, port: int, timeout: float = 30.0) -> None:
+def wait_for_port(port: int, timeout: float = 60.0) -> bool:
+    """Block until something answers on `port`. The `--reload` twin of `wait_until_up`: there is no
+    in-process `server.started` to poll when the server is a child, so ask the socket.
+
+    ⚠️ The timeout is generous on purpose — a cold start here pays a full interpreter launch and
+    the app's imports (~10 s on this machine), and handing the window a URL early is the one
+    mistake `wait_until_up` exists to prevent."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with socket.socket() as s:
+            s.settimeout(0.25)
+            if s.connect_ex((HOST, port)) == 0:
+                return True
+        time.sleep(0.1)
+    return False
+
+
+def open_when_up(url: str, port: int, timeout: float = 60.0) -> None:
     """Open a browser once `port` answers — from a daemon thread, because the caller is about to
-    block in uvicorn's reloader and there is no `server.started` to poll in that mode."""
+    block in the supervisor loop."""
 
     def wait_then_open() -> None:
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with socket.socket() as s:
-                s.settimeout(0.25)
-                if s.connect_ex((HOST, port)) == 0:
-                    break
-            time.sleep(0.1)
+        wait_for_port(port, timeout)
         try:
             webbrowser.open(url)
         except Exception as e:  # noqa: BLE001 — a headless box has no browser; not fatal
@@ -283,12 +347,6 @@ def _remember_root(path: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    if args.reload and not (args.headless or args.browser):
-        print("[camea] --reload needs --headless or --browser: the reloader restarts a child "
-              "process and the native window owns the main thread, so they cannot share one.",
-              file=sys.stderr)
-        return 2
-
     from camea.api import routes_core
     from camea.api.app import create_app
 
@@ -304,9 +362,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.reload:
         print(f"[camea] {camea.__version__} — serving on {url}")
         print(f"[camea] API docs: {url}/docs      schema: {url}/openapi.json")
-        if args.browser:
-            open_when_up(url, port)
-        return serve_reloading(port, headless=args.headless, debug=args.debug)
+        sup = ReloadSupervisor(port, headless=args.headless, debug=args.debug)
+
+        if args.headless or args.browser:
+            if args.browser:
+                open_when_up(url, port)
+            return sup.run_forever()
+
+        # --window + --reload. The supervisor watches on a daemon thread; pywebview keeps the main
+        # one. ⚠️ The window must not be handed the URL before the child is listening — see
+        # `wait_for_port`.
+        from camea.shell import WindowUnavailable, run_window
+
+        sup.start_background()
+        if not wait_for_port(port):
+            sup.stop()
+            print("[camea] the server did not start.", file=sys.stderr)
+            return 1
+        try:
+            run_window(url, debug=args.debug)
+        except WindowUnavailable as e:
+            print(f"[camea] {e}", file=sys.stderr)
+            return 1
+        finally:
+            sup.stop()
+        return 0
 
     # ⚠️ Before `create_app()`: `POST /api/fs/reveal` opens a folder in the OS file manager, which
     # `--window` and `--browser` both should do (the server is on the user's own machine) and

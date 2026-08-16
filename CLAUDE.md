@@ -84,8 +84,9 @@ NumPy. Proven: `uv run` gives `t27.on_gpu() == True` with no DLL surgery.
 uvicorn watches nothing: a running `camea` serves the Python it imported at startup, so after an
 edit under `src/camea/` the app answers happily *in the old code*, and the only symptom is that
 what you changed appears not to have happened. **Always start the dev backend as
-`uv run camea --headless --reload --port 8000`** — that puts uvicorn's watcher on `src/camea/` and
-restarts the server itself. The Stop hook's **`stale-app`** gate is the backstop: it blocks the turn
+`uv run camea --headless --reload --port 8000`** — that watches `src/camea/` and restarts the
+server itself. `--reload` works in **all three modes**, `--window` included (it reloads the
+backend; the window's UI is the built bundle in `web/dist`, which it does not rebuild). The Stop hook's **`stale-app`** gate is the backstop: it blocks the turn
 when a backend is listening but started before your newest change, and when the Vite server is up
 with no backend behind it — a page that loads, paints, and answers nothing. Never tell him something
 is done off a click-through against a stale server. (The frontend needs none of this; Vite

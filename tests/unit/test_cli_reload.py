@@ -6,9 +6,9 @@ change appears not to have happened. See `camea.__main__.serve_reloading` for th
 this is hand-rolled rather than `uvicorn --reload`, and `scripts/check-app-fresh.js` for the gate
 that catches a stale server when nobody used the switch.
 
-What is worth testing here is the part with no server in it: the flag's parsing, its one refusal,
-the mtime sweep the supervisor loops on, and the factory's handover of the headless switch — which
-is a safety setting that would otherwise be silently dropped in every reloaded child.
+What is worth testing here is the part with no server in it: the flag's parsing, the mtime sweep
+the supervisor loops on, and the factory's handover of the headless switch — which is a safety
+setting that would otherwise be silently dropped in every reloaded child.
 """
 
 from __future__ import annotations
@@ -32,12 +32,16 @@ def test_reload_parses() -> None:
 
 
 @pytest.mark.parametrize("argv", [["--reload"], ["--reload", "--window"]])
-def test_reload_refuses_the_native_window(argv: list[str], capsys: pytest.CaptureFixture) -> None:
-    """`--window` (the default mode) and the reloader both demand the main thread — pywebview for
-    its message loop, the supervisor to own the child process. Refused, with a reason, rather than
-    started in a configuration where one of them silently loses."""
-    assert cli.main(argv) == 2
-    assert "--reload needs --headless or --browser" in capsys.readouterr().err
+def test_reload_is_allowed_with_the_native_window(argv: list[str]) -> None:
+    """⚠️ It was NOT, briefly, and he found out by typing `camea --reload` and being refused.
+
+    The first cut rejected `--window` on the grounds that pywebview owns the main thread — true of
+    pywebview, but irrelevant here: the supervisor's server is a child *process*, so the watcher is
+    a loop that fits happily on a daemon thread. The refusal was a leftover from an earlier design
+    that ran uvicorn's in-process reloader. `--window` is the DEFAULT mode, so that refusal met
+    the most ordinary thing anyone would type.
+    """
+    assert cli.parse_args(argv).reload is True
 
 
 def test_newest_source_mtime_ignores_everything_that_is_not_python(tmp_path: Path) -> None:

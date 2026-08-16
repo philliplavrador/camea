@@ -40,8 +40,14 @@ uv run camea --headless --reload --port 8000 --open <a-folder-that-contains-data
 > ⭐ **`--reload` is not optional in a dev loop.** uvicorn watches nothing by default, so without
 > it every edit under `src/camea/` leaves the running server answering out of the code it imported
 > at startup — no error, no warning, just a change that appears not to have happened. `--reload`
-> puts uvicorn's watcher on `src/camea/` and restarts the server itself. It needs `--headless` or
-> `--browser` (the reloader restarts a child process; the native window owns the main thread).
+> watches `src/camea/` and restarts the server itself. It works in all three modes, `--window`
+> included — but it reloads the **backend**: in `--window` the UI is the built bundle in
+> `web/dist`, which nothing here rebuilds.
+>
+> ⚠️ It is **not** `uvicorn --reload`, which is broken on Windows for any server whose output is
+> redirected: uvicorn restarts its worker with a Ctrl-C *console* event and then blocks waiting
+> for a death that never arrives, so it logs `Reloading...` and serves the old code forever
+> (measured, uvicorn 0.51.0). `camea.__main__.ReloadSupervisor` is the ~90-line replacement.
 >
 > The backstop is `scripts/check-app-fresh.js`, wired into the Stop hook as the **`stale-app`**
 > gate: a turn that changes `src/camea/**.py` is blocked if the backend on `:8000` started before
