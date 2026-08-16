@@ -1055,6 +1055,33 @@ test('a plain click is not a zoom, and leaves no history behind it', async ({ pa
   }
 });
 
+// =================================================================================================
+// 7 · the chip-map quality-of-life bundle (2026-08-15)
+// =================================================================================================
+
+test('clicking a busiest-pads row selects that pad, with the same announcement a click gets', async ({
+  page,
+}) => {
+  // ⭐ The list is ranked from the same joined pads the map draws. The fixture routes channel 0 as
+  // the busiest pad on purpose (a FIXTURE fact, permitted in tests/), so the top row is knowable.
+  const id = await openFirstRecording(page, 'busiest pads');
+  try {
+    const list = page.getByTestId(TID.meaChipBusiest);
+    await expect(list).toBeVisible();
+    const first = list.getByTestId(TID.meaChipBusiestPad).first();
+    await expect(first).toHaveAttribute('data-channel', '0');
+
+    await first.click();
+    // The row shows selected, the live region announces it, and the trace panel starts reading it —
+    // exactly what a canvas click produces. One selection mechanism, two doors.
+    await expect(first).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId(TID.meaChipSaid)).toContainText('Electrode', { timeout: SHORT });
+    await expect(page.getByTestId(TID.meaTraceFacts)).toBeVisible({ timeout: SHORT });
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
 test('Home is itself undoable — one Back and he has his stretch again', async ({ page }) => {
   // 🔴 **THE ONE THAT LOOKS LIKE A BUG AND IS NOT.** `home` PUSHES the first view rather than
   // rewinding to it (matplotlib's `_Stack.home`), so a mis-aimed "Whole recording" never costs him

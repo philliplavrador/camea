@@ -42,6 +42,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { MeaChipActivity, MeaChipLayout } from '../../api';
 import { Button } from '../../design';
+import { BusiestPads } from './BusiestPads';
 import {
   SCALE_CAVEAT,
   SILENT_MEANING,
@@ -54,6 +55,9 @@ import styles from './ChipMap.module.css';
 
 /** How far past fit you may zoom in. A pad is ~17 µm; this is plenty to separate neighbours. */
 const MAX_ZOOM_FACTOR = 60;
+/** How big the pitch should look after a jump-to-pad, CSS px — a display choice (the pad and its
+ *  neighbours as clearly separate dots), the same standing as MIN_DOT_PX. Never a chip fact. */
+const JUMP_PITCH_PX = 26;
 /** A press that travels no further than this is a click, not a pan. Same slop as PreviewViewer. */
 const CLICK_SLOP_PX = 4;
 /** A dot never shrinks below this on screen, or a fitted chip is a grey haze. CSS px. */
@@ -236,6 +240,35 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
   const selectedPad = useMemo(
     () => pads.find((p) => p.channel === selected) ?? null,
     [pads, selected],
+  );
+
+  /**
+   * Centre the view on a pad, at a zoom where it is readable. ⚠️ **Never zooms OUT past where he
+   * already is** — a jump that threw away a deeper zoom he set on purpose would cost him his
+   * place. Goes through `clamp`, the same rule every other move obeys.
+   */
+  const flyTo = useCallback(
+    (pad: { x: number; y: number }): void => {
+      if (!(fitScale > 0)) return;
+      setView((v) => {
+        const wanted = JUMP_PITCH_PX / chip.pitch;
+        const s = Math.min(fitScale * MAX_ZOOM_FACTOR, Math.max(fitScale, wanted, v?.scale ?? 0));
+        return clampRef.current({ scale: s, tx: box.w / 2 - pad.x * s, ty: box.h / 2 - pad.y * s });
+      });
+    },
+    [fitScale, chip.pitch, box],
+  );
+
+  /** A pick that arrives by channel (the busiest list): select it — the ring and the live-region
+   *  announcement follow exactly as for a canvas click — and take the view to it. */
+  const jumpTo = useCallback(
+    (channel: number): void => {
+      const pad = pads.find((p) => p.channel === channel);
+      if (!pad) return;
+      onSelect(pad.channel);
+      flyTo(pad);
+    },
+    [pads, onSelect, flyTo],
   );
 
   const hitRadius = useCallback((s: number): number => hitRadiusUm(chip.pitch, s), [chip.pitch]);
@@ -458,7 +491,11 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
         )}
       </div>
 
-      <ChipLegend scale={scale} />
+      {/* Under the stage: the legend and its companions share a row and wrap on a narrow window. */}
+      <div className={styles.below}>
+        <ChipLegend scale={scale} />
+        <BusiestPads pads={pads} selected={selected} onPick={jumpTo} />
+      </div>
     </div>
   );
 }

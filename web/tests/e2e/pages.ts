@@ -136,8 +136,11 @@ export const TID = {
   meaChipExtent: 'mea-chip-extent', //      "220 × 120 pads on the chip · 726 wired up"
   meaChipFit: 'mea-chip-fit',
   meaChipHover: 'mea-chip-hover', //        hover names the electrode without a click
+  meaChipSaid: 'mea-chip-said', //          the visually hidden live region announcing the selection
   meaChipLegend: 'mea-chip-legend', //      the ramp, in real spikes/s
   meaChipLegendSilent: 'mea-chip-legend-silent', // ⭐ the hollow ring, and what it MEANS
+  meaChipBusiest: 'mea-chip-busiest', //    the ranked busiest-pads list beside the legend
+  meaChipBusiestPad: 'mea-chip-busiest-pad', // one row; data-channel; aria-pressed when selected
   meaTraceIdle: 'mea-trace-idle', //        "click a pad on the chip"
   meaTraceFacts: 'mea-trace-facts', //      electrode · channel · position · spikes
   meaTraceChart: 'mea-trace-chart', //      the CLOSE-UP's canvas; shared with the video pipeline
