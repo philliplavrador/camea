@@ -227,3 +227,14 @@ export type FsListResponse = Schemas['FsListResponse'];
 export type FsEntry = Schemas['FsEntry'];
 export type HealthResponse = Schemas['HealthResponse'];
 export type DialogPathResponse = Schemas['DialogPathResponse'];
+
+// ── Videomosaic: the chip's four seatings, drawn (appended by the Orientation-step build) ────────
+// `MeaFootprintPayload` is GEOMETRY ONLY — where each candidate seating puts the recorded pads —
+// so the step can show the four candidates as pictures with no video read and nothing proposed.
+// `OrientationRegionScore`/`OrientationRegionSeating` are the test result's per-region breakdown:
+// each scored region reported alone, with its own clock alignment and its own four seating rows.
+export type MeaFootprintPayload = Schemas['MeaFootprintPayload'];
+export type MeaFootprintSeating = Schemas['MeaFootprintSeating'];
+export type MeaFootprintRegion = Schemas['MeaFootprintRegion'];
+export type OrientationRegionScore = Schemas['OrientationRegionScore'];
+export type OrientationRegionSeating = Schemas['OrientationRegionSeating'];

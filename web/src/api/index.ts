@@ -29,3 +29,5 @@ export * from './mea';
 export * from './meaproject';
 export * from './regions';
 export * from './jobs';
+// ── appended by the Orientation-step build: the four seatings' footprints ──
+export * from './footprint';
