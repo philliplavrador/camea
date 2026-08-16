@@ -294,6 +294,13 @@
   margin-top: 10px;
 }
 
+/* The runner-up ghosts, named in one quiet line (silent when there are none). */
+.rivalNote {
+  margin: 8px 0 0;
+  color: var(--text-faint);
+  font: 500 var(--fs-micro) / 1.4 var(--font-sans);
+}
+
 /* ── the fade ─────────────────────────────────────────────────────────────── */
 /* ⭐ R47 — the block he reaches for. It sits at the top of the selected region's panel and lights
    up while Space is held, so the swap is visibly a mode and not a mystery. */
@@ -463,6 +470,30 @@
   height: 100%;
   display: block;
   object-fit: fill;
+}
+
+/* ⭐ THE RUNNER-UP GHOSTS — the places that nearly won, for the SELECTED region only. Unmistakably
+   not-the-answer: dashed where every real edge is solid, faint, hollow, and inert — no fill, no
+   handle, no pointer (the layer eats nothing and the ghost opts nothing back in). Outline, not
+   border, for the same box-sizing reason as .rect: the box must stay exactly w×h. */
+.ghost {
+  position: absolute;
+  outline: 1px dashed var(--text-faint);
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+/* The rival's score, hung under the ghost so it cannot collide with the real rectangle's name tag
+   (which hangs above its own top edge). */
+.ghostTag {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  padding: 0 4px;
+  color: var(--text-faint);
+  font: 500 var(--fs-micro) / 1.6 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .tag {

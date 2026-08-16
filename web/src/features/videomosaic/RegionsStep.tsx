@@ -69,6 +69,10 @@ const DRAG_MIN_PX = 24;
 const ANGLE_NOTE_DEG = 2;
 /** How far off-stage a quiet outline may be before it is culled. */
 const CULL_PX = 80;
+/** A candidate this close to the record's own corner IS the placement, not a rival. */
+const RIVAL_SAME_SPOT_PX = 1.0;
+/** A ghost's score label needs this much drawn width (SCREEN px, R45.7) before it can say it. */
+const GHOST_LABEL_MIN_PX = 56;
 /** What `[` and `]` move the overlay by. */
 const FADE_STEP = 10;
 /** Above this the overlay counts as "up", so the flash key swaps to the mosaic instead of to it. */
@@ -494,12 +498,59 @@ export function RegionsStep({
       ? Math.hypot(drop.x - selected.x, drop.y - selected.y)
       : 0;
 
+  // ⭐ THE RUNNER-UP SPOTS. The record's `candidates` carry the winner itself at the front, so a
+  // RIVAL is any other place the search scored — filtered by distance from the saved corner rather
+  // than by rank, so a region he dragged elsewhere shows the machine's original pick as the rival
+  // it now is. Evidence, not a warning (R46.7 already owns the warning): drawn only for the
+  // SELECTED region, as dashed ghosts nothing can click, drag or confirm.
+  const rivals = useMemo(
+    () =>
+      selected
+        ? (selected.candidates ?? []).filter(
+            (c) => Math.hypot(c.x - selected.x, c.y - selected.y) > RIVAL_SAME_SPOT_PX,
+          )
+        : [],
+    [selected],
+  );
+
   // ── the overlay (SCREEN space: screen = world × scale + t) ───────────────────────────────────
   const overlay = useCallback(
     (v: ViewFrame): ReactNode => {
       if (!fieldsOn) return null;
       return (
         <div className={styles.layer}>
+          {/* ⭐ The runner-up ghosts — under the real rectangles, culled like them, gone with the
+              Fields switch like them. Same w×h as the selected region at the candidate's TOP-LEFT
+              (R19). The score label appears only once the ghost is drawn wide enough to hold it. */}
+          {selected &&
+            rivals.map((c) => {
+              const left = c.x * v.scale + v.tx;
+              const top = c.y * v.scale + v.ty;
+              const w = selected.w * v.scale;
+              const h = selected.h * v.scale;
+              if (
+                left + w < -CULL_PX ||
+                top + h < -CULL_PX ||
+                left > v.width + CULL_PX ||
+                top > v.height + CULL_PX
+              ) {
+                return null;
+              }
+              return (
+                <div
+                  key={`${c.rank}-${c.x}-${c.y}`}
+                  className={styles.ghost}
+                  data-testid="region-ghost"
+                  data-rank={c.rank}
+                  aria-hidden="true"
+                  style={{ left, top, width: w, height: h }}
+                >
+                  {w >= GHOST_LABEL_MIN_PX && (
+                    <span className={styles.ghostTag}>{f3(c.ncc)}</span>
+                  )}
+                </div>
+              );
+            })}
           {list.map((r) => {
             const isSel = r.id === selectedId;
             const at = cornerOf(r);
@@ -586,6 +637,8 @@ export function RegionsStep({
       onGrabDown,
       onGrabMove,
       onGrabUp,
+      rivals,
+      selected,
       selectedId,
     ],
   );
@@ -853,6 +906,7 @@ export function RegionsStep({
             {selected && (
               <RegionDetail
                 region={selected}
+                rivals={rivals.length}
                 moved={moved}
                 dropped={drop != null && drop.id === selected.id}
                 banner={banner}
@@ -970,6 +1024,8 @@ function Fact({ label, help, children }: { label: string; help?: string; childre
 
 interface RegionDetailProps {
   region: RegionRecord;
+  /** How many runner-up ghosts are on the mosaic for this region. 0 stays silent. */
+  rivals: number;
   /** Mosaic px between the saved corner and the dropped one. 0 when nothing is pending. */
   moved: number;
   dropped: boolean;
@@ -988,6 +1044,7 @@ interface RegionDetailProps {
 
 function RegionDetail({
   region: r,
+  rivals,
   moved,
   dropped,
   banner,
@@ -1211,6 +1268,14 @@ function RegionDetail({
                 }
               />
             </div>
+
+            {/* The dashed outlines on the mosaic, named — quiet, and SILENT when there are none.
+                Evidence, not a warning: the warning above (R46.7) already owns the uncertain case. */}
+            {rivals > 0 && (
+              <p className={styles.rivalNote} data-testid="region-rivals">
+                {rivals} rival spot{rivals === 1 ? '' : 's'} drawn as dashed outlines on the mosaic
+              </p>
+            )}
 
             <details className={styles.details}>
               <summary className={styles.summary} data-testid="region-evidence-toggle">

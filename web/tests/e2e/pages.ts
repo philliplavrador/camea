@@ -442,6 +442,8 @@ export const TID = {
   regionDelete: 'region-delete',
   regionPanel: 'region-panel', //            the readout for the selected region (R3: numbers)
   regionRect: 'region-rect', //              the outline on the mosaic; data-region-id, data-selected
+  regionGhost: 'region-ghost', //            a runner-up spot, dashed and inert; data-rank
+  regionRivals: 'region-rivals', //          "N rival spots drawn" — silent when there are none
   regionDrag: 'region-drag', //              the draggable body of the SELECTED rectangle
   regionDropped: 'region-dropped', //        "dragged, not yet snapped" state
   regionSnap: 'region-snap', //              re-runs the bounded local match at the settled scale

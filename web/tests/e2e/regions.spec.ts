@@ -131,7 +131,7 @@ interface Region {
   margin: number;
   margin_thin: boolean;
   confident: boolean;
-  candidates: unknown[];
+  candidates: { rank: number; x: number; y: number; ncc: number; npix: number; subpixel: boolean }[];
   tried: unknown[];
   electrodes: {
     count: number;
@@ -175,6 +175,8 @@ interface RegionOpts {
   y?: number;
   /** The video FILE behind the row — the label is editable, this is not. */
   sourceName?: string;
+  /** The whole ranked list the search kept — candidates[0] is the winner, the rest are rivals. */
+  candidates?: Region['candidates'];
 }
 
 function craftedRegion(o: RegionOpts = {}): Region {
@@ -202,7 +204,7 @@ function craftedRegion(o: RegionOpts = {}): Region {
     margin: o.marginThin ? 0.012 : 0.134,
     margin_thin: o.marginThin ?? false,
     confident: o.confident ?? true,
-    candidates: [],
+    candidates: o.candidates ?? [],
     tried: [],
     electrodes: (o.electrodes ?? true) ? electrodeBlock() : null,
     status: o.status ?? 'unconfirmed',
@@ -1045,6 +1047,46 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     // the full path waits on hover, so a truncated print is still recoverable
     await expect(fileOf('r-1')).toHaveAttribute('title', 'C:/recordings/session-1/fieldA.avi');
     await expect(fileOf('r-3')).toHaveCount(0);
+  });
+
+  test('the runner-up spots are dashed ghosts — for the selected region only, and never the answer', async ({
+    page,
+  }) => {
+    // rank 1 sits exactly at the region's own corner — it IS the placement and must not ghost
+    const candidates = [
+      { rank: 1, x: 180, y: 140, ncc: 0.8142, npix: 60000, subpixel: true },
+      { rank: 2, x: 600, y: 400, ncc: 0.702, npix: 60000, subpixel: false },
+      { rank: 3, x: 860, y: 610, ncc: 0.655, npix: 60000, subpixel: false },
+    ];
+    await openRegions(page, {
+      regions: [
+        craftedRegion({ id: 'r-1', name: 'field A', candidates }),
+        craftedRegion({ id: 'r-2', name: 'field B', x: 450, y: 340 }),
+      ],
+    });
+
+    // 1 · two ghosts (the winner is not a rival to itself), inert and unmistakable
+    const ghosts = byId(page, TID.regionGhost);
+    await expect(ghosts).toHaveCount(2);
+    await expect(ghosts.first()).toHaveCSS('pointer-events', 'none');
+    await expect(ghosts.first()).toContainText('0.702'); // the score, at a zoom with room for it
+    await expect(byId(page, TID.regionDrag)).toHaveCount(1); // no ghost grew a drag handle
+
+    // …and the panel says so, in one quiet line
+    await expect(byId(page, TID.regionRivals)).toHaveText(/2 rival spots drawn/);
+
+    // 2 · the Fields switch takes the ghosts with everything else
+    await byId(page, TID.regionsFieldsToggle).click();
+    await expect(ghosts).toHaveCount(0);
+    await byId(page, TID.regionsFieldsToggle).click();
+    await expect(ghosts).toHaveCount(2);
+
+    // 3 · they belong to the SELECTED region: r-2 has no candidates, so selecting it clears the
+    //     stage AND the line — silence, not "no rivals recorded"
+    await rowOf(page, 'r-2').click();
+    await expect(rowOf(page, 'r-2')).toHaveAttribute('data-selected', 'true');
+    await expect(ghosts).toHaveCount(0);
+    await expect(byId(page, TID.regionRivals)).toHaveCount(0);
   });
 
   test('R47.5: Files is ONE door, opened by asking — and Escape closes it (R44 intact)', async ({
