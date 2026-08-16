@@ -91,6 +91,8 @@ export const TID = {
   //                                        a card by `data-task`, NEVER by position.
   projectNoInput: 'project-no-input', //    a card whose task has been given nothing yet ("No
   //                                        recordings yet") — where a video's filename would sit
+  projectInputCount: 'project-input-count', // issue 011: an Analyze MEA card with recordings says
+  //                                        "N recordings" there instead; empty keeps NoInput
   // ── Analyze MEA (the standalone task) ───────────────────────────────────────
   meaFeature: 'mea-feature', //             the project screen root
   meaProjectName: 'mea-project-name',
@@ -489,6 +491,8 @@ export const TID = {
   regionConfirm: 'region-confirm', //        ⭐ the human's signature — nothing promotes itself
   regionUnconfirm: 'region-unconfirm',
   regionDelete: 'region-delete',
+  regionLocateAgain: 'region-locate-again', // re-run one row's placement from the project's own
+  //                                         copy of its video — lands unconfirmed again (R46.6)
   regionPanel: 'region-panel', //            the readout for the selected region (R3: numbers)
   regionRect: 'region-rect', //              the outline on the mosaic; data-region-id, data-selected
   regionGhost: 'region-ghost', //            a runner-up spot, dashed and inert; data-rank

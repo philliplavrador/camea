@@ -203,6 +203,12 @@
   flex: none;
 }
 
+/* "Locate again" rides the facts line, pushed to its far end — the head stays name/state/Delete. */
+.again {
+  flex: none;
+  margin-left: auto;
+}
+
 /* ── the selected region's readout ────────────────────────────────────────── */
 
 .detail {

@@ -45,6 +45,7 @@ import {
   locateRegion,
   outputUrl,
   pickOpenFilePath,
+  relocateRegion,
   snapRegion,
   updateRegion,
   useJob,
@@ -131,9 +132,9 @@ export function RegionsStep({
   const [path, setPath] = useState('');
   const [label, setLabel] = useState('');
 
-  // the one job this step can hold (locate OR snap — both are `locate_region`, one lease)
+  // the one job this step can hold (locate, locate-again OR snap — all `locate_region`, one lease)
   const [jobId, setJobId] = useState<string | null>(null);
-  const [jobKind, setJobKind] = useState<'locate' | 'snap' | null>(null);
+  const [jobKind, setJobKind] = useState<'locate' | 'snap' | 'relocate' | null>(null);
   const job = useJob(jobId);
   const running = jobId != null && !job.isTerminal;
 
@@ -267,6 +268,26 @@ export function RegionsStep({
     if (!picked) return;
     setPath(normalisePath(picked));
   }, []);
+
+  // ⭐ "Locate again" — re-run one row's placement from the project's own copy of its recording.
+  // R46.6: the machine proposes again, so the row comes back `unconfirmed` with fresh evidence —
+  // no are-you-sure, because the Confirm button IS the confirm step.
+  const relocate = useCallback(
+    async (r: RegionRecord) => {
+      if (running) return;
+      setJobError(null);
+      setBanner(null);
+      try {
+        const ref = await relocateRegion(analysisId, r.id);
+        setJobKind('relocate');
+        setJobId(ref.job_id);
+      } catch (e) {
+        // "map the electrodes first" / "the project's copy … is missing" — instructions, verbatim.
+        setJobError(errMsg(e));
+      }
+    },
+    [analysisId, running],
+  );
 
   const cancel = useCallback(async () => {
     if (!jobId) return;
@@ -913,6 +934,20 @@ export function RegionsStep({
                           <span className={styles.factLabel}>electrodes</span>
                           <span data-testid="region-electrodes">{e ? e.count : '—'}</span>
                         </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={styles.again}
+                          data-testid="region-locate-again"
+                          title="Search the whole mosaic again for this recording, using the project's own copy of its video"
+                          disabled={running}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            void relocate(r);
+                          }}
+                        >
+                          Locate again
+                        </Button>
                       </span>
                     </div>
                   );

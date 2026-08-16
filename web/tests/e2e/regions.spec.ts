@@ -237,6 +237,7 @@ interface Stub {
   /** Every request body that reached the wire. */
   locates: Record<string, unknown>[];
   snaps: Record<string, unknown>[];
+  relocates: Record<string, unknown>[];
   patches: Record<string, unknown>[];
   /** Region ids DELETEd — the keyboard's Delete must travel the same wire as the button's. */
   deletes: string[];
@@ -266,6 +267,7 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
     jobRegion: null,
     locates: [],
     snaps: [],
+    relocates: [],
     patches: [],
     deletes: [],
   };
@@ -330,6 +332,23 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
       id: `r-${stub.regions.length + 1}`,
       name: body.name?.trim() || 'survey.avi',
     });
+    await json(route, { job_id: JOB_ID, kind: 'locate_region', state: 'queued' }, 202);
+  });
+  // "Locate again" — the server re-runs the placement from the project's OWN copy of the video.
+  // The result is machine-proposed again (R46.6): unconfirmed, `machine`, fresh evidence.
+  await page.route(new RegExp(`${ROUTES.regions}/relocate$`), async (route, req) => {
+    const body = req.postDataJSON() as { region_id: string };
+    stub.relocates.push(body as unknown as Record<string, unknown>);
+    const was = stub.regions.find((g) => g.id === body.region_id) ?? craftedRegion();
+    stub.jobRegion = {
+      ...was,
+      status: 'unconfirmed',
+      placed_by: 'machine',
+      ncc: 0.9012,
+      margin: 0.201,
+      located_at: '2026-08-16T10:00:00Z',
+      source_stamp: BUILT_AT,
+    };
     await json(route, { job_id: JOB_ID, kind: 'locate_region', state: 'queued' }, 202);
   });
   await page.route(new RegExp(`${ROUTES.regions}/snap$`), async (route, req) => {
@@ -583,6 +602,41 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(byId(page, TID.regionSnapMargin)).toHaveText('0.087');
     await expect(byId(page, TID.regionPlacedBy)).toHaveText('hand+snap');
     await expect(byId(page, TID.regionStatus)).toHaveText('unconfirmed');
+  });
+
+  test('R46.6: "Locate again" re-runs a row from the project’s own copy — and lands unconfirmed again', async ({
+    page,
+  }) => {
+    // Confirmed on purpose: the re-run must take the signature back, because the placement is the
+    // machine's proposal again (R46.6 — no are-you-sure; Confirm IS the confirm step).
+    const stub = await openRegions(page, { regions: [craftedRegion({ status: 'confirmed' })] });
+    await expect(byId(page, TID.regionStatus)).toHaveText('confirmed');
+
+    // 1 · the row's own action, and the wire carries the region id — NO path: the server already
+    //     holds the project's copy of the recording
+    await rowOf(page, 'r-1').getByTestId(TID.regionLocateAgain).click();
+    await expect.poll(() => stub.relocates.length, { timeout: SHORT }).toBe(1);
+    expect(stub.relocates[0]).toMatchObject({ region_id: 'r-1' });
+    expect(stub.relocates[0].path).toBeUndefined();
+    await expect(byId(page, TID.regionsPath)).toHaveValue('');
+
+    // 2 · the job lands: SAME row (replaced, never duplicated), back to unconfirmed, fresh numbers
+    await expect(rowOf(page, 'r-1')).toHaveAttribute('data-status', 'unconfirmed', {
+      timeout: SHORT,
+    });
+    await expect(byId(page, TID.regionStatus)).toHaveText('unconfirmed');
+    await expect(byId(page, TID.regionPlacedBy)).toHaveText('machine');
+    await expect(rowOf(page, 'r-1').getByTestId(TID.regionNcc)).toHaveText('0.9012');
+    await expect(byId(page, TID.regionRow)).toHaveCount(1);
+
+    // 3 · disabled while any job runs — locate, snap and locate-again share the one lease
+    stub.hold = true;
+    await rowOf(page, 'r-1').getByTestId(TID.regionLocateAgain).click();
+    await expect.poll(() => stub.relocates.length, { timeout: SHORT }).toBe(2);
+    await expect(byId(page, TID.regionsProgress)).toBeVisible({ timeout: SHORT });
+    await expect(rowOf(page, 'r-1').getByTestId(TID.regionLocateAgain)).toBeDisabled();
+    stub.hold = false;
+    await expect(byId(page, TID.regionsProgress)).toHaveCount(0, { timeout: SHORT });
   });
 
   // ───────────────────────────────────────────────────────────────────────────────────────────

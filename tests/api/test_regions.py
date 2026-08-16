@@ -590,6 +590,61 @@ def test_deleting_a_region_forgets_it_and_takes_its_still_with_it(client, scene,
     assert len(body.splitlines()) == 1, "the CSV is rewritten whole, so it forgets too"
 
 
+def test_locate_again_answers_from_the_projects_own_copy(client, scene, built, tmp_path):
+    """⭐ **"Locate again" resolves the video INSIDE the project** (R46.9). The original file the
+    user once named can be long gone — the project adopted the recording, so re-locating reads
+    `<project>/videos/<name>` and never the absolute path the document happens to remember.
+
+    ⭐ R46.6: the re-located region is machine-proposed again — `unconfirmed`, `machine`, fresh
+    evidence — even though he had confirmed the old placement. Confirm is the one confirm step.
+    """
+    import shutil
+
+    aid = built["aid"]
+    # Locate from a throwaway copy, then DELETE it: only the project's own copy remains.
+    gone = tmp_path / "field one.avi"
+    shutil.copy2(scene["recording"], gone)
+    region = _locate(client, aid, str(gone), name="field one")["region"]
+    gone.unlink()
+
+    ok = client.patch("/api/videomosaic/regions",
+                      json={"analysis_id": aid, "region_id": region["id"],
+                            "status": "confirmed"})
+    assert ok.status_code == 200
+
+    r = client.post("/api/videomosaic/regions/relocate",
+                    json={"analysis_id": aid, "region_id": region["id"]})
+    assert r.status_code == 202, r.text
+    again = run_job(client, r.json()["job_id"])["result"]["region"]
+
+    assert again["id"] == region["id"]
+    assert again["status"] == "unconfirmed" and again["placed_by"] == "machine"
+    assert again["name"] == "field one", "the label is his and survives the re-run"
+    assert (again["x"], again["y"], again["w"], again["h"]) == \
+        (region["x"], region["y"], region["w"], region["h"]), \
+        "same mosaic, same recording — the measurement repeats"
+    # replaced IN PLACE: one region, one row, and the saved document agrees
+    listed = client.get(f"/api/videomosaic/{aid}/regions").json()["regions"]
+    assert [g["id"] for g in listed] == [region["id"]]
+    assert listed[0]["status"] == "unconfirmed"
+
+
+def test_locate_again_refuses_what_it_cannot_do(client, scene, built):
+    """A region id the project never had is a 404; a project whose own copy of the recording is
+    gone gets a sentence that says what to do, never a job that fails later."""
+    aid, folder = built["aid"], built["folder"]
+    r = client.post("/api/videomosaic/regions/relocate",
+                    json={"analysis_id": aid, "region_id": "ghost"})
+    assert r.status_code == 404 and err(r)["code"] == "not_found"
+
+    region = _locate(client, aid, scene["recording"])["region"]
+    (folder / "videos" / "field one.avi").unlink()
+    r2 = client.post("/api/videomosaic/regions/relocate",
+                     json={"analysis_id": aid, "region_id": region["id"]})
+    assert r2.status_code == 409 and err(r2)["code"] == "refused"
+    assert "copy" in err(r2)["message"], err(r2)["message"]
+
+
 def test_a_rebuild_makes_every_location_stale(client, scene, built):
     """⭐ A location is a statement about a particular mosaic. Rebuild it and the canvas may be a
     different size, in a different place, from different keyframes — so every rectangle placed on

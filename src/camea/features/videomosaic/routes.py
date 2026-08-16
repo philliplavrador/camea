@@ -52,6 +52,7 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     RegionRecord,
     RegionsPayload,
     RegionUpdateRequest,
+    RelocateRegionRequest,
     SnapRegionRequest,
     VideoBuildRequest,
     VideoElectrodeMapRequest,
@@ -660,6 +661,72 @@ def post_snap_region(body: SnapRegionRequest) -> dict:
         rs = [updated if str(r.get("id")) == body.region_id else r for r in rs]
         saved = _save_regions(ws, analysis_id, rs)
         return {"kind": REGION_JOB_KIND, "analysis_id": analysis_id, "region": updated,
+                "doc": core_document.jsonable(saved)}
+
+    try:
+        job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE)
+    except Busy as e:
+        raise ApiError(409, "busy", str(e)) from e
+    return {"job_id": job.job_id, "kind": REGION_JOB_KIND}
+
+
+@router.post("/api/videomosaic/regions/relocate", status_code=202, response_model=JobRef)
+def post_relocate_region(body: RelocateRegionRequest) -> dict:
+    """`POST /api/videomosaic/regions/relocate` -> **202 `JobRef`**. *"Locate this one again"* —
+    re-run one region's placement from the project's OWN copy of its recording.
+
+    ⭐ The video is resolved by NAME inside `<project>/videos/` (R46.9: the project holds its
+    files). ⛔ Never by the absolute path the document happens to remember — that string goes
+    stale the moment a project store moves, while the filename inside `videos/` moves WITH the
+    project.
+
+    ⭐ R46.6: the re-located region is machine-proposed again. It lands `unconfirmed` with fresh
+    evidence and its still rewritten, whatever it was before — the Confirm button is the one
+    confirm step, so there is no are-you-sure here.
+    """
+    analysis_id = body.analysis_id
+    doc, ws = _video_project(analysis_id)
+    out_dir = ws.outputs_dir(analysis_id)
+    try:
+        vcanvas.mosaic_path(doc, out_dir)
+    except vcanvas.MosaicMissing as e:
+        raise ApiError(409, "refused", str(e)) from e
+    if not (doc.get("electrodes") or {}).get("built_at"):
+        raise ApiError(409, "refused",
+                       "map the electrodes first — locating a recording is only useful once "
+                       "the electrodes under it can be named")
+    target = next((r for r in (doc.get("regions") or [])
+                   if str(r.get("id")) == body.region_id), None)
+    if target is None:
+        raise ApiError(404, "not_found", f"no region {body.region_id!r} in this project")
+
+    src = dict(target.get("source") or {})
+    fname = Path(str(src.get("path") or src.get("name") or "")).name
+    video = (Path(ws.videos_dir(analysis_id)) / fname) if fname else None
+    if video is None or not video.is_file():
+        raise ApiError(409, "refused",
+                       "the project's copy of this recording is missing"
+                       f"{f' ({fname})' if fname else ''} — delete the region and add the "
+                       "recording again")
+
+    base = _region_basename(doc, analysis_id)
+    label = str(target.get("name") or "")
+    rid = str(target.get("id"))
+
+    def fn(report, cancel):
+        from . import regions as vregions
+
+        fresh, _ = core_document.load_analysis(ws, analysis_id)
+        region = vregions.locate_region(fresh, out_dir, base, video, name=label, rid=rid,
+                                        report=report, cancel=cancel)
+        rs = list(fresh.get("regions") or [])
+        # Replace IN PLACE — the row must not jump to the bottom of the list for being refreshed.
+        if any(str(r.get("id")) == rid for r in rs):
+            rs = [region if str(r.get("id")) == rid else r for r in rs]
+        else:
+            rs.append(region)
+        saved = _save_regions(ws, analysis_id, rs)
+        return {"kind": REGION_JOB_KIND, "analysis_id": analysis_id, "region": region,
                 "doc": core_document.jsonable(saved)}
 
     try:

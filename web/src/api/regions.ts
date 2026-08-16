@@ -51,6 +51,23 @@ export async function locateRegion(analysisId: string, path: string, name = ''):
 }
 
 /**
+ * *"Locate this one again"* (`POST /api/videomosaic/regions/relocate` → 202 `JobRef`, job kind
+ * `locate_region`, same lease) — re-run a region's placement from the project's OWN copy of its
+ * recording. The server resolves the video by NAME inside `<project>/videos/` (R46.9), never by a
+ * remembered absolute path.
+ *
+ * ⭐ R46.6 — the result is machine-proposed again: it lands `unconfirmed` with fresh evidence and
+ * its still rewritten, whatever the region was before. No are-you-sure: Confirm IS the confirm step.
+ */
+export async function relocateRegion(analysisId: string, regionId: string): Promise<JobRef> {
+  return unwrap(
+    await api.POST('/api/videomosaic/regions/relocate', {
+      body: { analysis_id: analysisId, region_id: regionId },
+    }),
+  );
+}
+
+/**
  * *"I dragged it here, now snap it"* (`POST /api/videomosaic/regions/snap` → 202 `JobRef`) — a bounded
  * local re-search seeded at the top-left the user dropped. `x`/`y` are TOP-LEFT corners in mosaic px
  * (R19), never centres.
