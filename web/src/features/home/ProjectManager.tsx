@@ -46,8 +46,24 @@ const taskLabel = (feature: string): string => TASK_LABEL[feature] ?? feature;
  * before this one was a wrapper around a folder or a file, so the line was never empty; `Analyze
  * MEA` is a **shelf**, filled from inside the project, and it is born with nothing on it. A blank
  * line there would read as a card that failed to load rather than one that is simply new.
+ *
+ * ⚠️ Since issue 011 this is the EMPTY-shelf line only: a shelf with recordings on it puts its
+ * count there instead (`inputCount` below) — the card was saying "No recordings yet" over a shelf
+ * of five, which is a false statement on the screen whose job is state.
  */
 const NO_INPUT_YET: Record<string, string> = { mea: 'No recordings yet' };
+
+/**
+ * ⭐ **What an `Analyze MEA` card says instead of a dataset name: how much is on its shelf**
+ * (issue 011). The count rides in `n_tiles` — the summary's one per-feature count slot, the same
+ * one the mosaic fills with tiles and videomosaic with placed keyframes — and each feature's card
+ * renders it in its own words. Derived server-side from the document's shelf when the summary is
+ * built, never stored; `null`/`0` fall through to `NO_INPUT_YET`, which is the honest empty state.
+ */
+function inputCount(p: AnalysisSummary): string | null {
+  if (p.feature !== 'mea' || p.n_tiles == null || p.n_tiles === 0) return null;
+  return `${p.n_tiles} recording${p.n_tiles === 1 ? '' : 's'}`;
+}
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -264,6 +280,12 @@ function ProjectCard({ project: p, onOpen, onRename, onDelete, onExport }: Proje
           {p.dataset ? (
             <span className={styles.dataset} title={p.dataset}>
               {p.dataset}
+            </span>
+          ) : inputCount(p) ? (
+            // ⭐ Issue 011: a shelf with recordings on it says HOW MANY, where every other task
+            // shows its input's name. "No recordings yet" is kept for the truly empty shelf only.
+            <span className={styles.dataset} data-testid="project-input-count">
+              {inputCount(p)}
             </span>
           ) : (
             <span className={styles.datasetEmpty} data-testid="project-no-input">

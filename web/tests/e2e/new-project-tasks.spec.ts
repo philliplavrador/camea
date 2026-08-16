@@ -25,7 +25,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { test, expect, type Page } from '@playwright/test';
-import { SHORT } from './fixture';
+import { MEA_FIXTURE, SHORT } from './fixture';
 import { TID } from './pages';
 
 /**
@@ -208,6 +208,33 @@ test('Simultaneous MEA + 2P is still the door to the video pipeline', async ({ p
   // The Video step, unchanged — one path box and no folder question (R44).
   await expect(page.getByTestId('np-video-path')).toBeVisible({ timeout: SHORT });
   await expect(page.getByTestId('into-field')).toHaveCount(0);
+});
+
+test('an Analyze MEA card counts its shelf — "No recordings yet" is for the truly empty one', async ({
+  page,
+}) => {
+  // 🔴 ISSUE 011: the card said "No recordings yet" no matter how many the shelf held — a false
+  // statement on the first screen he sees. Now the count (derived from the shelf when the summary
+  // is built, never stored) sits where every other task shows its input's name. The empty card's
+  // line is asserted by the ordinary-card test below; this one is the full shelf.
+  const paths = MEA_FIXTURE.labels.map((l) => `${MEA_FIXTURE.dir}/P0000/${l}/data.raw.h5`);
+  const res = await page.request.post('/api/mea/projects', {
+    data: { name: 'card that counts', paths },
+  });
+  expect(res.status()).toBe(201);
+  const id = (await res.json()).analysis_id as string;
+  try {
+    await page.goto('/');
+    const card = page.locator(`[data-testid="${TID.projectCard}"][data-project-id="${id}"]`);
+    await expect(card).toBeVisible({ timeout: FIRST_PAINT });
+    await expect(card.getByTestId(TID.projectInputCount)).toHaveText(
+      `${MEA_FIXTURE.count} recordings`,
+    );
+    // The false line is gone from this card — kept only for the genuinely empty shelf.
+    await expect(card.getByTestId(TID.projectNoInput)).toHaveCount(0);
+  } finally {
+    await deleteProject(page, id);
+  }
 });
 
 test('an Analyze MEA project is an ordinary card: it lists, renames, reopens and deletes', async ({

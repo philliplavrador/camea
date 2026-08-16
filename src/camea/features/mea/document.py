@@ -60,10 +60,16 @@ THE TWO ANSWERS CORE ASKS EVERY FEATURE FOR, AND WHY THIS ONE ANSWERS THEM THE W
    hook must start finding it in the payload. It is not optional and there is no flag; see
    `core.document.FeatureHooks.machine_evidence`.
 
-2. **`counts` -> {}.** `n_tiles` / `n_anchored` / `n_excluded` are sweep words. This project
-   has no tiles and anchors nothing, so it reports none of them and the home-screen card shows
-   no count rather than a zero that would read as "nothing done yet". (`read_analysis` leaves
-   them `None`, and `ProjectCard` already renders that as absent.)
+2. **`counts` -> `{"n_tiles": <how many recordings are on the shelf>}`.** ⭐ Reversed from
+   001's `{}` by **issue 011**: the home card said *"No recordings yet"* no matter how many the
+   shelf held — a false statement on the screen whose whole job is telling him what state his
+   projects are in. `n_tiles` is the summary's one per-feature count slot (the mosaic puts its
+   tiles there, videomosaic its placed keyframes), and the card renders it in this feature's own
+   words — *"5 recordings"* — keeping *"No recordings yet"* for the genuinely empty shelf, which
+   is a real state. ⚠️ The count is **derived from the document's own shelf when the summary is
+   built, never stored beside it** (the issue file is explicit; I1): the list itself is the
+   source, so the two cannot disagree. `n_anchored`/`n_excluded` stay unset — those really are
+   sweep words, and this feature anchors nothing and excludes nothing.
 
 `identity` is `""` for the same reason the mosaic's is `"11-348"`: it is the feature's slot
 *within* a dataset, used by the load-time range guard. An MEA project has no dataset and no
@@ -148,8 +154,14 @@ def validate(doc: dict) -> list[Problem]:
 
 
 def counts(doc: dict) -> dict:
-    """No tiles, no anchors, nothing excluded — see the module docstring, point 2."""
-    return {}
+    """⭐ The one count this feature owns: how many recordings are on the shelf (issue 011).
+
+    Derived from the document's own `recordings` list at summary-build time — never stored as a
+    second number the list could drift from. See the module docstring, point 2, for why this
+    rides in `n_tiles` (the summary's per-feature count slot) and why 001's `{}` was reversed.
+    """
+    recs = doc.get("recordings")
+    return {"n_tiles": len(recs) if isinstance(recs, list) else 0}
 
 
 def identity(doc: dict) -> str:

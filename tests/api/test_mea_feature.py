@@ -187,6 +187,32 @@ def test_it_lists_renames_reopens_and_deletes_like_any_other_project(client):
     assert store_entries() == []
 
 
+def test_the_summary_counts_the_shelf_so_the_home_card_can_say_it(client, session):
+    """⭐ **ISSUE 011.** The home card said *"No recordings yet"* over a shelf of five, because
+    `AnalysisSummary` carried no count an MEA project fills. The feature's `counts` hook now puts
+    the shelf's length in `n_tiles` — the summary's per-feature count slot, the mosaic's own
+    precedent — **derived from the document when the summary is built, never stored** (the issue
+    file is explicit). An empty shelf stays 0, which is the card's honest "No recordings yet"."""
+    a = _create(client, "counted", paths=session)
+    aid = a["analysis_id"]
+    assert a["n_tiles"] == len(session) == 2
+
+    listed = next(x for x in client.get("/api/projects").json()["analyses"]
+                  if x["analysis_id"] == aid)
+    assert listed["n_tiles"] == 2
+    # The sweep words stay unset: this feature anchors nothing and excludes nothing.
+    assert listed["n_anchored"] is None and listed["n_excluded"] is None
+
+    # Remove one -> the summary follows the document, because nothing was stored beside it.
+    rid = _shelf(client, aid)[0]["id"]
+    assert client.delete(f"/api/mea/{aid}/recordings/{rid}").status_code == 200
+    assert client.get(f"/api/projects/{aid}").json()["n_tiles"] == 1
+
+    # ...and the genuinely empty shelf reports 0 — the state "No recordings yet" was written for.
+    empty = _create(client, "born empty")
+    assert empty["n_tiles"] == 0
+
+
 def test_two_projects_of_two_tasks_live_side_by_side(client, survey_video):
     """A `mea` project and a `videomosaic` project in one store, each opening as itself. This is
     the thing plan 001 exists to make true, and the only test that checks both at once."""

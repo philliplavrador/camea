@@ -4,10 +4,10 @@ title: An Analyze MEA project's card says "No recordings yet" no matter how many
 kind: bug
 tier: medium
 confidence: high
-status: open
+status: fixed
 found: 2026-08-15
 found-while: building plan 004 — opening his real MEA project in a browser to check the trace panel
-resolved-by: ~
+resolved-by: fixed on the spot, 2026-08-16 — the mea counts hook fills n_tiles from the shelf
 ---
 
 # 011 — An Analyze MEA project's card says "No recordings yet" no matter how many it has
@@ -62,3 +62,16 @@ recording is ever written down.
 Not caused by plan 004 and not touched by it; this has been true since the shelf existed
 (plan 002/003). Filed rather than fixed because it is outside that plan's scope and changing a
 shared API response model deserves its own change.
+
+## How it was resolved
+
+Exactly the shape "Where to start" proposed, taking the existing per-feature count slot rather
+than a new MEA-only field: `features/mea/document.py :: counts` now returns
+`{"n_tiles": len(doc["recordings"])}` — **derived from the document's shelf when the summary is
+built, never stored beside it** (I1) — and the card
+([ProjectManager.tsx](../../../web/src/features/home/ProjectManager.tsx)) renders it in the
+feature's own words: *"5 recordings"*, with *"No recordings yet"* kept for the genuinely empty
+shelf (count 0), the state the line was written for. Proven by
+`tests/api/test_mea_feature.py :: test_the_summary_counts_the_shelf_so_the_home_card_can_say_it`
+(the count follows a remove, because nothing was stored) and the
+`new-project-tasks.spec.ts` card test.
