@@ -87,3 +87,12 @@ When it is green (or ratcheted), delete `deferred: true` from the `mypy` row in
 Whether any of the 48 is an actual runtime bug rather than a stale annotation. The three
 `ProjectSet` / `Workspace` ones look like the best candidates and nothing else was read.
 The other 45 were not classified.
+
+## Update 2026-08-16 — 48 → 58 errors in 16 files (re-measured)
+
+The overnight QoL waves lifted the count from 48/14 to 58/16. Almost all of the growth is ONE
+pre-existing pattern repeated by new routes: `load_analysis`/`save_analysis` are annotated as taking
+`Workspace` while every caller in both feature route files hands them the `ProjectSet` (16 of the 58
+are exactly this). Fixing that annotation at the source erases the growth and most of the route-file
+errors in one edit. One genuinely new one rode in with the busy-label plumbing:
+`core/jobs.py:463` — `Event | None` where `Event` is expected.
