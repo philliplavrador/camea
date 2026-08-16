@@ -33,7 +33,7 @@ from typing import Callable
 
 import numpy as np
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.exceptions import HTTPException
 from fastapi.responses import FileResponse, Response
 
@@ -55,6 +55,7 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     SnapRegionRequest,
     VideoBuildRequest,
     VideoElectrodeMapRequest,
+    VideoMeaEnvelopeStatus,
     VideoProbeRequest,
     VideoSource,
 )
@@ -891,16 +892,30 @@ def post_mea_attach(body: MeaAttachRequest) -> dict:
 
 @router.get("/api/videomosaic/{analysis_id}/mea/trace", response_model=ElectrodeTracePayload)
 def get_mea_trace(analysis_id: str, electrode: str, run_id: str | None = None,
-                  t0: float = 0.0, t1: float | None = None) -> dict:
+                  t0: float = 0.0, t1: float | None = None,
+                  max_points: int | None = Query(
+                      default=None, gt=0,
+                      description="Reduce to at most this many min/max columns instead of "
+                                  "returning raw samples. Lifts the window cap entirely.",
+                  )) -> dict:
     """One electrode's stored trace and its spikes, for the window `[t0, t1)`.
 
     `electrode` is the Camea grid id the user clicked (`"col-row"`). Resolving it to a MaxWell
     channel needs the chip's seating, which is why `orientation` rides on the response: while it is
     unconfirmed the caller must present the identity as provisional.
 
+    ⭐ **`max_points` IS HOW THE WHOLE RECORDING FITS DOWN THE WIRE** (the trace-viewer port,
+    2026-08-15 — the same two-resolution contract as the Analyze MEA trace route). Without it,
+    this returns raw samples and `MAX_TRACE_SECONDS` still applies — the old contract, unmoved.
+    With it, the answer is a **min/max envelope** of at most `max_points` columns and the cap does
+    not apply. A window too wide to read live is served from the per-run envelope cache in the
+    project store; when that cache is missing the route says so by name (409, `needs: envelope`)
+    rather than blocking for half a minute — `POST .../mea/envelopes` builds it.
+
     ⚠️ `health` is not decoration. The published MaxWell decoder does not reconstruct this
     project's files, and a railed window drawn without that caveat looks exactly like a real
-    silent electrode. See `core/mearecording.py`.
+    silent electrode. See `core/mearecording.py`. On the cached path `health` is the cache's own
+    **whole-recording** figure (`health_scope: "recording"`), never a window's.
     """
     from camea.core import mearecording  # noqa: PLC0415
 
@@ -936,14 +951,20 @@ def get_mea_trace(analysis_id: str, electrode: str, run_id: str | None = None,
         chip = orientation.chip_electrode(col, row, cols=cols, rows=rows, stride=stride)
         channel = r.channel_of_electrode(chip)
         base = {"electrode": electrode, "run_id": info.run_id, "chip_electrode": chip,
-                "orientation": orientation.as_dict(), "sampling_hz": info.sampling_hz}
+                "orientation": orientation.as_dict(), "sampling_hz": info.sampling_hz,
+                "max_window_s": MAX_TRACE_SECONDS}
         if channel is None:
             # The ordinary case: this pad was never routed. A fact, not a failure.
             return {**base, "recorded": False, "t0_s": 0.0, "t1_s": 0.0}
 
         end = info.duration_s if t1 is None else float(t1)
         start = max(0.0, float(t0))
-        end = min(end, start + MAX_TRACE_SECONDS, info.duration_s)
+        if max_points is None:
+            # ⚠️ Silent clamp, deliberately kept: this is the old contract and other callers rely
+            # on it. The client labels its axis from `t0_s`/`t1_s`, never from what it asked for.
+            end = min(end, start + MAX_TRACE_SECONDS, info.duration_s)
+        else:
+            end = min(end, info.duration_s)
         if end <= start:
             raise ApiError(422, "refused", "the requested window is empty")
 
@@ -958,19 +979,71 @@ def get_mea_trace(analysis_id: str, electrode: str, run_id: str | None = None,
                "duration_s": info.duration_s,
                "spikes": [{"t_s": float(s["t_s"]), "amplitude_uv": float(s["amplitude_uv"])}
                           for s in window]}
+        n_wanted = int(round((end - start) * (info.sampling_hz or 1.0)))
         try:
-            out["trace_uv"] = [float(v) for v in r.trace(channel, start, end)]
-            out["health"] = r.trace_health(channel, start, end).as_dict()
-            # ⭐ The 2P lamp marks, for THIS window only. Bounded deliberately: over the whole
-            # recording this is a full pass of the raw stream (~16 s) and has no business inside a
-            # request. A shorter floor than the default too — a mark clipped by the window edge
-            # would vanish entirely at 0.5 s, and the point of drawing them is that they are there.
-            out["sync_episodes"] = [
-                e.as_dict() for e in r.sync_episodes(start, end, min_duration_s=0.02)
-            ]
+            if max_points is None:
+                # ── the OLD contract, byte for byte: raw samples, capped, window health ────────
+                out["resolution"] = "samples"
+                out["trace_uv"] = [float(v) for v in r.trace(channel, start, end)]
+                out["health"] = r.trace_health(channel, start, end).as_dict()
+                out["health_scope"] = "window"
+                # ⭐ The 2P lamp marks, for THIS window only. Bounded deliberately: over the whole
+                # recording this is a full pass of the raw stream (~16 s) and has no business
+                # inside a request. A shorter floor than the default too — a mark clipped by the
+                # window edge would vanish entirely at 0.5 s, and the point of drawing them is
+                # that they are there.
+                out["sync_episodes"] = [
+                    e.as_dict() for e in r.sync_episodes(start, end,
+                                                         min_duration_s=SYNC_MIN_EPISODE_S)
+                ]
+            elif n_wanted <= LIVE_READ_MAX_SAMPLES:
+                # ── narrow enough to read for real, folded to the columns asked for ────────────
+                trace, health = r.trace_window(channel, start, end)
+                lo, hi = mearecording.minmax_columns(trace, max_points)
+                out["resolution"] = "envelope"
+                out["min_uv"] = [float(v) for v in lo]
+                out["max_uv"] = [float(v) for v in hi]
+                out["health"] = health.as_dict()
+                out["health_scope"] = "window"
+                out["sync_episodes"] = _mea_sync_for(ws, analysis_id, paths[0], start, end,
+                                                     live=r)
+            else:
+                # ⭐ **TOO WIDE TO READ LIVE — THIS IS WHAT THE PER-RUN CACHE IS FOR.** `raw` is
+                # chunked across every channel, so reading one channel's 300 s costs 12-23 s.
+                # That is not a request; it is the one-off job that wrote the cache (R44: inside
+                # the project store, never beside the source recording).
+                env = _load_run_envelope(ws, analysis_id, paths[0])
+                if env is None:
+                    raise ApiError(
+                        409, "refused",
+                        "Camea has not read this recording end to end yet, so it cannot show "
+                        "you the whole of it at once. It is a one-off job of about a minute per "
+                        "recording.",
+                        {"run_id": info.run_id, "needs": "envelope"},
+                    )
+                got = env.window(channel, start, end, max_points)
+                if got is None:
+                    return {**base, "recorded": False, "t0_s": 0.0, "t1_s": 0.0}
+                lo, hi, w0, w1 = got
+                out["resolution"] = "envelope"
+                out["min_uv"] = [float(v) for v in lo]
+                out["max_uv"] = [float(v) for v in hi]
+                # ⚠️ The buckets actually covered, not what was asked for — the client labels its
+                # axis from these, because the cache cannot honestly report a finer edge.
+                out["t0_s"], out["t1_s"] = w0, w1
+                eh = env.health_of(channel)
+                out["health"] = eh.as_dict() if eh is not None else None
+                out["health_scope"] = "recording"
+                out["sync_episodes"] = _mea_sync_for(ws, analysis_id, paths[0], w0, w1)
         except mearecording.RawUndecodable as e:
             # The spikes above are still good — return them and say the waveform is unavailable.
             out["trace_uv"] = []
+            out["min_uv"] = []
+            out["max_uv"] = []
+            # ⚠️ Say which SHAPE was asked for even though nothing was read — `resolution` is the
+            # field a client reads instead of guessing from which array is populated, and here
+            # neither is.
+            out["resolution"] = "samples" if max_points is None else "envelope"
             out["health"] = None
             out["decode_error"] = str(e)
         return out
@@ -1345,5 +1418,241 @@ def get_mea_footprint(analysis_id: str, run_id: str | None = None) -> dict:
             "orientation": _orientation_of(block).as_dict(), "seatings": seatings}
 
 
+# =================================================================================================
+# ⭐ MEA ENVELOPES (videomosaic) — the one-off read that lets the voltage panel show a whole
+# recording *(trace-viewer port, 2026-08-15)*
+# =================================================================================================
+#
+# The Analyze MEA feature grew this first (`features/mea/recordings.py`); this is the videomosaic
+# twin, and the differences are the attachment's, not the idea's:
+#
+# * ⛔ **The recordings are REFERENCED, not copied** — `mea_dir` may point into the read-only data
+#   mirror, so the cache must NEVER be written beside the source file. 🔴 R44: it lives in the
+#   project store, under `<project>/recordings/<run key>/` — the same folder-per-recording layout
+#   the Analyze MEA feature uses, already covered by `Project.own_entries`.
+# * ⭐ **A recording is addressed by its RUN** (`p.parent.name`), because that is how every other
+#   route on this attachment addresses one. The cache key also carries a hash of the resolved
+#   source path (the `_video_key` move), so re-attaching a different session whose runs happen to
+#   share a name is a cache MISS, never a stale answer.
+# * ⭐ **THE LAMP MARKS ARE CACHED IN THE SAME JOB.** This panel shades the 2P sync episodes, and
+#   over a whole recording finding them is a full pass of the raw stream (~16 s) — unaffordable in
+#   a request, cheap beside a job that is reading every byte anyway. They land in a `sync.json`
+#   sidecar; a missing sidecar is a cache miss (narrow windows still compute them live), never an
+#   error.
+#
+# ⚠️ The job returns the shared `MeaEnvelopeResult` shape (kind `mea_envelope`) with the run key in
+# `recording_id` — same work, same result model, no second union member.
+
+#: How many stored samples one request may read live off the disk before the precomputed envelope
+#: is used instead. ⚠️ A cost budget about THIS MACHINE, compared against a sample count derived
+#: from the file's own `sampling_hz` — never a number of seconds. Same number and same measurement
+#: as the Analyze MEA route's; deliberately not imported from it (a feature must not depend on
+#: another feature).
+LIVE_READ_MAX_SAMPLES = 200_000
+
+#: Columns in a stored envelope. A rendering choice (a wide canvas is ~1-2k columns), not a
+#: dataset fact. Same value as the Analyze MEA feature's, duplicated for the same reason as above.
+ENVELOPE_BUCKETS = 8192
+
+#: The floor for a reported lamp episode, in seconds. Shorter than `sync_episodes`' default on
+#: purpose — a mark clipped by a window edge would vanish entirely at 0.5 s, and the point of
+#: drawing them is that they are there. One constant for all three serving paths, so the marks do
+#: not appear and disappear as the user zooms.
+SYNC_MIN_EPISODE_S = 0.02
+
+#: The sidecar the envelope job writes beside the npz, holding the whole recording's lamp marks.
+MEA_SYNC_FILENAME = "sync.json"
+MEA_SYNC_VERSION = 1
+
+#: `"<analysis_id>:<run key>" -> job id` for the envelope builds this process started. The same
+#: bookkeeping the Analyze MEA feature keeps: the truth about *readiness* is the file on disk;
+#: this only answers "is one being built right now".
+_MEA_ENVELOPE_JOBS: dict[str, str] = {}
+
+
+def _run_key(rec_path: Path) -> str:
+    """A stable per-recording cache key: the run folder plus a hash of the resolved source path
+    (the `_video_key` move). ⛔ The hash is load-bearing: `mea_dir` can be re-attached, and two
+    sessions may both have a run `000690` — a key of the run name alone would serve one session's
+    cache as the other's data."""
+    import hashlib
+
+    rp = rec_path.resolve().as_posix().lower()
+    return f"{rec_path.parent.name}-{hashlib.sha1(rp.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _envelope_paths(ws, analysis_id: str, rec_path: Path) -> tuple[Path, Path]:
+    """`(envelope.npz, sync.json)` for one attached recording — always inside the project (R44)."""
+    from camea.core import mearecording  # noqa: PLC0415
+
+    d = Path(ws.recordings_dir(analysis_id)) / _run_key(rec_path)
+    return d / mearecording.ENVELOPE_FILENAME, d / MEA_SYNC_FILENAME
+
+
+def _load_run_envelope(ws, analysis_id: str, rec_path: Path):
+    """The cached envelope, or None. None is a cache miss, never an error."""
+    from camea.core import mearecording  # noqa: PLC0415
+
+    env_path, _sync = _envelope_paths(ws, analysis_id, rec_path)
+    return mearecording.load_envelope(env_path)
+
+
+def _load_run_sync(ws, analysis_id: str, rec_path: Path) -> list[dict] | None:
+    """The cached whole-recording lamp marks, or None when the sidecar is absent or unreadable.
+    Same rule as `load_envelope`: a cache that will not load is a cache miss."""
+    import json
+
+    _env, sync_path = _envelope_paths(ws, analysis_id, rec_path)
+    try:
+        data = json.loads(sync_path.read_text(encoding="utf-8"))
+        if int(data.get("version", 0)) != MEA_SYNC_VERSION:
+            return None
+        eps = data.get("episodes")
+        return [dict(e) for e in eps] if isinstance(eps, list) else None
+    except Exception:  # noqa: BLE001 — deliberately everything; see `load_envelope`'s reasoning
+        return None
+
+
+def _mea_sync_for(ws, analysis_id: str, rec_path: Path, start: float, end: float,
+                  live=None) -> list[dict]:
+    """The lamp marks overlapping `[start, end)`, from the sidecar when it exists.
+
+    ⭐ The sidecar carries each episode's FULL extent (they are absolute timestamps in the
+    recording, whatever window revealed them), so an episode clipped by the window edge is still
+    reported whole. With no sidecar and a `live` recording handle, the window is scanned live —
+    the pre-cache behaviour, affordable because this path only runs on windows narrow enough to
+    read live. With neither, the honest answer is none."""
+    eps = _load_run_sync(ws, analysis_id, rec_path)
+    if eps is not None:
+        return [e for e in eps
+                if float(e.get("end_s", 0.0)) > start and float(e.get("start_s", 0.0)) < end]
+    if live is not None:
+        return [e.as_dict()
+                for e in live.sync_episodes(start, end, min_duration_s=SYNC_MIN_EPISODE_S)]
+    return []
+
+
+def _start_mea_envelope(ws, analysis_id: str, rec_path: Path, *,
+                        force: bool = False) -> str | None:
+    """Build one attached recording's envelope (and its lamp-mark sidecar) in the background.
+    -> the job id, or None when there is nothing to do (already built, or already building)."""
+    from camea.core import mearecording as mr  # noqa: PLC0415
+
+    key = f"{analysis_id}:{_run_key(rec_path)}"
+    jid = _MEA_ENVELOPE_JOBS.get(key)
+    if jid:
+        live_job = JOBS.get(jid)
+        if live_job is not None and live_job.state in ("queued", "running"):
+            return live_job.job_id
+    env_path, sync_path = _envelope_paths(ws, analysis_id, rec_path)
+    if not force and mr.load_envelope(env_path) is not None:
+        return None
+    run = rec_path.parent.name
+
+    def fn(report, cancel) -> dict:
+        import json
+
+        from camea.core import jobs as core_jobs  # noqa: PLC0415
+        from camea.core import mearecording as mrr  # noqa: PLC0415
+
+        emit = core_jobs.report_adapter(report)
+        with mrr.MeaRecording(rec_path) as opened:
+            if opened.info().n_samples == 0:
+                # No continuous trace was ever recorded (an ActivityScan). Nothing to reduce,
+                # and nothing wrong.
+                return {"kind": "mea_envelope", "analysis_id": analysis_id,
+                        "recording_id": run, "built": False, "n_buckets": 0}
+
+            def on_progress(frac: float) -> None:
+                core_jobs.check_cancelled(cancel, "envelope")
+                emit(phase="envelope", pct=100.0 * frac,
+                     message=f"{int(frac * 100)}% of the recording read")
+
+            env = opened.build_envelope(ENVELOPE_BUCKETS, progress=on_progress)
+            # ⭐ The lamp marks, while every byte is already in reach. A second bounded pass
+            # (~16 s on a real 300 s recording) beside a job that already took ~40 s — the only
+            # affordable moment these will ever have.
+            try:
+                episodes = [e.as_dict()
+                            for e in opened.sync_episodes(min_duration_s=SYNC_MIN_EPISODE_S)]
+            except mrr.MeaError:
+                episodes = None                              # no sidecar: narrow windows scan live
+        core_workspace.refuse_write(env_path)                # 🔴 R44 belt-and-braces
+        mr.save_envelope(env_path, env)
+        if episodes is not None:
+            core_workspace.refuse_write(sync_path)
+            tmp = sync_path.with_suffix(sync_path.suffix + ".part")
+            tmp.write_text(json.dumps({"version": MEA_SYNC_VERSION, "episodes": episodes}),
+                           encoding="utf-8")
+            tmp.replace(sync_path)                           # atomic: the rename is the commit
+        return {"kind": "mea_envelope", "analysis_id": analysis_id, "recording_id": run,
+                "built": True, "n_buckets": int(env.n_buckets)}
+
+    job = JOBS.submit_thread("mea_envelope", fn)
+    _MEA_ENVELOPE_JOBS[key] = job.job_id
+    return job.job_id
+
+
+def _attached_paths(analysis_id: str) -> tuple[list[Path], core_project.ProjectSet]:
+    """Every recording the attachment references, or the refusal that says none is attached."""
+    from camea.core import mearecording  # noqa: PLC0415
+
+    doc, ws = _video_project(analysis_id)
+    block = _mea_block(doc)
+    if not block.get("mea_dir"):
+        raise ApiError(409, "refused", "no MEA recording is attached to this project")
+    return mearecording.find_recordings(block["mea_dir"]), ws
+
+
+def _mea_envelope_status(analysis_id: str, started: list[str] | None = None) -> dict:
+    from camea.core import mearecording  # noqa: PLC0415
+
+    paths, ws = _attached_paths(analysis_id)
+    rows = []
+    for p in paths:
+        jid = _MEA_ENVELOPE_JOBS.get(f"{analysis_id}:{_run_key(p)}", "")
+        job = JOBS.get(jid) if jid else None
+        running = job is not None and job.state in ("queued", "running")
+        env_path, _sync = _envelope_paths(ws, analysis_id, p)
+        rows.append({
+            "run_id": p.parent.name,
+            "label": f"{p.parent.parent.name}/{p.parent.name}",
+            "ready": mearecording.load_envelope(env_path) is not None,
+            "job_id": job.job_id if running and job is not None else "",
+            "pct": float(job.progress.pct) if running and job is not None and job.progress
+                   else 0.0,
+        })
+    return {"analysis_id": analysis_id, "recordings": rows, "started": list(started or [])}
+
+
+@router.get("/api/videomosaic/{analysis_id}/mea/envelopes",
+            response_model=VideoMeaEnvelopeStatus)
+def get_mea_envelopes(analysis_id: str) -> dict:
+    """Which attached recordings can be shown whole yet, and what is still being read.
+
+    ⚠️ `ready: false` never means a recording is broken — it means only the narrow windows the app
+    can read live are available for it, which is still a working trace panel."""
+    return _mea_envelope_status(analysis_id)
+
+
+@router.post("/api/videomosaic/{analysis_id}/mea/envelopes",
+             response_model=VideoMeaEnvelopeStatus)
+def post_mea_envelopes(analysis_id: str, force: bool = False) -> dict:
+    """⭐ **THE BACKFILL** — read every attached recording end to end, once, so the voltage panel
+    can show the whole of any electrode. The panel's "Read it now" button calls this.
+
+    Recordings that already have a cache are skipped, so calling this twice costs nothing.
+    ⛔ Nothing is written beside the source recording — `mea_dir` may be the read-only mirror;
+    the cache lives in the project store (R44)."""
+    paths, ws = _attached_paths(analysis_id)
+    started = []
+    for p in paths:
+        jid = _start_mea_envelope(ws, analysis_id, p, force=force)
+        if jid:
+            started.append(jid)
+    return _mea_envelope_status(analysis_id, started)
+
+
 __all__ = ["router", "ApiError", "set_store", "JOB_KIND", "REGION_JOB_KIND",
-           "ORIENTATION_JOB_KIND", "FEATURE"]
+           "ORIENTATION_JOB_KIND", "FEATURE", "MAX_TRACE_SECONDS", "LIVE_READ_MAX_SAMPLES",
+           "ENVELOPE_BUCKETS"]

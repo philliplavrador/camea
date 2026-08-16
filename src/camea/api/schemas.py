@@ -2487,6 +2487,91 @@ class ElectrodeTracePayload(Res):
     duration_s: float = Field(default=0.0, description="The whole recording, so the UI can scrub.")
     sync_episodes: list[MeaSyncEpisode] = Field(default_factory=list)
     orientation: MeaOrientation = Field(default_factory=MeaOrientation)
+    # ── appended by the trace-viewer port (2026-08-15): the whole recording in one payload ───────
+    # ⭐ The same two-resolution contract `MeaChannelTrace` carries (its docstring is the long
+    # form): without `max_points` the route returns raw samples and `MAX_TRACE_SECONDS` caps the
+    # window — the old contract, unmoved. With it, the answer is a min/max envelope and the cap
+    # does not apply, so the whole recording is one small response. All defaulted, additively.
+    resolution: Literal["samples", "envelope"] = Field(
+        default="samples",
+        description="⭐ Which picture came back. `samples` — `trace_uv` holds real samples. "
+        "`envelope` — `min_uv`/`max_uv` hold the lowest and highest value per column, and "
+        "`trace_uv` is empty. ⛔ Read this field; never infer it from which array is populated, "
+        "because a genuinely empty window populates neither.",
+    )
+    min_uv: list[float] = Field(
+        default_factory=list,
+        description="Envelope only: the lowest µV in each column, evenly spaced across "
+        "`[t0_s, t1_s)`. Same length as `max_uv`.",
+    )
+    max_uv: list[float] = Field(
+        default_factory=list,
+        description="Envelope only: the highest µV in each column. ⭐ Min/max, never every n-th "
+        "sample — a spike is 5-16 samples wide at 20 kHz and sub-sampling would draw a calm line "
+        "over a burst.",
+    )
+    max_window_s: float = Field(
+        default=0.0,
+        description="⚠️ The widest window `resolution: samples` can return — a transport limit of "
+        "this build, **not** a fact about anyone's recording. Ask for anything wider with "
+        "`max_points` and you get an envelope instead. Sent so the client never writes 30 down.",
+    )
+    health_scope: Literal["window", "recording"] = Field(
+        default="window",
+        description="⚠️ What `health` was measured over. A window read live reports that window "
+        "(`window`); a wide view served from the precomputed cache reports the whole recording "
+        "(`recording`). The rail fraction genuinely differs with window length, so a UI quoting "
+        "the percentage must say which it is quoting.",
+    )
+    decode_error: str = Field(
+        default="",
+        description="⛔ Set when HDF5 could not run MaxWell's filter at all — the decoder library "
+        "is absent. Said on the page; the spikes above are still returned and still correct.",
+    )
+
+
+# ── the whole recording on the videomosaic side (trace-viewer port, 2026-08-15) ──────────────────
+# ⭐ The videomosaic twins of `MeaEnvelopeRow`/`MeaEnvelopeStatus` below. Separate models on
+# purpose: here a recording is addressed by its acquisition **run** (the videomosaic attachment
+# references recordings in place; there is no shelf and no per-recording id), and a model whose
+# field claims a `recording_id` that is actually a run folder name would be a small lie the
+# generated client then repeats.
+
+
+class VideoMeaEnvelopeRow(Res):
+    """Whether one attached recording can be shown whole yet — one row per run under `mea_dir`."""
+
+    run_id: str = Field(description='The acquisition run, e.g. "000690" — how the videomosaic '
+                        "attachment addresses a recording.")
+    label: str = ""
+    ready: bool = Field(
+        description="⭐ True when the whole recording can be drawn at once. False means only the "
+        "narrow windows the app can read live are available — never that the recording is broken.",
+    )
+    job_id: str = Field(default="", description="The build running for it, if one is.")
+    pct: float = Field(default=0.0, description="0-100 while a build is running.")
+
+
+class VideoMeaEnvelopeStatus(Res):
+    """`GET`/`POST /api/videomosaic/{analysis_id}/mea/envelopes` — the state of the one-off read
+    that lets the voltage panel show a whole recording, and the way to start it.
+
+    ⭐ Unlike the Analyze MEA task, nothing here runs at import: the attachment only records a
+    path, so **every** envelope on this side comes from this backfill (or from the trace panel's
+    "Read it now" button, which calls the same POST). 🔴 R44: the cache lands inside the project
+    store, keyed by run — never beside the source recording, whose folder may be the read-only
+    data mirror.
+    """
+
+    analysis_id: str
+    recordings: list[VideoMeaEnvelopeRow] = Field(default_factory=list)
+    started: list[str] = Field(
+        default_factory=list,
+        description="The jobs now reading a recording end to end as a result of this call — poll "
+        "these, or poll `recordings[].ready`. Empty on a `GET`, and empty on a `POST` when "
+        "everything was already built. A `POST` issued while an earlier build is still running "
+        "reports that job's id rather than starting a duplicate.",
+    )
 
 
 # =================================================================================================
@@ -3177,6 +3262,8 @@ __all__ = [
     "MeaSpike",
     "MeaSyncEpisode",
     "TraceHealthPayload",
+    "VideoMeaEnvelopeRow",
+    "VideoMeaEnvelopeStatus",
     # Analyze MEA (its own feature — see the section note; not the videomosaic `Mea*` models)
     "CreateMeaProjectRequest",
     "AddMeaRecordingsRequest",

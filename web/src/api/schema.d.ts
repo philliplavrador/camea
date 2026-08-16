@@ -1688,9 +1688,18 @@ export interface paths {
          *     channel needs the chip's seating, which is why `orientation` rides on the response: while it is
          *     unconfirmed the caller must present the identity as provisional.
          *
+         *     ⭐ **`max_points` IS HOW THE WHOLE RECORDING FITS DOWN THE WIRE** (the trace-viewer port,
+         *     2026-08-15 — the same two-resolution contract as the Analyze MEA trace route). Without it,
+         *     this returns raw samples and `MAX_TRACE_SECONDS` still applies — the old contract, unmoved.
+         *     With it, the answer is a **min/max envelope** of at most `max_points` columns and the cap does
+         *     not apply. A window too wide to read live is served from the per-run envelope cache in the
+         *     project store; when that cache is missing the route says so by name (409, `needs: envelope`)
+         *     rather than blocking for half a minute — `POST .../mea/envelopes` builds it.
+         *
          *     ⚠️ `health` is not decoration. The published MaxWell decoder does not reconstruct this
          *     project's files, and a railed window drawn without that caveat looks exactly like a real
-         *     silent electrode. See `core/mearecording.py`.
+         *     silent electrode. See `core/mearecording.py`. On the cached path `health` is the cache's own
+         *     **whole-recording** figure (`health_scope: "recording"`), never a window's.
          */
         get: operations["get_mea_trace_api_videomosaic__analysis_id__mea_trace_get"];
         put?: never;
@@ -1756,6 +1765,38 @@ export interface paths {
         get: operations["get_mea_footprint_api_videomosaic_mea_footprint_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/videomosaic/{analysis_id}/mea/envelopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Mea Envelopes
+         * @description Which attached recordings can be shown whole yet, and what is still being read.
+         *
+         *     ⚠️ `ready: false` never means a recording is broken — it means only the narrow windows the app
+         *     can read live are available for it, which is still a working trace panel.
+         */
+        get: operations["get_mea_envelopes_api_videomosaic__analysis_id__mea_envelopes_get"];
+        put?: never;
+        /**
+         * Post Mea Envelopes
+         * @description ⭐ **THE BACKFILL** — read every attached recording end to end, once, so the voltage panel
+         *     can show the whole of any electrode. The panel's "Read it now" button calls this.
+         *
+         *     Recordings that already have a cache are skipped, so calling this twice costs nothing.
+         *     ⛔ Nothing is written beside the source recording — `mea_dir` may be the read-only mirror;
+         *     the cache lives in the project store (R44).
+         */
+        post: operations["post_mea_envelopes_api_videomosaic__analysis_id__mea_envelopes_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3135,6 +3176,42 @@ export interface components {
             /** Sync Episodes */
             sync_episodes?: components["schemas"]["MeaSyncEpisode"][];
             orientation?: components["schemas"]["MeaOrientation"];
+            /**
+             * Resolution
+             * @description ⭐ Which picture came back. `samples` — `trace_uv` holds real samples. `envelope` — `min_uv`/`max_uv` hold the lowest and highest value per column, and `trace_uv` is empty. ⛔ Read this field; never infer it from which array is populated, because a genuinely empty window populates neither.
+             * @default samples
+             * @enum {string}
+             */
+            resolution: "samples" | "envelope";
+            /**
+             * Min Uv
+             * @description Envelope only: the lowest µV in each column, evenly spaced across `[t0_s, t1_s)`. Same length as `max_uv`.
+             */
+            min_uv?: number[];
+            /**
+             * Max Uv
+             * @description Envelope only: the highest µV in each column. ⭐ Min/max, never every n-th sample — a spike is 5-16 samples wide at 20 kHz and sub-sampling would draw a calm line over a burst.
+             */
+            max_uv?: number[];
+            /**
+             * Max Window S
+             * @description ⚠️ The widest window `resolution: samples` can return — a transport limit of this build, **not** a fact about anyone's recording. Ask for anything wider with `max_points` and you get an envelope instead. Sent so the client never writes 30 down.
+             * @default 0
+             */
+            max_window_s: number;
+            /**
+             * Health Scope
+             * @description ⚠️ What `health` was measured over. A window read live reports that window (`window`); a wide view served from the precomputed cache reports the whole recording (`recording`). The rail fraction genuinely differs with window length, so a UI quoting the percentage must say which it is quoting.
+             * @default window
+             * @enum {string}
+             */
+            health_scope: "window" | "recording";
+            /**
+             * Decode Error
+             * @description ⛔ Set when HDF5 could not run MaxWell's filter at all — the decoder library is absent. Said on the page; the spikes above are still returned and still correct.
+             * @default
+             */
+            decode_error: string;
         };
         /**
          * ExportRequest
@@ -6370,6 +6447,61 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * VideoMeaEnvelopeRow
+         * @description Whether one attached recording can be shown whole yet — one row per run under `mea_dir`.
+         */
+        VideoMeaEnvelopeRow: {
+            /**
+             * Run Id
+             * @description The acquisition run, e.g. "000690" — how the videomosaic attachment addresses a recording.
+             */
+            run_id: string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+            /**
+             * Ready
+             * @description ⭐ True when the whole recording can be drawn at once. False means only the narrow windows the app can read live are available — never that the recording is broken.
+             */
+            ready: boolean;
+            /**
+             * Job Id
+             * @description The build running for it, if one is.
+             * @default
+             */
+            job_id: string;
+            /**
+             * Pct
+             * @description 0-100 while a build is running.
+             * @default 0
+             */
+            pct: number;
+        };
+        /**
+         * VideoMeaEnvelopeStatus
+         * @description `GET`/`POST /api/videomosaic/{analysis_id}/mea/envelopes` — the state of the one-off read
+         *     that lets the voltage panel show a whole recording, and the way to start it.
+         *
+         *     ⭐ Unlike the Analyze MEA task, nothing here runs at import: the attachment only records a
+         *     path, so **every** envelope on this side comes from this backfill (or from the trace panel's
+         *     "Read it now" button, which calls the same POST). 🔴 R44: the cache lands inside the project
+         *     store, keyed by run — never beside the source recording, whose folder may be the read-only
+         *     data mirror.
+         */
+        VideoMeaEnvelopeStatus: {
+            /** Analysis Id */
+            analysis_id: string;
+            /** Recordings */
+            recordings?: components["schemas"]["VideoMeaEnvelopeRow"][];
+            /**
+             * Started
+             * @description The jobs now reading a recording end to end as a result of this call — poll these, or poll `recordings[].ready`. Empty on a `GET`, and empty on a `POST` when everything was already built. A `POST` issued while an earlier build is still running reports that job's id rather than starting a duplicate.
+             */
+            started?: string[];
+        };
+        /**
          * VideoMosaicBuildResult
          * @description `job.result` of a `videomosaic_build` job. The document is already SAVED server-side
          *     when this appears — the UI refetches or takes `doc` as-is; it never authors.
@@ -8737,6 +8869,8 @@ export interface operations {
                 run_id?: string | null;
                 t0?: number;
                 t1?: number | null;
+                /** @description Reduce to at most this many min/max columns instead of returning raw samples. Lifts the window cap entirely. */
+                max_points?: number | null;
             };
             header?: never;
             path: {
@@ -8818,6 +8952,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MeaFootprintPayload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_mea_envelopes_api_videomosaic__analysis_id__mea_envelopes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VideoMeaEnvelopeStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_mea_envelopes_api_videomosaic__analysis_id__mea_envelopes_post: {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VideoMeaEnvelopeStatus"];
                 };
             };
             /** @description Validation Error */
