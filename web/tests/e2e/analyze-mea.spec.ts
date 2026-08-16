@@ -880,6 +880,40 @@ test('one recording at a time — opening one replaces the shelf, and Back retur
   }
 });
 
+test('reopening the project returns to the recording that was open — this session only', async ({
+  page,
+}) => {
+  // ⭐ 2026-08-16. The open recording is remembered in sessionStorage keyed by project — a reload
+  // (or leaving and coming back) lands where he left off, and the browser session ending forgets
+  // it naturally. ⛔ The "a recording id is not an address" stance stands: nothing goes in the URL.
+  const id = await openFirstRecording(page, 'reopen restore');
+  try {
+    expect(page.url(), 'a recording id must never become an address').not.toContain('rec_');
+
+    await page.reload();
+    await expect(page.getByTestId(TID.meaOpen)).toBeVisible({ timeout: FIRST_PAINT });
+    await expect(page.getByTestId(TID.meaOpenLabel)).toHaveText(MEA_FIXTURE.labels[0]);
+    await expect(page.getByTestId(TID.meaShelf)).toHaveCount(0);
+
+    // Closing is remembered too: back on the shelf, a reload stays on the shelf.
+    await page.getByTestId(TID.meaCloseRecording).click();
+    await expect(page.getByTestId(TID.meaShelf)).toBeVisible({ timeout: SHORT });
+    await page.reload();
+    await expect(page.getByTestId(TID.meaShelf)).toBeVisible({ timeout: FIRST_PAINT });
+    await expect(page.getByTestId(TID.meaOpen)).toHaveCount(0);
+
+    // A stored id that no longer exists falls back to the shelf — never an error screen.
+    await page.evaluate(
+      ([aid]) => window.sessionStorage.setItem(`camea.mea.open.${aid}`, 'rec_gone99'),
+      [id],
+    );
+    await page.reload();
+    await expect(page.getByTestId(TID.meaShelf)).toBeVisible({ timeout: FIRST_PAINT });
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
 // =================================================================================================
 // 6 · the whole recording, and dragging a stretch to zoom into it (plan 004)
 // =================================================================================================

@@ -23,12 +23,42 @@
 // say where they go and the drawer arrives with them — not before, as an empty button.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { listRecordings } from '../../api';
 import type { AnalysisSummary } from '../../api';
 import { Help } from '../../design';
 import { OpenRecording } from './OpenRecording';
 import { RecordingShelf } from './RecordingShelf';
 import styles from './MeaFeature.module.css';
+
+/**
+ * ⭐ **REOPEN WHERE YOU LEFT OFF — this browser session only** (2026-08-16). The open recording is
+ * remembered in `sessionStorage`, keyed by project, so reopening the project (or reloading the
+ * tab) returns to the recording that was open, and closing the browser forgets it naturally.
+ *
+ * ⛔ **THE "a recording id is not an address" STANCE STANDS.** This deliberately does NOT put the
+ * id in the URL: nothing becomes typeable, linkable, or bookmarkable past a Remove. It is the same
+ * ephemeral UI state it always was, parked one step further out than component state so a reload
+ * does not lose his place.
+ */
+const openKey = (analysisId: string): string => `camea.mea.open.${analysisId}`;
+
+function storedOpenId(analysisId: string): string | null {
+  try {
+    return window.sessionStorage.getItem(openKey(analysisId));
+  } catch {
+    return null; // storage can be denied; losing the convenience must not lose the screen
+  }
+}
+
+function rememberOpenId(analysisId: string, id: string | null): void {
+  try {
+    if (id) window.sessionStorage.setItem(openKey(analysisId), id);
+    else window.sessionStorage.removeItem(openKey(analysisId));
+  } catch {
+    /* same rule */
+  }
+}
 
 /**
  * What **+ Add recordings** does. ⭐ **His ruling, 2026-08-14: behind the `?`.** It was a line of
@@ -59,8 +89,47 @@ export function MeaFeature({ project }: MeaFeatureProps) {
   // ⭐ **THE SHELF OR ONE RECORDING, NEVER BOTH** — *"you pick one to load, and it opens it up"*
   // (his interview, 2026-08-14). Held here rather than in the URL because a recording id is a
   // Camea-minted handle on a row of the document, not an address the user should be able to type
-  // or bookmark past a `Remove`.
-  const [openId, setOpenId] = useState<string | null>(null);
+  // or bookmark past a `Remove`. Seeded from sessionStorage so reopening the project returns to
+  // the recording that was open — see the header note.
+  const [openId, setOpenIdState] = useState<string | null>(() => storedOpenId(project.analysis_id));
+  // The id that came from storage, if one did — verified once against the live shelf below.
+  const restoring = useRef<string | null>(openId);
+
+  const setOpenId = useCallback(
+    (id: string | null) => {
+      restoring.current = null; // an explicit choice outranks a pending verification
+      setOpenIdState(id);
+      rememberOpenId(project.analysis_id, id);
+    },
+    [project.analysis_id],
+  );
+
+  // ⚠️ **A STORED ID IS A HINT, NOT A FACT** — the recording may have been removed in another tab
+  // of this session. Verified against the shelf exactly once; unknown -> fall back to the shelf
+  // (and forget the hint) rather than leaving an error screen where his list should be.
+  useEffect(() => {
+    const id = restoring.current;
+    if (!id) return;
+    let cancelled = false;
+    void listRecordings(project.analysis_id)
+      .then((s) => {
+        if (cancelled || restoring.current !== id) return;
+        restoring.current = null;
+        if (!(s.recordings ?? []).some((r) => r.id === id)) {
+          setOpenIdState(null);
+          rememberOpenId(project.analysis_id, null);
+        }
+      })
+      .catch(() => {
+        if (cancelled || restoring.current !== id) return;
+        restoring.current = null;
+        setOpenIdState(null);
+        rememberOpenId(project.analysis_id, null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.analysis_id]);
 
   return (
     <section className={styles.pane} data-testid="mea-feature">
