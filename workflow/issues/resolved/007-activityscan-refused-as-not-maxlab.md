@@ -3,10 +3,10 @@ id: 007
 title: A real MaxLab ActivityScan is refused as "not a MaxLab recording"
 kind: defect
 tier: medium
-status: open
+status: fixed
 found: 2026-08-14
 found-while: building plan 002 — the import tick-list was pointed at the real 260801 MEA folder and one of the six rows came back refused
-resolved-by: ~
+resolved-by: fixed 2026-08-16 — the refusal now names the assay from the file's own declaration; analysing an ActivityScan remains future work (see "What remains")
 ---
 
 # 007 — `ActivityScan/000687` is a genuine MaxLab file, and Camea says it is not one
@@ -81,3 +81,37 @@ visibly**, by name, on the list (plan 002's tick-list lists unreadable files rat
 them). Nothing is lost, nothing is corrupted, and the five recordings he actually asked about all
 work. It is not one of the four that are always high: no dataset knowledge, no write to `data/`, no
 engine change, no write outside `<project>/outputs/`.
+
+## How it was resolved
+
+**The titled defect — the lie — is fixed; the approved scope was the honest refusal, not
+ActivityScan support.** `MeaRecording.info()` no longer escapes with a bare h5py `KeyError` when
+`groups/routed/raw` is absent: it reads **the file's own assay declaration** —
+`assay/inputs/spike_only` and `assay/script_id`, exactly the two fields docs/MAXWELL.md §7.6 points
+at — and raises the new `core.mearecording.UnsupportedAssay` with a sentence built from what the
+file says about itself. `features/mea/recordings.facts_of` turns that into a refusal that names the
+file and the truth:
+
+> *"000687/data.raw.h5 is a real MaxLab ActivityScan recording — it stores spike detections but no
+> continuous signal, and Camea cannot analyse that kind of assay yet"*
+
+(the assay name is whatever the file declares, version tail stripped — nothing is hard-coded). The
+tick-list still **lists** the file, greyed, with that reason as its `problem`; the import refuses
+by name before any project exists; and a file that changes under an existing shelf entry gets the
+same sentence from the open routes rather than a claim about its chip layout. A file with no
+stream and **no** declaration is refused as unexplainable ("refusing to guess what it is"), never
+dressed up as a known assay. Proven by
+`tests/unit/test_mearecording.py :: test_a_spike_only_assay_is_refused_AS_WHAT_IT_IS_not_as_not_maxlab`
+(+ the no-declaration case) and
+`tests/api/test_mea_feature.py :: test_an_activity_scan_is_refused_AS_WHAT_IT_IS_never_as_not_maxlab`.
+
+## What remains — deliberately NOT built here
+
+This issue's § "What 'fixed' looks like" asks for more than the approved scope, and §7.6 shows the
+full job is **three** failures, not one — `info()`'s fallback (`n_samples = 0` silently zeroes
+every rate and renders MaxWell's own survey as a uniformly dead chip), `spikes()`'s independent
+`frame_nos` read, the duration that must come from `assay/inputs/record_time` and never divide by
+zero, plus the multi-store question (§3.2 forbids pooling by channel id, and `data0000` of a scan
+is the least representative slice). **Actually analysing an ActivityScan is a feature and belongs
+in a plan**, designed against §7.6's three-failure list — not patched piecemeal behind an import
+door that is now honest about why it is closed.

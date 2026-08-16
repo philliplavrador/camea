@@ -262,6 +262,70 @@ def test_activity_needs_no_decoder(rec):
         assert int(r.activity()["n_spikes"].sum()) == 3
 
 
+def _write_spike_only(path, *, script_id: str | None = "FakeScan_v1.0",
+                      spike_only: bytes | None = b"true"):
+    """A MaxLab-shaped file with NO continuous stream — the ActivityScan shape (empty `groups`),
+    with the file's own assay declaration. ⛔ The script name is deliberately not a real MaxWell
+    one: the refusal must carry whatever the FILE says, never a name Camea knows."""
+    with h5py.File(path, "w") as f:
+        g = f.create_group("data_store/data0000")
+        s = g.create_group("settings")
+        s["sampling"] = np.array([FS])
+        s["lsb"] = np.array([LSB_V])
+        m = np.empty(2, dtype=[("channel", "<i4"), ("electrode", "<i4"),
+                               ("x", "<f8"), ("y", "<f8")])
+        m[0] = (0, 3, 3 * PITCH, 0.0)
+        m[1] = (1, 9, 2 * PITCH, PITCH)
+        s["mapping"] = m
+        g.create_group("groups")                       # present and EMPTY — the measured shape
+        sp = np.empty(1, dtype=[("frameno", "<i8"), ("channel", "<i4"), ("amplitude", "<f4")])
+        sp[0] = (1100, 0, -25.0)
+        g["spikes"] = sp
+        f["assay/run_id"] = np.array([b"000687"])
+        if script_id is not None:
+            f["assay/script_id"] = np.array([script_id.encode()])
+        if spike_only is not None:
+            f["assay/inputs/spike_only"] = np.array([spike_only])
+    return path
+
+
+def test_a_spike_only_assay_is_refused_AS_WHAT_IT_IS_not_as_not_maxlab(tmp_path):
+    """⭐ Issue 007: an ActivityScan is a genuine MaxLab file. `info()` used to escape with a bare
+    h5py KeyError that the shelf turned into "not a MaxLab recording" — a lie about the data. Now
+    it refuses with the file's OWN declaration (§7.6: `assay/inputs/spike_only` / `script_id`)."""
+    d = tmp_path / "ActivityScan" / "000687"
+    d.mkdir(parents=True)
+    p = _write_spike_only(d / mr.MEA_FILENAME)
+    with mr.MeaRecording(p) as r:
+        with pytest.raises(mr.UnsupportedAssay) as e:
+            r.info()
+    msg = str(e.value)
+    assert "FakeScan" in msg, "the name comes from the file's declaration, version tail stripped"
+    assert "cannot analyse" in msg
+    assert "not a MaxLab recording" not in msg
+
+
+def test_a_spike_only_assay_with_no_script_name_still_says_spike_only(tmp_path):
+    d = tmp_path / "ActivityScan" / "000688"
+    d.mkdir(parents=True)
+    p = _write_spike_only(d / mr.MEA_FILENAME, script_id=None, spike_only=b"true")
+    with mr.MeaRecording(p) as r:
+        with pytest.raises(mr.UnsupportedAssay, match="spike-only"):
+            r.info()
+
+
+def test_a_file_missing_its_stream_with_NO_declaration_refuses_to_guess(tmp_path):
+    """⛔ No declaration, no story: a file that neither carries a stream nor says it is spike-only
+    is refused as unexplainable, never dressed up as a known assay."""
+    d = tmp_path / "Mystery" / "000001"
+    d.mkdir(parents=True)
+    p = _write_spike_only(d / mr.MEA_FILENAME, script_id=None, spike_only=None)
+    with mr.MeaRecording(p) as r:
+        with pytest.raises(mr.MeaError, match="refusing to guess") as e:
+            r.info()
+    assert not isinstance(e.value, mr.UnsupportedAssay)
+
+
 # ── the trace, and being honest about it ────────────────────────────────────────────────────────
 
 

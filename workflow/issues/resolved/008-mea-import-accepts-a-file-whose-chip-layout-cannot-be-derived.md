@@ -3,10 +3,10 @@ id: 008
 title: MEA import accepts a file whose chip layout cannot be derived — it lands on the shelf and then refuses to open
 kind: bug
 tier: medium
-status: open
+status: fixed
 found: 2026-08-14
 found-while: the api-contract-guard review of plan 003 (the chip map and pad traces)
-resolved-by: ~
+resolved-by: fixed 2026-08-16 — facts_of touches the mapping too, so the refusal is at the door, and the tick-list still lists the file greyed with the reason
 ---
 
 # 008 — Import accepts a recording that cannot then be opened
@@ -63,3 +63,24 @@ tick-list around.
 ⚠️ And decide it together with [007](007-activityscan-refused-as-not-maxlab.md). Both are *"a real
 MaxLab file that this reader will not open"*, and answering them separately is how the app ends up
 with two different sentences for the same situation.
+
+## How it was resolved
+
+Exactly the shape § "The fix, when someone takes it" proposed, decided together with
+[007](../resolved/007-activityscan-refused-as-not-maxlab.md) so the app has one sentence per
+situation rather than two. `features/mea/recordings.facts_of` now touches **`mapping()` as well as
+`info()`**, so one function decides "is this a recording Camea can work with" and the answer is
+the same at every door: the import (both doors — creation and add-to-shelf) refuses **before**
+anything is made, with
+
+> *"Camea cannot work out the chip layout for 000009/data.raw.h5: the routed electrodes all sit on
+> one array row, so the chip's layout cannot be derived from this file"*
+
+— the reader's own reason, the same wording the open-time refusal already used, and never *"not a
+MaxLab recording"* (it **is** one). The ⚠️ this issue flagged is honoured: `GET /api/mea/browse`
+still **lists** such a file, greyed with `readable: false` and the derive reason as its `problem`
+— refused at the door is not dropped from the list. The open-time 422 arm stays, because a file
+can change under an existing shelf entry, and the repro test now proves that path by corrupting
+the project's own copy after a clean import. Proven by
+`tests/api/test_mea_feature.py :: test_a_file_whose_CHIP_LAYOUT_cannot_be_derived_is_refused_AT_THE_DOOR`
+and `:: test_a_recording_whose_layout_BREAKS_AFTER_IMPORT_still_refuses_by_name_not_a_500`.

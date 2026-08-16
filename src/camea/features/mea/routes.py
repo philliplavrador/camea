@@ -618,6 +618,14 @@ def _open(analysis_id: str, recording_id: str):
         rec = mr.MeaRecording(path)
         rec.info()                                           # the header…
         rec.mapping()                                        # …and the chip, so a bad file fails HERE
+    except mr.UnsupportedAssay as e:
+        # ⭐ A genuine MaxLab file of a kind Camea cannot analyse (issue 007). Import refuses these
+        # at the door now, so reaching here means the file CHANGED under an existing shelf entry —
+        # and the sentence must still name what it is, not claim a chip-layout problem.
+        if rec is not None:
+            rec.close()
+        raise ApiError(422, "refused", f"{label} is {e}",
+                       {"recording_id": recording_id, "reason": str(e)}) from e
     except mr.MeaError as e:
         # ⛔ **NOT "this is not a MaxLab recording".** It got onto the shelf, so its header read
         # fine; what failed is deriving the chip's layout, and `derive_geometry` already says

@@ -108,6 +108,7 @@ __all__ = [
     "SyncEpisode",
     "TraceHealth",
     "TtlPulse",
+    "UnsupportedAssay",
     "derive_geometry",
     "derive_stride",
     "find_recordings",
@@ -141,6 +142,14 @@ class NoRecordingsFound(MeaError):
 
 class RawUndecodable(MeaError):
     """The raw stream could not be read — almost always the missing/mismatched MaxWell plug-in."""
+
+
+class UnsupportedAssay(MeaError):
+    """⭐ **A GENUINE MaxLab file, of an assay kind this reader cannot analyse** — a spike-only
+    ActivityScan, for one. Its own class so callers can tell it from "not a MaxLab recording",
+    because calling a real MaxLab file not-a-recording is a lie about the data (issue 007). The
+    message names the assay **as the file itself declares it** (``assay/inputs/spike_only`` /
+    ``assay/script_id`` — docs/MAXWELL.md §7.6), never inferred from a missing group."""
 
 
 # ── the decoder plug-in ─────────────────────────────────────────────────────────────────────────
@@ -763,6 +772,19 @@ class MeaRecording:
         def scalar(name: str, default: float = 0.0) -> float:
             return float(s[name][0]) if name in s else default
 
+        if "groups/routed/raw" not in g:
+            # ⭐ **NAME THE FILE FOR WHAT IT IS, NOT FOR WHAT IT LACKS** (issue 007). An ActivityScan
+            # is a genuine MaxLab file with no continuous stream at all — `groups` is empty in every
+            # store of all seven in the mirror — and before this guard the read escaped as a bare
+            # h5py KeyError that the shelf turned into "not a MaxLab recording", a lie about his
+            # data. The file's own declaration says what it is; read it (docs/MAXWELL.md §7.6).
+            sentence = self._assay_refusal()
+            if sentence:
+                raise UnsupportedAssay(sentence)
+            raise MeaError(
+                f"{self.path} has no continuous recording stream (groups/routed/raw) and does "
+                "not declare a spike-only assay — refusing to guess what it is"
+            )
         raw = g["groups/routed/raw"]
         n_ch, n_s = int(raw.shape[0]), int(raw.shape[1])
         run_id, assay = self._identity()
@@ -779,6 +801,40 @@ class MeaRecording:
             n_spikes=int(g["spikes"].shape[0]) if "spikes" in g else 0,
         )
         return self._info
+
+    def _assay_text(self, key: str) -> str:
+        """One scalar text field off the file's own assay declaration, tolerantly: bytes or str,
+        0-d or length-1. Empty string when absent or unreadable — a refusal must not crash."""
+        f = self._f
+        if key not in f:
+            return ""
+        try:
+            v = f[key][()]
+            if getattr(v, "shape", None):
+                v = v[0]
+            if isinstance(v, bytes):
+                v = v.decode("utf-8", "replace")
+            return str(v).strip()
+        except Exception:  # noqa: BLE001 — a malformed declaration must not mask the refusal
+            return ""
+
+    def _assay_refusal(self) -> str:
+        """The honest sentence for a file with no continuous stream, from ITS OWN declaration —
+        or ``""`` when the file declares nothing and the honest answer is a refusal to guess.
+
+        ⭐ §7.6: ``assay/inputs/spike_only`` and ``assay/script_id`` are the file's statement of its
+        assay type (`spike_only=true` + `script_id=ActivityScan_v1.0` on every scan in the mirror);
+        use them rather than inferring from the empty ``groups/``.
+        """
+        spike_only = self._assay_text("assay/inputs/spike_only").lower() in ("true", "1", "yes")
+        script = self._assay_text("assay/script_id")
+        # "ActivityScan_v1.0" -> "ActivityScan": the version tail is the vendor's, not a name.
+        name = script.split("_v")[0].strip() if script else ""
+        if not (spike_only or name):
+            return ""
+        # Phrased so a caller can put a subject in front of it: "<file> is a real MaxLab …".
+        return (f"a real MaxLab {name or 'spike-only'} recording — it stores spike detections "
+                "but no continuous signal, and Camea cannot analyse that kind of assay yet")
 
     def _identity(self) -> tuple[str, str]:
         """``(run_id, assay)`` — from the file if it says, else from the folder names that hold it."""

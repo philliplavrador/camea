@@ -93,8 +93,16 @@ _COPY_JOBS: dict[str, str] = {}
 _ENVELOPE_JOBS: dict[str, str] = {}
 
 
+def shown_name(path: str | Path) -> str:
+    """What a refusal calls this file. ⭐ `parent.name` too when it is the MaxLab `data.raw.h5`:
+    every recording on his disk is called that, so the run folder is the only part of the name
+    that identifies one."""
+    p = Path(str(path).replace("\\", "/"))
+    return f"{p.parent.name}/{p.name}" if p.name == mr.MEA_FILENAME else p.name
+
+
 class NotARecording(Exception):
-    """This file is not a MaxLab recording. ⭐ Carries the path so the refusal can NAME it — a file
+    """This file cannot go on the shelf. ⭐ Carries the path so the refusal can NAME it — a file
     silently dropped from an import is the failure this plan calls out by name.
 
     ⚠️ **The sentence and the reason are separate on purpose.** `str(e)` is the one line he reads —
@@ -102,16 +110,19 @@ class NotARecording(Exception):
     signature not found"*, a refused chip geometry) that goes in the error envelope's `detail` and
     on the greyed row of the tick-list. Splicing the tail into the sentence gives him a parenthesis
     about HDF5 signatures in the middle of a refusal about a file he can see on his desk.
+
+    ⭐ **AND THE SENTENCE MAY BE OVERRIDDEN, because "is not a MaxLab recording" is sometimes a
+    lie** (issues 007/008). A real ActivityScan and a real Network file whose chip layout cannot
+    be derived are both genuine MaxLab files this shelf refuses — each gets a sentence that says
+    what is actually true, through `sentence=`, while the default stays what it always was for the
+    JPEG someone renamed.
     """
 
-    def __init__(self, path: str | Path, reason: str = "") -> None:
+    def __init__(self, path: str | Path, reason: str = "", sentence: str = "") -> None:
         self.path = str(path).replace("\\", "/")
         self.reason = reason
-        # ⭐ `parent.name` too when the file is the MaxLab `data.raw.h5`: every recording on his disk
-        # is called that, so the run folder is the only part of the name that identifies one.
-        p = Path(self.path)
-        self.shown = f"{p.parent.name}/{p.name}" if p.name == mr.MEA_FILENAME else p.name
-        super().__init__(f"{self.shown} is not a MaxLab recording")
+        self.shown = shown_name(self.path)
+        super().__init__(sentence or f"{self.shown} is not a MaxLab recording")
 
 
 # =================================================================================================
@@ -122,10 +133,22 @@ class NotARecording(Exception):
 def facts_of(path: str | Path) -> dict:
     """Header facts for one `data.raw.h5`. -> `{label, run_id, assay, duration_s, ...}`.
 
-    Raises :class:`NotARecording` for anything this reader cannot make sense of — a JPEG someone
+    Raises :class:`NotARecording` for anything this reader cannot work with — a JPEG someone
     renamed, a truncated file, an HDF5 file with no `data_store` group. ⛔ It never returns a
     half-filled dict: a row of blanks on the screen reads as a bug in Camea rather than as a fact
     about the file.
+
+    ⭐ **IT TOUCHES THE MAPPING TOO, AND THAT IS ISSUE 008'S FIX.** The chip's geometry is derived
+    in `mapping()`, and `derive_geometry` refuses by design for real cases it cannot explain —
+    every routed pad on one array row, a non-integer stride. Before this, such a file imported
+    cleanly and refused one click later, on Open; now one function decides "is this a recording
+    Camea can work with" and the answer is the same at every door. The tick-list still LISTS the
+    file (`candidates` catches this and greys the row) — refused at the door is not dropped from
+    the list.
+
+    ⭐ **AND A GENUINE MaxLab FILE IS NEVER CALLED NOT-A-RECORDING** (issue 007). A spike-only
+    ActivityScan and an underivable layout each get a sentence saying what is actually true;
+    "is not a MaxLab recording" is kept for files that genuinely are not.
 
     ⚠️ It does **not** touch the raw stream, so it works on every machine, decoder or no decoder
     (`utils/knowledge/mea-recordings.md`).
@@ -136,6 +159,13 @@ def facts_of(path: str | Path) -> dict:
     try:
         with mr.MeaRecording(p) as rec:
             i = rec.info()
+            try:
+                rec.mapping()                            # the chip too, so a bad file fails HERE
+            except mr.MeaError as e:
+                raise NotARecording(
+                    p, str(e),
+                    sentence=f"Camea cannot work out the chip layout for {shown_name(p)}: {e}",
+                ) from e
             return {
                 "label": i.label,
                 "run_id": i.run_id,
@@ -145,6 +175,13 @@ def facts_of(path: str | Path) -> dict:
                 "n_samples": i.n_samples,
                 "n_spikes": i.n_spikes,
             }
+    except NotARecording:
+        raise                                            # already carries its honest sentence
+    except mr.UnsupportedAssay as e:
+        # ⭐ Issue 007: it IS a MaxLab file. Say what it is — the reader already read the file's
+        # own declaration — instead of the lie the generic arm would produce.
+        raise NotARecording(p, str(e),
+                            sentence=f"{shown_name(p)} is {e}") from e
     except mr.MeaError as e:
         raise NotARecording(p, str(e)) from e
     except Exception as e:                                   # noqa: BLE001
@@ -587,4 +624,5 @@ def forget(project_dir: str | Path, rec: Mapping) -> None:
 
 
 __all__ = ["BROWSE_LIMIT", "COPY_JOB_KIND", "NotARecording", "candidates", "facts_of", "forget",
-           "new_id", "open_path", "record_for", "shelf", "shelf_entry", "start_copy"]
+           "new_id", "open_path", "record_for", "shelf", "shelf_entry", "shown_name",
+           "start_copy"]

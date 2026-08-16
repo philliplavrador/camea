@@ -995,21 +995,12 @@ def test_the_chip_height_is_taken_from_the_device_only_when_the_file_agrees():
     assert mea_routes._chip_rows(13, mapping) == (7, "recorded")
 
 
-def test_a_file_whose_CHIP_LAYOUT_cannot_be_derived_is_refused_not_a_500(client, session,
-                                                                        tmp_path):
-    """⚠️ **FOUND IN REVIEW.** `info()` reads the header; the chip's geometry is derived in
-    `mapping()`, and `derive_geometry` refuses **by design** for cases it cannot explain — every
-    routed pad on one array row, a non-integer stride. All three routes reach for the mapping, so
-    unless `_open` touches it that refusal escapes as an unhandled error and the user gets a **500**
-    for a file Camea understands perfectly well and has a sentence about.
-
-    ⛔ A 500 is *"Camea broke"*. This is *"this file does not describe a chip I can lay out"*, which
-    is a fact about his data and must be said as one."""
+def _write_one_row_chip(tmp_path) -> str:
+    """A MaxLab-shaped file whose routed pads all sit on ONE array row, so the stride is
+    unconstrained and `derive_geometry` refuses rather than guessing a transposed chip."""
     import h5py
     import numpy as np
 
-    # A MaxLab-shaped file whose routed pads all sit on ONE array row, so the stride is
-    # unconstrained and `derive_geometry` refuses rather than guessing a transposed chip.
     d = tmp_path / "P9999" / "Network" / "000009"
     d.mkdir(parents=True)
     p = d / "data.raw.h5"
@@ -1031,23 +1022,111 @@ def test_a_file_whose_CHIP_LAYOUT_cannot_be_derived_is_refused_not_a_500(client,
         g["spikes"] = np.empty(0, dtype=[("frameno", "<i8"), ("channel", "<i4"),
                                          ("amplitude", "<f4")])
         f["assay/run_id"] = np.array([b"000009"])
+    return p.as_posix()
 
-    # ⚠️ It gets onto the shelf, because `facts_of` reads the header only — see issue 008.
-    a = _create(client, "bad layout", paths=[p.as_posix()])
+
+def test_a_file_whose_CHIP_LAYOUT_cannot_be_derived_is_refused_AT_THE_DOOR(client, session,
+                                                                          tmp_path):
+    """⭐ **ISSUE 008'S FIX.** `facts_of` now touches the mapping as well as the header, so one
+    function decides "is this a recording Camea can work with" and the answer is the same at every
+    door. Before this, the file imported cleanly, sat on the shelf with its numbers showing, and
+    refused one click later — told twice, told late.
+
+    ⛔ And the sentence is not "not a MaxLab recording" — it IS one; only its chip layout cannot
+    be derived. Same wording as the open-time refusal, so the app has ONE sentence for this."""
+    p = _write_one_row_chip(tmp_path)
+
+    # The tick-list still LISTS it — refused at the door is not dropped from the browse (002's
+    # rule: the one thing worse than a refusal is a refusal you never saw).
+    r = client.get("/api/mea/browse", params={"path": str(tmp_path / "P9999")})
+    assert r.status_code == 200, r.text
+    rows = r.json()["recordings"]
+    assert len(rows) == 1
+    assert rows[0]["readable"] is False
+    assert "one array row" in rows[0]["problem"]
+
+    # And the import refuses BEFORE a project exists, naming the file and the real reason.
+    r = client.post("/api/mea/projects", json={"name": "doomed", "paths": [session[0], p]})
+    assert r.status_code == 400, r.text
+    msg = err(r)["message"]
+    assert "Camea cannot work out the chip layout for 000009/data.raw.h5" in msg
+    assert "one array row" in msg
+    assert "not a MaxLab recording" not in msg
+    assert store_entries() == [], "⭐ no project was created, so there is nothing to clean up"
+
+
+def test_a_recording_whose_layout_BREAKS_AFTER_IMPORT_still_refuses_by_name_not_a_500(
+        client, session, state_dir, tmp_path):
+    """⚠️ The door check (above) does not retire the open-time arm: a file can change under an
+    existing shelf entry. All three routes reach for the mapping, so unless `_open` touches it the
+    refusal escapes as a 500 for a file Camea understands perfectly well and has a sentence about."""
+    a = _create(client, "changed under me", paths=[session[0]])
     aid = a["analysis_id"]
-    rid = _shelf(client, aid)[0]["id"]
+    rows = _settled(client, aid)
+    rid = rows[0]["id"]
+    stored = store_dir(state_dir) / aid / rows[0]["stored_path"]
+    assert stored.is_file()
+
+    # The project's copy is replaced by a file whose layout cannot be derived — the shelf's own
+    # copy, so nothing of the user's is touched.
+    bad = _write_one_row_chip(tmp_path)
+    stored.write_bytes(Path(bad).read_bytes())
 
     for route in ("layout", "activity", "trace?channel=0"):
         r = client.get(f"/api/mea/{aid}/recordings/{rid}/{route}")
         assert r.status_code == 422, (route, r.status_code, r.text)
         assert err(r)["code"] == "refused", route
-        # ⛔ And it does NOT say "this is not a MaxLab recording" — it IS one, its header read
-        # fine, and only the layout could not be derived. Calling a genuine MaxLab file "not a
-        # recording" is the lie `utils/knowledge/mea-recordings.md` records against
-        # ActivityScan/000687. It says what actually failed, in the reader's own words.
         assert "one array row" in err(r)["message"], route
         assert "not a MaxLab recording" not in err(r)["message"], route
         assert "chip layout" in err(r)["message"], route
+
+
+def test_an_activity_scan_is_refused_AS_WHAT_IT_IS_never_as_not_maxlab(client, session, tmp_path):
+    """⭐ **ISSUE 007'S FIX.** A spike-only scan is a genuine MaxLab file; refusing it as "not a
+    MaxLab recording" was a lie about his data. The refusal now carries the file's OWN assay
+    declaration (`assay/inputs/spike_only` / `assay/script_id` — docs/MAXWELL.md §7.6)."""
+    import h5py
+    import numpy as np
+
+    d = tmp_path / "AScan" / "000687"
+    d.mkdir(parents=True)
+    p = d / "data.raw.h5"
+    with h5py.File(p, "w") as f:
+        g = f.create_group("data_store/data0000")
+        s = g.create_group("settings")
+        s["sampling"] = np.array([20000.0])
+        s["lsb"] = np.array([6.294e-6])
+        m = np.empty(2, dtype=[("channel", "<i4"), ("electrode", "<i4"),
+                               ("x", "<f8"), ("y", "<f8")])
+        m[0] = (0, 3, 37.5, 0.0)
+        m[1] = (1, 15, 25.0, 12.5)
+        s["mapping"] = m
+        g.create_group("groups")                             # present and EMPTY — the real shape
+        g["spikes"] = np.empty(0, dtype=[("frameno", "<i8"), ("channel", "<i4"),
+                                         ("amplitude", "<f4")])
+        f["assay/run_id"] = np.array([b"000687"])
+        f["assay/script_id"] = np.array([b"FakeScan_v1.0"])  # ⛔ not a real MaxWell name: the
+        #                                                      sentence must carry what the FILE says
+        f["assay/inputs/spike_only"] = np.array([b"true"])
+
+    # Listed and greyed on the browse, with the honest reason.
+    r = client.get("/api/mea/browse", params={"path": str(tmp_path / "AScan")})
+    assert r.status_code == 200, r.text
+    rows = r.json()["recordings"]
+    assert len(rows) == 1
+    assert rows[0]["readable"] is False
+    assert "cannot analyse" in rows[0]["problem"]
+    assert "FakeScan" in rows[0]["problem"]
+
+    # And the import refusal says what it IS, naming the file.
+    r = client.post("/api/mea/projects",
+                    json={"name": "doomed", "paths": [session[0], p.as_posix()]})
+    assert r.status_code == 400, r.text
+    msg = err(r)["message"]
+    assert "000687/data.raw.h5 is a real MaxLab FakeScan recording" in msg
+    assert "cannot analyse" in msg
+    assert "not a MaxLab recording" not in msg
+    assert store_entries() == [], "no project was created"
 
 
 # =================================================================================================
