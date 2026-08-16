@@ -308,7 +308,7 @@ def post_build(body: VideoBuildRequest) -> dict:
         }
 
     try:
-        job = JOBS.submit_thread(JOB_KIND, fn, exclusive=LEASE)
+        job = JOBS.submit_thread(JOB_KIND, fn, exclusive=LEASE, label="building the mosaic")
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     box["job"] = job
@@ -460,7 +460,8 @@ def post_electrodes_map(body: VideoElectrodeMapRequest) -> dict:
                 "electrodes": block, "doc": core_document.jsonable(saved["doc"])}
 
     try:
-        job = JOBS.submit_thread(ELECTRODE_JOB_KIND, fn, exclusive=LEASE)
+        job = JOBS.submit_thread(ELECTRODE_JOB_KIND, fn, exclusive=LEASE,
+                                 label="mapping the electrodes")
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     return {"job_id": job.job_id, "kind": ELECTRODE_JOB_KIND}
@@ -630,7 +631,8 @@ def post_locate_region(body: LocateRegionRequest) -> dict:
                 "doc": core_document.jsonable(saved)}
 
     try:
-        job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE)
+        job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE,
+                                 label="placing a recording")
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     return {"job_id": job.job_id, "kind": REGION_JOB_KIND}
@@ -673,7 +675,8 @@ def post_snap_region(body: SnapRegionRequest) -> dict:
                 "doc": core_document.jsonable(saved)}
 
     try:
-        job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE)
+        job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE,
+                                 label="placing a recording")
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     return {"job_id": job.job_id, "kind": REGION_JOB_KIND}
@@ -739,7 +742,8 @@ def post_relocate_region(body: RelocateRegionRequest) -> dict:
                 "doc": core_document.jsonable(saved)}
 
     try:
-        job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE)
+        job = JOBS.submit_thread(REGION_JOB_KIND, fn, exclusive=LEASE,
+                                 label="placing a recording")
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     return {"job_id": job.job_id, "kind": REGION_JOB_KIND}
@@ -1433,7 +1437,8 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
         }
 
     try:
-        job = JOBS.submit_thread(ORIENTATION_JOB_KIND, fn, exclusive=LEASE)
+        job = JOBS.submit_thread(ORIENTATION_JOB_KIND, fn, exclusive=LEASE,
+                                 label="testing the orientation")
     except Busy as e:
         raise ApiError(409, "busy", str(e)) from e
     return {"job_id": job.job_id, "kind": ORIENTATION_JOB_KIND}
@@ -1670,7 +1675,7 @@ def _start_mea_envelope(ws, analysis_id: str, rec_path: Path, *,
         return {"kind": "mea_envelope", "analysis_id": analysis_id, "recording_id": run,
                 "built": True, "n_buckets": int(env.n_buckets)}
 
-    job = JOBS.submit_thread("mea_envelope", fn)
+    job = JOBS.submit_thread("mea_envelope", fn, label="reading the recording end to end")
     _MEA_ENVELOPE_JOBS[key] = job.job_id
     return job.job_id
 
