@@ -62,8 +62,13 @@ async function lookIn(page: Page, absolute: string): Promise<void> {
   await page.getByTestId('folder-picker-confirm').click();
 }
 
+// ⚠️ Filter on the row's NAME, never on any text in the row. A same-file twin's duplicate note
+// ("same file as '<name>'") plants the OTHER row's label inside this row, so a hasText filter
+// resolves to both rows of a pair — a strict-mode violation on exactly the shelves worth testing.
 const rowFor = (page: Page, label: string) =>
-  page.locator(`[data-testid="${TID.meaRecording}"]`).filter({ hasText: label });
+  page.locator(`[data-testid="${TID.meaRecording}"]`).filter({
+    has: page.locator(`[data-testid="${TID.meaRecordingLabel}"]:text-is(${JSON.stringify(label)})`),
+  });
 
 async function deleteProject(page: Page, id: string): Promise<void> {
   await page.request.delete(`/api/projects/${id}`);
@@ -1476,7 +1481,9 @@ test('each row says whether the end-to-end read is done, offers it, and names a 
     });
   });
   let posted = false;
-  await page.route('**/api/mea/*/recordings/envelopes', async (route) => {
+  // ⚠️ Trailing `*`: the POST carries `?force=false`, and a glob without it lets the POST through
+  // to the real (empty) project — whose empty answer then wipes the whole ready column.
+  await page.route('**/api/mea/*/recordings/envelopes*', async (route) => {
     if (route.request().method() === 'POST') posted = true;
     await route.fulfill({
       status: 200,
