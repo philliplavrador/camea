@@ -107,6 +107,7 @@ __all__ = [
     "RecordingInfo",
     "SyncEpisode",
     "TraceHealth",
+    "TtlPulse",
     "derive_geometry",
     "derive_stride",
     "find_recordings",
@@ -430,6 +431,28 @@ class SyncEpisode:
 
     def as_dict(self) -> dict:
         return {**dataclasses.asdict(self), "duration_s": round(self.duration_s, 4)}
+
+
+@dataclass(frozen=True)
+class TtlPulse:
+    """One digital-input pulse from the rig's own time-stamp — the top-level ``bits`` group.
+
+    ⭐ **Sample-accurate and decoder-free** (docs/MAXWELL.md § 5.6): written by the acquisition
+    system into plain HDF5, so it needs neither the proprietary plug-in nor the raw stream —
+    everything issue 003 says the lamp episodes are not. ``bits`` is the line value while the
+    pulse was high, reported as the file states it; nothing here decodes which line means what.
+    """
+
+    start_s: float
+    end_s: float
+    bits: int
+
+    @property
+    def duration_s(self) -> float:
+        return self.end_s - self.start_s
+
+    def as_dict(self) -> dict:
+        return {**dataclasses.asdict(self), "duration_s": round(self.duration_s, 6)}
 
 
 # ── the chip's own layout, derived not assumed ──────────────────────────────────────────────────
@@ -824,6 +847,68 @@ class MeaRecording:
     def spikes_of_channel(self, channel: int) -> np.ndarray:
         sp = self.spikes()
         return sp[sp["channel"] == int(channel)]
+
+    def ttl_events(self) -> list[TtlPulse]:
+        """Digital-input pulses the rig itself wrote — the top-level ``bits`` group.
+
+        ⭐ Plain HDF5: no proprietary plug-in, no raw stream, so this is trustworthy on every
+        machine the spike table is (docs/MAXWELL.md § 5.6). An empty list is the ordinary answer —
+        most recordings carry no digital input at all.
+
+        ⚠️ **TWO LAYOUTS EXIST AND BOTH ARE READ.** On this project's files ``bits`` is a *group*
+        keyed ``'0000'`` whose members are ``(frameno, bits)`` records; the layout spikeinterface's
+        ``MaxwellEventExtractor`` expects is a flat *dataset* with the same fields. A ``bits`` in
+        neither shape raises :class:`MeaError` rather than being silently read as "no signal" —
+        an earlier pass concluded exactly that from reading the wrong location, and it was wrong.
+
+        Times are seconds from the first stored sample — the same origin as :meth:`spikes` — and
+        **can be negative**: the rig logs during the pre-roll too (§ 5.6). Report them; do not
+        clamp. A record sequence still high at its end is closed at the recording's end, the most
+        it can honestly claim.
+        """
+        import h5py  # noqa: PLC0415
+
+        f = self._f
+        if "bits" not in f:
+            return []
+        node = f["bits"]
+        parts: list[np.ndarray] = ([np.asarray(node[key][:]) for key in sorted(node.keys())]
+                                   if isinstance(node, h5py.Group) else [np.asarray(node[:])])
+        parts = [p for p in parts if p.size]
+        if not parts:
+            return []
+        for p in parts:
+            if p.dtype.names is None or not {"frameno", "bits"} <= set(p.dtype.names):
+                raise MeaError(
+                    f"{self.path} carries a top-level `bits` in a layout this reader does not "
+                    f"know (fields {p.dtype.names}) — refusing to guess what its records mean"
+                )
+        rec = np.concatenate(parts) if len(parts) > 1 else parts[0]
+        rec = rec[np.argsort(np.asarray(rec["frameno"], dtype=np.int64), kind="stable")]
+
+        info = self.info()
+        fs = info.sampling_hz or 1.0
+        first = int(np.asarray(self._grp()["groups/routed/frame_nos"][0]))
+        t = (np.asarray(rec["frameno"], dtype=np.int64) - first) / fs
+        vals = np.asarray(rec["bits"], dtype=np.int64)
+
+        out: list[TtlPulse] = []
+        open_t: float | None = None
+        open_v = 0
+        for ti, v in zip(t, vals):
+            if open_t is None:
+                if v != 0:
+                    open_t, open_v = float(ti), int(v)
+            elif v == 0:
+                out.append(TtlPulse(start_s=open_t, end_s=float(ti), bits=open_v))
+                open_t = None
+            elif int(v) != open_v:
+                # The line changed value while high: two pulses, split where the record says.
+                out.append(TtlPulse(start_s=open_t, end_s=float(ti), bits=open_v))
+                open_t, open_v = float(ti), int(v)
+        if open_t is not None:
+            out.append(TtlPulse(start_s=open_t, end_s=info.duration_s, bits=open_v))
+        return out
 
     def activity(self) -> np.ndarray:
         """How much happened on each routed pad — ``(channel, n_spikes, rate_hz)``, in

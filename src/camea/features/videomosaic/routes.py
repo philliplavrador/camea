@@ -985,7 +985,9 @@ ORIENTATION_JOB_KIND = "mea_orientation"
 MIN_CORRELATION_MARGIN = 0.10
 
 #: 🔴 Shown verbatim wherever the result is. Not behind a `?` — the whole point is that a reader
-#: who glances at the winning seating still learns it is not evidence (issue 003).
+#: who glances at the winning seating still learns it is not evidence (issue 003). This is the
+#: wording for a run whose clocks were aligned from the LAMP EPISODES; the other two alignments
+#: get their own wording below, because the caveat must state what THIS run actually rested on.
 ORIENTATION_CAVEAT = (
     "This ranking is NOT confirmation. It aligns the two clocks using the 2P lamp marks, and those "
     "marks did not survive checking against the calcium video — 70 electrical episodes against 5 "
@@ -993,6 +995,37 @@ ORIENTATION_CAVEAT = (
     "artefact of the raw stream failing to decode rather than the lamp firing. Treat the winner as "
     "a suggestion to check, not an answer, and re-run this once the MaxLab decoder is in place."
 )
+
+#: The wording when the clocks were aligned from the rig's own digital time-stamp (`bits`). Better
+#: grounds than the lamp marks — sample-accurate, no decoder involved — but still not validated:
+#: nothing has established which video brightness change each pulse corresponds to.
+ORIENTATION_CAVEAT_TTL = (
+    "This ranking is NOT confirmation. The two clocks were aligned from the digital time-stamp "
+    "the rig itself wrote into the recording, so the timing no longer rests on the distrusted "
+    "2P-lamp marks — but the pairing of each pulse with a change in the video's brightness has "
+    "never been validated on this data, so the alignment could still be wrong end to end. Treat "
+    "the winner as a suggestion to check, not an answer."
+)
+
+#: The wording when NOTHING aligned the clocks: no digital time-stamp in the file, no lamp marks
+#: found. The correlations compared the two recordings at their raw offsets, which is not a test.
+ORIENTATION_CAVEAT_UNALIGNED = (
+    "This ranking is NOT confirmation — and for this run the two clocks were not aligned at all: "
+    "the recording carries no digital time-stamp and no lamp marks were found in the electrical "
+    "trace. The correlations compare the two recordings at their raw, unaligned clocks, so they "
+    "mean nothing either way. Only the coverage numbers — which need no clock — say anything here."
+)
+
+
+def orientation_caveat(alignment_source: str) -> str:
+    """The caveat for what a run actually rested on. 🔴 Computed, never a constant: a reader must
+    learn from the result itself whether its timing came from the rig's time-stamp, the distrusted
+    lamp marks, or nothing — three different amounts of doubt, three different sentences."""
+    if alignment_source == "ttl":
+        return ORIENTATION_CAVEAT_TTL
+    if alignment_source == "lamp":
+        return ORIENTATION_CAVEAT
+    return ORIENTATION_CAVEAT_UNALIGNED
 
 
 @router.post("/api/videomosaic/mea/orientation", status_code=202, response_model=JobRef)
@@ -1092,13 +1125,34 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
             spikes_of: dict[int, np.ndarray] = {}
             for ch_id in np.unique(sp["channel"]):
                 spikes_of[int(ch_id)] = sp["t_s"][sp["channel"] == ch_id]
-            # The lamp marks on the MEA side, shared by every region's alignment.
+            # ⭐ THE MEA-SIDE MARKS, BY PREFERENCE. The rig's own digital time-stamp (`bits`,
+            # docs/MAXWELL.md § 5.6) is sample-accurate and needs no decoder — everything issue
+            # 003 says the lamp episodes are NOT — so when the file carries pulses they are the
+            # marks, and the trace is not even scanned. The video side is the same either way:
+            # dark stretches of each region recording. (An unreadable `bits` layout falls back to
+            # the trace, and the result then SAYS it rested on the lamp marks — no over-claim.)
             try:
-                eps = r.sync_episodes()
+                ttl = r.ttl_events()
+            except mearecording.MeaError:
+                ttl = []
+            if ttl:
                 mea_mask = vorient.intervals_to_mask(
-                    [(e.start_s, e.end_s) for e in eps], info.duration_s)
-            except mearecording.RawUndecodable:
-                mea_mask = np.zeros(0, dtype=bool)
+                    [(p.start_s, p.end_s) for p in ttl], info.duration_s)
+                alignment_source = "ttl"
+            else:
+                try:
+                    eps = r.sync_episodes()
+                except mearecording.RawUndecodable:
+                    eps = []
+                if eps:
+                    mea_mask = vorient.intervals_to_mask(
+                        [(e.start_s, e.end_s) for e in eps], info.duration_s)
+                    alignment_source = "lamp"
+                else:
+                    # No marks on the MEA side at all: nothing to align against, and the result
+                    # must say so rather than let a raw-offset correlation look like a test.
+                    mea_mask = np.zeros(0, dtype=bool)
+                    alignment_source = "none"
         core_jobs.check_cancelled(cancel, "orientation test")
 
         core_jobs.say(report, "score", steps, steps, 0.0, "scoring the four seatings")
@@ -1194,7 +1248,8 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
             # each has its own — see `regions`.
             "offset_s": per_region[0]["offset"],
             "alignment_quality": per_region[0]["quality"],
-            "caveat": ORIENTATION_CAVEAT,
+            "alignment_source": alignment_source,
+            "caveat": orientation_caveat(alignment_source),
         }
 
     try:

@@ -284,6 +284,65 @@ def test_orientation_footprint_and_job_agree_on_coverage(client, project):
     assert job_cover == foot_cover
 
 
+# =================================================================================================
+# How the clocks were aligned — and the caveat that must match it
+# =================================================================================================
+def test_orientation_says_when_the_clocks_were_never_aligned(client, project):
+    """measynth writes no `bits`, and its 21 channels can never clear the 50-channel episode bar —
+    so this run has NO clock alignment, and the result must say exactly that: the unaligned
+    wording, not the lamp wording written for a different kind of run."""
+    from camea.features.videomosaic.routes import ORIENTATION_CAVEAT_UNALIGNED
+
+    r = client.post("/api/videomosaic/mea/orientation", json={"analysis_id": project["aid"]})
+    res = run_job(client, r.json()["job_id"])["result"]
+    assert res["alignment_source"] == "none"
+    assert res["caveat"] == ORIENTATION_CAVEAT_UNALIGNED
+
+
+def test_orientation_prefers_the_rigs_own_time_stamp(client, project, tmp_path):
+    """⭐ When the recording carries a digital time-stamp (`bits`), the MEA-side marks come from
+    it INSTEAD of the distrusted lamp episodes — and the caveat changes with the grounds: the
+    timing doubt is gone, the pulse-to-brightness pairing doubt is not."""
+    import h5py
+    from camea.features.videomosaic.routes import ORIENTATION_CAVEAT_TTL
+
+    rec = tmp_path / "MEA" / "P0000" / "Network" / "000001" / "data.raw.h5"
+    with h5py.File(rec, "a") as f:
+        first = int(f["data_store/data0000/groups/routed/frame_nos"][0])
+        fs = float(f["data_store/data0000/settings/sampling"][0])
+        pulse = np.array([(first + int(0.5 * fs), 6), (first + int(0.6 * fs), 0)],
+                         dtype=[("frameno", "<u8"), ("bits", "<u2")])
+        f.create_group("bits")["0000"] = pulse
+
+    r = client.post("/api/videomosaic/mea/orientation", json={"analysis_id": project["aid"]})
+    res = run_job(client, r.json()["job_id"])["result"]
+
+    assert res["alignment_source"] == "ttl"
+    assert res["caveat"] == ORIENTATION_CAVEAT_TTL
+    # the honesty rules do not loosen because the grounds improved
+    if not res["decisive"]:
+        assert res["best"] is None
+    elif res["best"] is not None:
+        assert res["best"]["confirmed"] is False
+
+
+def test_the_caveat_names_what_each_alignment_rested_on():
+    """🔴 One wording per grounds, all three refusing to confirm — the result must never look
+    more settled than it is, whichever clock it stood on."""
+    from camea.features.videomosaic import routes as vroutes
+
+    assert vroutes.orientation_caveat("ttl") == vroutes.ORIENTATION_CAVEAT_TTL
+    assert vroutes.orientation_caveat("lamp") == vroutes.ORIENTATION_CAVEAT
+    assert vroutes.orientation_caveat("none") == vroutes.ORIENTATION_CAVEAT_UNALIGNED
+    for wording in (vroutes.ORIENTATION_CAVEAT_TTL, vroutes.ORIENTATION_CAVEAT,
+                    vroutes.ORIENTATION_CAVEAT_UNALIGNED):
+        assert "NOT confirmation" in wording
+    # the TTL wording carries the one doubt that survives the better clock
+    assert "pairing" in vroutes.ORIENTATION_CAVEAT_TTL
+    # the unaligned wording says the correlations mean nothing
+    assert "not aligned" in vroutes.ORIENTATION_CAVEAT_UNALIGNED
+
+
 def test_orientation_refuses_when_no_region_is_scorable(client, tmp_path, videosynth, measynth):
     """Regions exist but none can be scored (no electrodes named) — a refusal that says what a
     region needs, never an empty result."""

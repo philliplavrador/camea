@@ -2340,13 +2340,21 @@ class OrientationTestResult(Res):
     margin: float | None = Field(
         default=None, description="Top correlation minus runner-up, among testable seatings. "
         "Null when fewer than two were testable.")
-    offset_s: float = Field(default=0.0, description="Clock shift applied, MEA onto video.")
+    offset_s: float = Field(default=0.0, description="Clock shift applied, MEA onto video (the "
+                            "first region's, when several took part — see `regions`).")
     alignment_quality: float = Field(
-        default=0.0, description="Jaccard overlap of the two lamp-mark trains at that offset. "
+        default=0.0, description="Jaccard overlap of the two mark trains at that offset. "
         "⚠️ Read it sceptically: two mostly-on signals overlap substantially at ANY shift. On this "
         "project's data the best was 0.65 between signals of 60% and 80% duty — i.e. chance.")
-    caveat: str = Field(default="", description="Why this result cannot be taken at face value. "
-                        "The UI shows it verbatim, never behind a `?`.")
+    alignment_source: str = Field(
+        default="", description="⭐ What the clock alignment actually rested on: 'ttl' = the "
+        "digital time-stamp the rig itself wrote (the file's top-level `bits` — sample-accurate, "
+        "no decoder involved, preferred whenever present), 'lamp' = the 2P-lamp episodes found "
+        "in the electrical trace (the distrusted signal of issue 003), 'none' = the clocks were "
+        "not aligned at all. The caveat is computed from this and must be shown with the result.")
+    caveat: str = Field(default="", description="Why this result cannot be taken at face value — "
+                        "computed from `alignment_source`, one wording per grounds. The UI shows "
+                        "it verbatim, never behind a `?`.")
 
 
 class MeaOrientationRequest(Req):

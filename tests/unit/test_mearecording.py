@@ -808,3 +808,111 @@ def test_chip_electrode_recovers_the_maxwell_id():
     col, row = o.to_grid(np.array([1]), np.array([2]), cols=N_ROWS, rows=STRIDE, stride=STRIDE)
     assert o.chip_electrode(int(col[0]), int(row[0]),
                             cols=N_ROWS, rows=STRIDE, stride=STRIDE) == 15
+
+
+# ── the rig's own digital time-stamp: the top-level `bits` group ────────────────────────────────
+#
+# docs/MAXWELL.md § 5.6: one of this project's files carries `bits` as a GROUP keyed '0000' of
+# (frameno, bits) records — NOT the flat dataset spikeinterface's MaxwellEventExtractor expects —
+# and an earlier pass, having checked only `data_store/…/events`, concluded that no external
+# marker existed anywhere. It does, and BOTH layouts must read, which is what these pin.
+
+
+def _bits_records(rows):
+    arr = np.empty(len(rows), dtype=[("frameno", "<u8"), ("bits", "<u2")])
+    for i, (fr, b) in enumerate(rows):
+        arr[i] = (fr, b)
+    return arr
+
+
+def _with_bits(tmp_path, layout, rows):
+    """A recording carrying `bits` in one of the known layouts. Frame origin is 1000 (see
+    `_write`), FS is 1000 Hz — so frameno 1500 is t = 0.5 s."""
+    d = tmp_path / "Network" / "000123"
+    d.mkdir(parents=True)
+    p = _write(d / mr.MEA_FILENAME)
+    with h5py.File(p, "a") as f:
+        if layout == "group":
+            f.create_group("bits")["0000"] = _bits_records(rows)
+        elif layout == "group-split":
+            g = f.create_group("bits")
+            g["0001"] = _bits_records(rows[1:])
+            g["0000"] = _bits_records(rows[:1])
+        else:
+            f["bits"] = _bits_records(rows)
+    return p
+
+
+@pytest.mark.parametrize("layout", ["group", "group-split", "dataset"])
+def test_ttl_events_reads_both_bits_layouts(tmp_path, layout):
+    """⭐ The group-of-'0000' layout is what this project's files actually carry; the flat dataset
+    is what the community reader expects. The same records in either shape (or split across group
+    keys) must come back as the same pulses, in seconds from the first stored sample."""
+    p = _with_bits(tmp_path, layout, [(1500, 6), (1600, 0), (1800, 1), (1900, 0)])
+    with mr.MeaRecording(p) as r:
+        pulses = r.ttl_events()
+    assert [(x.start_s, x.end_s, x.bits) for x in pulses] == [(0.5, 0.6, 6), (0.8, 0.9, 1)]
+    assert pulses[0].duration_s == pytest.approx(0.1)
+
+
+def test_ttl_events_absent_or_empty_is_an_ordinary_empty_list(tmp_path, rec):
+    """Most recordings carry no digital input at all — that is a fact, not a failure."""
+    with mr.MeaRecording(rec) as r:
+        assert r.ttl_events() == []
+
+    d = tmp_path / "Network" / "000124"
+    d.mkdir(parents=True)
+    p = _write(d / mr.MEA_FILENAME)
+    with h5py.File(p, "a") as f:
+        f.create_group("bits")                       # the group exists, holds nothing
+    with mr.MeaRecording(p) as r:
+        assert r.ttl_events() == []
+
+    d2 = tmp_path / "Network" / "000125"
+    d2.mkdir(parents=True)
+    p2 = _write(d2 / mr.MEA_FILENAME)
+    with h5py.File(p2, "a") as f:
+        f.create_dataset("bits", shape=(0,), dtype=[("frameno", "<u8"), ("bits", "<u2")])
+    with mr.MeaRecording(p2) as r:
+        assert r.ttl_events() == []
+
+
+def test_ttl_events_before_the_first_stored_sample_are_negative_not_clamped(tmp_path):
+    """⚠️ § 5.6: the rig logs during the pre-roll, so a `(frameno - frame_nos[0]) / fs` origin
+    produces negative times. Report them — clamping would silently move a real event."""
+    p = _with_bits(tmp_path, "group", [(500, 1), (700, 0)])
+    with mr.MeaRecording(p) as r:
+        (pulse,) = r.ttl_events()
+    assert pulse.start_s == pytest.approx(-0.5)
+    assert pulse.end_s == pytest.approx(-0.3)
+
+
+def test_ttl_events_still_high_at_the_end_closes_at_the_recordings_end(tmp_path):
+    """A pulse with no closing record ends when the recording does — the most the file can
+    honestly claim, never an invented fall time."""
+    p = _with_bits(tmp_path, "group", [(1500, 2)])
+    with mr.MeaRecording(p) as r:
+        (pulse,) = r.ttl_events()
+    assert pulse.start_s == pytest.approx(0.5)
+    assert pulse.end_s == pytest.approx(4.0)          # 4000 samples at 1 kHz
+    assert pulse.bits == 2
+
+
+def test_ttl_events_split_where_the_line_changes_value_while_high(tmp_path):
+    p = _with_bits(tmp_path, "group", [(1500, 1), (1600, 3), (1700, 0)])
+    with mr.MeaRecording(p) as r:
+        pulses = r.ttl_events()
+    assert [(x.start_s, x.end_s, x.bits) for x in pulses] == [(0.5, 0.6, 1), (0.6, 0.7, 3)]
+
+
+def test_ttl_events_refuse_a_bits_layout_they_do_not_know(tmp_path):
+    """⛔ A third shape is refused, never read as 'no signal' — concluding absence from an
+    unexpected layout is exactly the mistake § 5.6 records against an earlier pass."""
+    d = tmp_path / "Network" / "000126"
+    d.mkdir(parents=True)
+    p = _write(d / mr.MEA_FILENAME)
+    with h5py.File(p, "a") as f:
+        f["bits"] = np.arange(4, dtype=np.uint16)     # no (frameno, bits) fields at all
+    with mr.MeaRecording(p) as r:
+        with pytest.raises(mr.MeaError, match="refusing to guess"):
+            r.ttl_events()
