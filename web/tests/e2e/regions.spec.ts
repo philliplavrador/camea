@@ -415,7 +415,7 @@ async function openRegions(page: Page, opts: OpenOpts = {}): Promise<Stub> {
   return stub;
 }
 
-const stepBtn = (page: Page, n: 'survey' | 'mosaic' | 'electrodes' | 'regions') =>
+const stepBtn = (page: Page, n: 'survey' | 'mosaic' | 'electrodes' | 'regions' | 'orientation') =>
   byId(page, TID.pipelineStep(n));
 
 const rowOf = (page: Page, id: string) =>
@@ -447,10 +447,10 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     // A built mosaic, no electrode map: Regions is one step further than this document supports.
     await openPipeline(page, { doc: { mapped: false } });
 
-    // 1 · the pipeline is the experiment's own order, all four of it
+    // 1 · the pipeline is the experiment's own order, all five of it (Orientation joined 2026-08-15)
     const nav = byId(page, TID.pipelineSteps);
     await expect(nav).toBeVisible();
-    for (const label of ['Survey', 'Mosaic', 'Electrodes', 'Regions']) {
+    for (const label of ['Survey', 'Mosaic', 'Electrodes', 'Regions', 'Orientation']) {
       await expect(nav).toContainText(label);
     }
 
@@ -459,6 +459,7 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(stepBtn(page, 'mosaic')).toHaveAttribute('data-locked', 'false');
     await expect(stepBtn(page, 'electrodes')).toHaveAttribute('data-locked', 'false');
     await expect(stepBtn(page, 'regions')).toHaveAttribute('data-locked', 'true');
+    await expect(stepBtn(page, 'orientation')).toHaveAttribute('data-locked', 'true');
     // …and it opened on the furthest READY step, not on the first one
     await expect(stepBtn(page, 'electrodes')).toHaveAttribute('data-active', 'true');
 
@@ -484,6 +485,7 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(stepBtn(page, 'mosaic')).toHaveAttribute('data-active', 'true');
     await expect(stepBtn(page, 'electrodes')).toHaveAttribute('data-locked', 'true');
     await expect(stepBtn(page, 'regions')).toHaveAttribute('data-locked', 'true');
+    await expect(stepBtn(page, 'orientation')).toHaveAttribute('data-locked', 'true');
 
     await stepBtn(page, 'regions').click({ force: true }); // see the note above — aria-disabled, not disabled
     await expect(byId(page, TID.regionsStep)).toHaveCount(0);
@@ -919,6 +921,7 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
       ['mosaic', /build the picture/i],
       ['electrodes', /number the pads/i],
       ['regions', /place your recordings/i],
+      ['orientation', /settle the chip/i],
     ] as const) {
       await expect(byId(page, TID.pipelineAction(step))).toHaveText(says);
     }

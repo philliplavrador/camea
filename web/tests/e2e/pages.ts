@@ -146,9 +146,6 @@ export const TID = {
   meaChipLegendSilent: 'mea-chip-legend-silent', // ⭐ the hollow ring, and what it MEANS
   meaChipBusiest: 'mea-chip-busiest', //    the ranked busiest-pads list beside the legend
   meaChipBusiestPad: 'mea-chip-busiest-pad', // one row; data-channel; aria-pressed when selected
-  meaChipSpread: 'mea-chip-spread', //      pads per firing-rate band, beside the legend (§7.2)
-  meaChipSpreadBar: 'mea-chip-spread-bar', // one bar; data-band ('silent' | 0..); data-count;
-  //                                        aria-pressed while its pads are highlighted on the map
   meaTraceIdle: 'mea-trace-idle', //        "click a pad on the chip"
   meaTraceFacts: 'mea-trace-facts', //      electrode · channel · position · spikes
   meaTraceChart: 'mea-trace-chart', //      the CLOSE-UP's canvas; shared with the video pipeline
