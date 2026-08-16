@@ -2340,6 +2340,17 @@ class OrientationTestResult(Res):
     margin: float | None = Field(
         default=None, description="Top correlation minus runner-up, among testable seatings. "
         "Null when fewer than two were testable.")
+    chance_level: float | None = Field(
+        default=None, description="⭐ The empirical chance bar: the 95th percentile of the "
+        "|combined correlation| the WINNING seating's own series produce when re-scored at ~200 "
+        "deliberately-wrong clock offsets (circular shifts, deterministic seed — the same number "
+        "on every re-run). What luck alone can reach on this data. Null when nothing was "
+        "scorable.")
+    beats_chance: bool | None = Field(
+        default=None, description="Whether the winning correlation clears `chance_level`. "
+        "⛔ `decided_by: 'correlation'` requires BOTH the margin AND this — a correlation a wrong "
+        "clock could produce never wins, however clear its margin over the runner-up. Null when "
+        "not computed.")
     offset_s: float = Field(default=0.0, description="Clock shift applied, MEA onto video (the "
                             "first region's, when several took part — see `regions`).")
     alignment_quality: float = Field(

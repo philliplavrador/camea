@@ -1193,6 +1193,26 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
         ranked = sorted((s for s in agg if s.scorable),
                         key=lambda s: (s.correlation or -1.0), reverse=True)
 
+        # ⭐ THE HONESTY METER: re-score the WINNING seating's own series at ~200 deliberately
+        # wrong clock offsets and read off what luck produces on this data. ⛔ Never let a
+        # correlation win that a wrong clock could produce — these series are heavily
+        # autocorrelated, so textbook significance would flatter them.
+        chance_level: float | None = None
+        beats_chance: bool | None = None
+        if ranked:
+            top = ranked[0]
+            pairs = []
+            for pr, calcium in zip(per_region, calcium_of):
+                rate, n_rec, _n_region, _n_spikes = vorient.seating_rate(
+                    pr["ids"], flip_x=top.flip_x, flip_y=top.flip_y, cols=cols, rows=rows,
+                    stride=stride, channel_of=channel_of, spikes_of=spikes_of,
+                    duration_s=calcium.size * vorient.BIN_S, offset_s=pr["offset"])
+                pairs.append((rate, calcium, n_rec))
+            nulls = vorient.null_correlations(pairs)
+            if nulls.size:
+                chance_level = float(np.percentile(nulls, vorient.CHANCE_PERCENTILE))
+                beats_chance = bool(abs(top.correlation or 0.0) > chance_level)
+
         # ⭐ WHAT ACTUALLY SEPARATED THEM — and whether anything did.
         #
         # Coverage first, and it is the strongest evidence this test can produce: if only ONE
@@ -1209,7 +1229,10 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
                   if len(ranked) >= 2 else None)
         if len(covered) == 1:
             best, decisive, decided_by = covered[0], True, "coverage"
-        elif margin is not None and margin >= MIN_CORRELATION_MARGIN:
+        elif (margin is not None and margin >= MIN_CORRELATION_MARGIN and beats_chance):
+            # ⛔ BOTH gates: the margin over the runner-up AND beating the empirical chance
+            # level. A clear margin between two numbers a wrong clock could produce is a clear
+            # margin between two pieces of noise.
             best, decisive, decided_by = ranked[0], True, "correlation"
         else:
             best = ranked[0] if ranked else None
@@ -1244,6 +1267,8 @@ def post_mea_orientation(body: MeaOrientationRequest) -> dict:
             "decisive": decisive,
             "decided_by": decided_by,
             "margin": margin,
+            "chance_level": chance_level,
+            "beats_chance": beats_chance,
             # Kept meaning: the (first) region's clock alignment, as before. With several regions
             # each has its own — see `regions`.
             "offset_s": per_region[0]["offset"],

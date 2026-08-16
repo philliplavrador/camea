@@ -52,6 +52,7 @@ __all__ = [
     "align_offset",
     "combined_correlation",
     "intervals_to_mask",
+    "null_correlations",
     "pearson",
     "population_rate",
     "score_seatings",
@@ -307,3 +308,74 @@ def combined_correlation(parts: list[tuple[float | None, int]]) -> float | None:
         num += corr * weight
         den += weight
     return (num / den) if den else None
+
+
+# ── the honesty meter: what a WRONG clock produces ──────────────────────────────────────────────
+
+#: How many deliberately-wrong clock offsets the chance level is measured from. Enough that a 95th
+#: percentile is a real quantile (10 tail samples), cheap enough to ride inside the job.
+NULL_SHIFTS = 200
+
+#: Fixed on purpose: the chance level is part of the reported result, and two runs over the same
+#: data must state the same number. (Python's numpy RNG — the repo's Date/random discipline is a
+#: frontend rule; what binds here is plain reproducibility.)
+NULL_SEED = 7
+
+#: Shifts closer than this to zero (mod the series length) are NOT deliberately wrong: the calcium
+#: transients are seconds long and the alignment itself is only good to a bin or two, so a shift
+#: inside this band could still be the true clock and would poison the null with real signal.
+NULL_GUARD_S = 10.0
+
+#: The percentile of |null correlation| reported as the chance level.
+CHANCE_PERCENTILE = 95.0
+
+
+def null_correlations(
+    pairs: list[tuple[np.ndarray, np.ndarray, int]],
+    *,
+    n_shifts: int = NULL_SHIFTS,
+    seed: int = NULL_SEED,
+    guard_s: float = NULL_GUARD_S,
+    bin_s: float = BIN_S,
+) -> np.ndarray:
+    """|combined correlation| at deliberately-wrong clock offsets — the null the real one must beat.
+
+    ``pairs`` is per region ``(rate, calcium, weight)`` for ONE seating — the same weights
+    :func:`combined_correlation` uses for the real number, so the null is judged by the same rule
+    it must beat. Each draw circularly shifts every region's spike-rate series by its own random
+    number of bins (outside a guard band around zero — see :data:`NULL_GUARD_S`), recomputes the
+    per-region correlations, combines them, and keeps the absolute value.
+
+    ⭐ **WHY THIS EXISTS.** A correlation's usual significance arithmetic assumes independent
+    samples, and these series are anything but: calcium transients smear over many bins, so a
+    modest-looking r can be pure autocorrelation luck. Re-scoring the SAME series under clocks
+    known to be wrong measures exactly what luck produces here, on this data — and a winner that
+    a wrong clock could match is not evidence of anything.
+    """
+    usable = [(np.asarray(r, dtype=np.float64), np.asarray(c, dtype=np.float64), int(w))
+              for r, c, w in pairs
+              if w > 0 and min(np.asarray(r).size, np.asarray(c).size) >= 3]
+    if not usable:
+        return np.zeros(0)
+    # ⚠️ One independent stream PER pair (seeded by position), not one shared stream: with a
+    # shared one, adding a second region would reshuffle the first region's shifts and move a
+    # published chance level for a reason that has nothing to do with the data.
+    shifts: list[np.ndarray] = []
+    for idx, (rate, calcium, _w) in enumerate(usable):
+        rng = np.random.default_rng([seed, idx])
+        n = min(rate.size, calcium.size)
+        guard = min(max(1, int(round(guard_s / bin_s))), max(1, n // 4))
+        if n - 2 * guard >= 1:
+            shifts.append(rng.integers(guard, n - guard + 1, size=n_shifts))
+        else:
+            shifts.append(rng.integers(1, n, size=n_shifts))
+    out: list[float] = []
+    for j in range(n_shifts):
+        parts: list[tuple[float | None, int]] = []
+        for (rate, calcium, w), ks in zip(usable, shifts):
+            n = min(rate.size, calcium.size)
+            parts.append((pearson(np.roll(rate[:n], int(ks[j])), calcium[:n]), w))
+        combined = combined_correlation(parts)
+        if combined is not None:
+            out.append(abs(combined))
+    return np.asarray(out, dtype=np.float64)

@@ -228,7 +228,15 @@ def test_orientation_scores_every_region_and_reports_the_breakdown(client, proje
         assert res["best"] is None
     else:
         assert res["decided_by"] == "correlation" and res["best"]["confirmed"] is False
+        assert res["beats_chance"] is True, "⛔ a correlation win must have cleared chance"
+        assert res["margin"] is not None and res["margin"] >= 0.10
     assert res["caveat"], "the result must never arrive without its caveat"
+
+    # the honesty meter rides on the result: a chance bar measured from the winner's own series
+    assert "chance_level" in res and "beats_chance" in res
+    if res["chance_level"] is not None:
+        assert 0.0 <= res["chance_level"] <= 1.0
+        assert isinstance(res["beats_chance"], bool)
 
 
 def test_orientation_with_region_id_is_the_old_single_region_contract(client, project):

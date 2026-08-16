@@ -8923,6 +8923,30 @@
             "title": "Margin",
             "description": "Top correlation minus runner-up, among testable seatings. Null when fewer than two were testable."
           },
+          "chance_level": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chance Level",
+            "description": "\u2b50 The empirical chance bar: the 95th percentile of the |combined correlation| the WINNING seating's own series produce when re-scored at ~200 deliberately-wrong clock offsets (circular shifts, deterministic seed \u2014 the same number on every re-run). What luck alone can reach on this data. Null when nothing was scorable."
+          },
+          "beats_chance": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beats Chance",
+            "description": "Whether the winning correlation clears `chance_level`. \u26d4 `decided_by: 'correlation'` requires BOTH the margin AND this \u2014 a correlation a wrong clock could produce never wins, however clear its margin over the runner-up. Null when not computed."
+          },
           "offset_s": {
             "type": "number",
             "title": "Offset S",

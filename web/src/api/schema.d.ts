@@ -4852,6 +4852,16 @@ export interface components {
              */
             margin?: number | null;
             /**
+             * Chance Level
+             * @description ⭐ The empirical chance bar: the 95th percentile of the |combined correlation| the WINNING seating's own series produce when re-scored at ~200 deliberately-wrong clock offsets (circular shifts, deterministic seed — the same number on every re-run). What luck alone can reach on this data. Null when nothing was scorable.
+             */
+            chance_level?: number | null;
+            /**
+             * Beats Chance
+             * @description Whether the winning correlation clears `chance_level`. ⛔ `decided_by: 'correlation'` requires BOTH the margin AND this — a correlation a wrong clock could produce never wins, however clear its margin over the runner-up. Null when not computed.
+             */
+            beats_chance?: boolean | null;
+            /**
              * Offset S
              * @description Clock shift applied, MEA onto video (the first region's, when several took part — see `regions`).
              * @default 0

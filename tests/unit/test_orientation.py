@@ -171,6 +171,74 @@ def test_combined_correlation_is_weighted_by_recorded_pads():
     assert ori.combined_correlation([(0.5, 7)]) == pytest.approx(0.5)
 
 
+# ── the honesty meter: what a wrong clock produces ──────────────────────────────────────────────
+
+
+def _burst_pair(duration: float = 60.0, seed: int = 2) -> tuple[np.ndarray, np.ndarray]:
+    """A spike-rate series and a calcium series that genuinely co-vary: shared bursts, plus a
+    little independent noise so the correlation is high but not degenerate."""
+    rng = np.random.default_rng(seed)
+    bursts = list(rng.uniform(2.0, duration - 2.0, 12))
+    spikes = _spiky(duration, bursts, per=60)
+    rate = ori.population_rate(spikes, 0.0, duration)
+    calcium = rate + rng.normal(0.0, 0.5, rate.size)
+    return rate, calcium
+
+
+def test_null_correlations_are_deterministic_and_bounded():
+    """⭐ The chance level is REPORTED, so two runs over the same data must state the same number
+    — the seed is fixed on purpose."""
+    rate, calcium = _burst_pair()
+    a = ori.null_correlations([(rate, calcium, 5)])
+    b = ori.null_correlations([(rate, calcium, 5)])
+    assert a.size > 0
+    assert np.array_equal(a, b)
+    assert (a >= 0).all() and (a <= 1.0).all(), "|r| by construction"
+
+
+def test_a_planted_correlation_beats_its_own_chance_level():
+    """The meter must not fire on the genuine article: a truly co-varying pair correlates far
+    above anything its own series produce under deliberately-wrong clocks."""
+    rate, calcium = _burst_pair()
+    true = ori.pearson(rate, calcium)
+    nulls = ori.null_correlations([(rate, calcium, 5)])
+    chance = float(np.percentile(nulls, ori.CHANCE_PERCENTILE))
+    assert true is not None and abs(true) > chance
+    assert chance < 0.9, "wrong clocks must not reproduce the planted correlation"
+
+
+def test_an_unrelated_pair_does_not_beat_chance():
+    """🔴 THE POINT OF THE METER. Two series with nothing in common still show SOME correlation —
+    autocorrelated bins manufacture it — and that number must fall inside what wrong clocks
+    produce, so `decisive-by-correlation` cannot be won by luck."""
+    rng = np.random.default_rng(3)
+    duration = 60.0
+    rate = ori.population_rate(np.sort(rng.uniform(0, duration, 300)), 0.0, duration)
+    calcium = ori.population_rate(np.sort(rng.uniform(0, duration, 300)), 0.0, duration)
+    true = ori.pearson(rate, calcium)
+    nulls = ori.null_correlations([(rate, calcium, 5)])
+    chance = float(np.percentile(nulls, ori.CHANCE_PERCENTILE))
+    assert true is not None and abs(true) <= chance
+
+
+def test_null_correlations_of_nothing_scorable_is_empty_not_zero():
+    """No series, zero weight, or too-short series: there is no null distribution to report, and
+    an empty array is the honest answer (the route then reports `chance_level: null`)."""
+    assert ori.null_correlations([]).size == 0
+    assert ori.null_correlations([(np.arange(10.0), np.arange(10.0), 0)]).size == 0
+    assert ori.null_correlations([(np.zeros(2), np.zeros(2), 3)]).size == 0
+
+
+def test_null_correlations_use_the_same_weights_as_the_real_combination():
+    """Two regions, the second flat (correlation None under every shift): the null must be the
+    first region's alone — the same refusal-to-invent-a-zero the real combination makes."""
+    rate, calcium = _burst_pair()
+    flat = np.zeros(rate.size)
+    alone = ori.null_correlations([(rate, calcium, 5)])
+    with_flat = ori.null_correlations([(rate, calcium, 5), (flat, calcium, 2)])
+    assert np.array_equal(alone, with_flat)
+
+
 def test_combined_correlation_refuses_to_invent_a_zero_for_an_untested_region():
     """⭐ THE SAME DISTINCTION AS SeatingScore, held while combining: a region this seating puts no
     recorded pad under says NOTHING, and averaging in a zero for it would drag a genuinely tested
