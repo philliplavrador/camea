@@ -214,11 +214,20 @@ def post_video_project(body: CreateVideoProjectRequest) -> dict:
         core_document.save_analysis(ws, pr.analysis_id, doc)
     except core_document.ValidationError as e:
         _abandon(pr)
-        raise ApiError(400, "bad_request",
-                       "; ".join(e.args[0]) if e.args else str(e)) from e
+        # ⚠️ `str(e)`, NOT `"; ".join(e.args[0])` (issue 004). `ValidationError.__init__` has
+        # already joined `.problems` into one string, so `args[0]` IS that string — and joining a
+        # string iterates its CHARACTERS ("bad thing" -> "b; a; d; ..."), garbling the refusal
+        # exactly when the user needs to read it.
+        raise ApiError(400, "bad_request", str(e)) from e
     except core_document.DocumentError as e:
         _abandon(pr)
         raise ApiError(400, "bad_request", str(e)) from e
+    except Exception as e:                                   # noqa: BLE001
+        # ⚠️ Anything at all — an unwritable store, a full disk (issue 004). A half-made project
+        # must not reach the home screen, whatever the reason it failed to finish; the mea create
+        # route has carried these three lines since it was written.
+        _abandon(pr)
+        raise _project_error(e) from e
 
     # Nothing to remember: the project is in the store, and the store is the index (R44).
     core_document.DOCUMENTS.put(doc, pr.document_path)

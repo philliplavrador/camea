@@ -3,10 +3,10 @@ id: 004
 title: The video create route garbles its own refusal message, and can strand a half-made project
 kind: defect
 tier: medium
-status: open
+status: fixed
 found: 2026-08-14
 found-while: building plan 001 (Analyze MEA) — the review of the new create route caught both in the code it was modelled on
-resolved-by: ~
+resolved-by: fixed 2026-08-16 — str(e) for the refusal, and the mea route's catch-all backported
 ---
 
 # 004 — `POST /api/videomosaic/projects` garbles its refusal, and its cleanup has a gap
@@ -58,3 +58,22 @@ broken card on the home screen with no way to tell why it is broken.
 Plan 001 § Scope says *"Any change to the video pipeline's behaviour"* is **out**, and both of these
 change what that pipeline does. So they are filed rather than fixed in that build. The `mea` copies
 are correct as written.
+
+## How it was resolved
+
+Exactly the fix the issue prescribed, both halves, in
+[`routes.py :: post_video_project`](../../../src/camea/features/videomosaic/routes.py):
+
+1. The `ValidationError` handler now raises `ApiError(400, "bad_request", str(e))` —
+   `ValidationError.__init__` has already joined `.problems` into one string, and `str(e)` hands
+   that sentence over whole instead of `"; ".join()`ing its characters. The comment the mea route
+   carries about this trap now sits on the video route too.
+2. The mea route's catch-all was backported verbatim: `except Exception: _abandon(pr);
+   raise _project_error(e)` — an `OSError` mid-save (unwritable store, full disk) now tears the
+   half-made project back down instead of leaving a broken card on the home screen.
+
+Proven by two new tests in `tests/api/test_videomosaic.py`:
+`test_a_create_refusal_arrives_whole_not_letter_joined` (an injected `ValidationError`'s message
+arrives verbatim — `"source: a probed video receipt is required"`, not `"s; o; u; …"` — and the
+store is empty after) and `test_an_unexpected_midsave_failure_leaves_no_project_behind` (an
+injected `OSError` answers 500 `io_error`, the store is empty, and the home screen lists nothing).

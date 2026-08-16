@@ -91,6 +91,47 @@ def test_create_project_refuses_a_dead_video(client, tmp_path):
     assert store_entries() == [], "a refused create must not leave a project behind"
 
 
+def test_a_create_refusal_arrives_whole_not_letter_joined(client, survey, monkeypatch):
+    """Issue 004 §1 — the route joined `e.args[0]`, which `ValidationError.__init__` had ALREADY
+    joined into one string, so `"; ".join()` iterated its characters ("s; o; u; r; …"). The
+    refusal must arrive as the sentence the error composed, verbatim — this repo's standing rule
+    is that a refusal is shown whole."""
+    from camea.core import document as core_document
+
+    sentence = "source: a probed video receipt is required"
+
+    def refuse(*_a, **_k):
+        raise core_document.ValidationError([sentence])
+
+    monkeypatch.setattr(core_document, "save_analysis", refuse)
+    r = client.post("/api/videomosaic/projects",
+                    json={"name": "x", "video_path": survey["path"]})
+    assert r.status_code == 400
+    msg = err(r)["message"]
+    assert msg == sentence, f"garbled refusal: {msg!r}"
+    assert "s; o; u" not in msg
+    assert store_entries() == [], "a refused create must not leave a project behind"
+
+
+def test_an_unexpected_midsave_failure_leaves_no_project_behind(client, survey, monkeypatch):
+    """Issue 004 §2 — an `OSError` in `save_analysis` (unwritable store, full disk) used to escape
+    AFTER the manifest was written: a project the user never finished creating appeared on his
+    home screen with no document in it. The catch-all now abandons it, like the mea route."""
+    from camea.core import document as core_document
+
+    def full_disk(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(core_document, "save_analysis", full_disk)
+    r = client.post("/api/videomosaic/projects",
+                    json={"name": "x", "video_path": survey["path"]})
+    assert r.status_code == 500
+    assert err(r)["code"] == "io_error"
+    assert store_entries() == [], "a failed create must not leave a project behind"
+    listed = client.get("/api/projects").json()["analyses"]
+    assert listed == [], "and nothing broken reaches the home screen"
+
+
 # ---- build → browse → copy out ---------------------------------------------------------------
 def test_build_end_to_end_and_the_outputs_are_browsable(client, survey, outbox, state_dir):
     """⭐ **THE WHOLE R44 FLOW: no directory question at all until he wants a copy.**"""
