@@ -12,13 +12,24 @@
 // repo noticed, because nothing was watching.
 //
 // The backend is plain uvicorn with no file watching, so it serves whatever Python it
-// imported at startup until somebody restarts it. That gives two ways to be looking at a
-// lie, and this script is the check for both:
+// imported at startup until somebody restarts it. And the native window does not run Vite
+// at all — `camea --window` serves the BUILT bundle in `web/dist`, which nothing rebuilds
+// on its own. So there are three ways to be looking at a lie, and this script checks all
+// three:
 //
-//   1. **STALE** — a backend is listening, but it started BEFORE the newest change to
-//      `src/camea/`. Every request it answers is the old app.
-//   2. **HALF-DEAD** — the Vite dev server is up and the backend is not. This is the worse
-//      of the two: a page that loads, renders, and fails every request it makes.
+//   1. **STALE BACKEND** — a backend is listening, but it started BEFORE the newest change
+//      to `src/camea/`. Every request it answers is the old app.
+//   2. **HALF-DEAD** — the Vite dev server is up and the backend is not. This is the worst
+//      of the three: a page that loads, renders, and fails every request it makes.
+//   3. **STALE BUNDLE** — `web/dist` is older than `web/src`. The dev server hot-reloads and
+//      hides this completely; the native window shows it to the author, and to nobody else.
+//
+// ⚠️ Case 3 is here because leaving it out was a real failure, hours after cases 1 and 2
+// landed. The first cut of this file said, in as many words, that the frontend "needs none
+// of this; Vite hot-reloads" — true of `npm run dev`, and false of the only mode the author
+// actually uses. He opened `camea --reload`, looked at a screen the day's work had rewritten
+// end to end, and said *"im still unable to do the thing"*: the window was serving a bundle
+// built at 13:25 for a feature that landed at 15:52.
 //
 // ⭐ `camea --headless --reload` makes case 1 fix itself — uvicorn's reloader restarts the
 // child on any change under `src/camea/`, so `uptime_s` resets and this check goes green on
@@ -47,6 +58,8 @@ const path = require('path');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(REPO_ROOT, 'src', 'camea');
+const WEB_SRC = path.join(REPO_ROOT, 'web', 'src');
+const WEB_DIST = path.join(REPO_ROOT, 'web', 'dist');
 
 const API_PORT = Number(process.env.CAMEA_DEV_PORT || 8000);
 const WEB_PORT = Number(process.env.CAMEA_DEV_WEB_PORT || 5173);
@@ -61,12 +74,12 @@ const SLACK_S = 2;
 
 // ---------------------------------------------------------------------------
 
-/** Newest mtime under src/camea, in epoch seconds. The whole tree, not just changed files:
- *  what makes a running server stale is the newest code on disk, whatever git thinks of it
- *  (a file edited and committed in an earlier turn is still newer than a server started
- *  before it). */
-function newestPython(dir) {
-  let newest = 0;
+/** Newest mtime under `dir`, in epoch seconds, counting only files `keep()` accepts. The whole
+ *  tree, not just changed files: what makes a build or a server stale is the newest code on
+ *  disk, whatever git thinks of it (a file edited and committed in an earlier turn is still
+ *  newer than a server started before it). */
+function newest(dir, keep = () => true) {
+  let stamp = 0;
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -74,20 +87,27 @@ function newestPython(dir) {
     return 0;
   }
   for (const e of entries) {
-    if (e.name === '__pycache__') continue;
+    if (e.name === '__pycache__' || e.name === 'node_modules') continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) {
-      newest = Math.max(newest, newestPython(p));
-    } else if (e.name.endsWith('.py')) {
+      stamp = Math.max(stamp, newest(p, keep));
+    } else if (keep(e.name)) {
       try {
-        newest = Math.max(newest, fs.statSync(p).mtimeMs / 1000);
+        stamp = Math.max(stamp, fs.statSync(p).mtimeMs / 1000);
       } catch {
         /* raced with a write; the next file speaks for it */
       }
     }
   }
-  return newest;
+  return stamp;
 }
+
+const isPython = (name) => name.endsWith('.py');
+
+/** Everything Vite compiles in. `.map` files are excluded from the DIST side by the caller's
+ *  choice of directory, not here — on the SOURCE side every file matters, styles and assets
+ *  included, because any of them changes what the built bundle should contain. */
+const isSource = () => true;
 
 /** Is anything listening? A bare TCP connect — it asks nothing of the process behind it, so
  *  it works for Vite, for the backend, and for whatever else grabbed the port. */
@@ -127,16 +147,42 @@ function ago(seconds) {
 
 // ---------------------------------------------------------------------------
 
+/** Case 3. Independent of what is running: `web/dist` is what `camea --window` serves and what
+ *  a release ships, so a bundle older than its sources is stale whether or not anything is up
+ *  right now. Absent `web/dist` is not stale — it is a checkout that has never been built, and
+ *  saying so on every turn would be noise. */
+function staleBundle() {
+  if (!fs.existsSync(WEB_DIST)) return null;
+  const built = newest(WEB_DIST);
+  const source = newest(WEB_SRC, isSource);
+  if (!built || !source || source <= built) return null;
+
+  return (
+    `THE BUILT FRONTEND IS STALE. web/dist was built ${ago(Date.now() / 1000 - built)} and ` +
+    `web/src has changed since — ${ago(Date.now() / 1000 - source)}.\n\n` +
+    `\`camea --window\` and \`camea --browser\` serve web/dist, NOT the dev server. Nothing ` +
+    `rebuilds it: Vite's hot reload only applies to \`npm run dev\` on :${WEB_PORT}. So the ` +
+    `app he opens is the interface as it was at the last build, however current the source is ` +
+    `— and it fails silently, because a stale screen looks exactly like a working one.\n\n` +
+    `Rebuild it:\n` +
+    `    cd web && npm run build\n`
+  );
+}
+
 async function main() {
   if (process.env.CAMEA_SKIP_APP_FRESH === '1') return 0;
 
+  // Every problem is collected and all of them are reported. Returning at the first one hides
+  // the second, and "fixed it, still broken" is the experience this file exists to end.
+  const problems = [];
+
+  const bundle = staleBundle();
+  if (bundle) problems.push(bundle);
+
   const [apiUp, webUp] = await Promise.all([listening(API_PORT), listening(WEB_PORT)]);
 
-  // Nothing running: there is no stale app to be looking at. The common case, and silent.
-  if (!apiUp && !webUp) return 0;
-
-  if (!apiUp) {
-    console.log(
+  if (!apiUp && webUp) {
+    problems.push(
       `THE APP IS HALF-DEAD. The Vite dev server is up on :${WEB_PORT} and nothing is ` +
         `listening on :${API_PORT}.\n\n` +
         `That page still loads and still paints — and every request it makes fails, which ` +
@@ -145,35 +191,37 @@ async function main() {
         `Start it:\n` +
         `    uv run camea --headless --reload --port ${API_PORT}\n`,
     );
-    return 1;
+  } else if (apiUp) {
+    const uptime = await backendUptime(API_PORT);
+    if (uptime === null) {
+      // Something owns the port but does not answer /api/health. Not ours to judge.
+      console.log(
+        `note: :${API_PORT} is taken by something that is not a Camea backend — backend ` +
+          `freshness not checked.`,
+      );
+    } else {
+      const startedAt = Date.now() / 1000 - uptime;
+      const newestPy = newest(SRC, isPython);
+      if (newestPy > startedAt + SLACK_S) {
+        problems.push(
+          `THE RUNNING BACKEND IS STALE. The one on :${API_PORT} started ${ago(uptime)}, and ` +
+            `src/camea/ has changed ${ago(Date.now() / 1000 - newestPy)} — ` +
+            `${Math.round(newestPy - startedAt)}s after it came up.\n\n` +
+            `uvicorn does not watch its own files, so that process is still serving the Python ` +
+            `it imported at startup. Anything you just changed under src/camea/ is NOT what ` +
+            `the browser is talking to, and clicking through it proves nothing.\n\n` +
+            `Restart it — with --reload, so this cannot happen again:\n` +
+            `    uv run camea --headless --reload --port ${API_PORT}\n`,
+        );
+      }
+    }
   }
 
-  const uptime = await backendUptime(API_PORT);
-  if (uptime === null) {
-    // Something owns the port but does not answer /api/health. Not ours to judge.
-    console.log(
-      `note: :${API_PORT} is taken by something that is not a Camea backend — freshness ` +
-        `not checked.`,
-    );
-    return 0;
-  }
-
-  const startedAt = Date.now() / 1000 - uptime;
-  const newest = newestPython(SRC);
-  if (newest <= startedAt + SLACK_S) return 0;
-
-  const behind = newest - startedAt;
+  if (problems.length === 0) return 0;
   console.log(
-    `THE RUNNING APP IS STALE. The backend on :${API_PORT} started ${ago(uptime)}, and ` +
-      `src/camea/ has changed ${ago(Date.now() / 1000 - newest)} — ${Math.round(behind)}s ` +
-      `after it came up.\n\n` +
-      `uvicorn does not watch its own files, so that process is still serving the Python it ` +
-      `imported at startup. Anything you just changed under src/camea/ is NOT what the ` +
-      `browser is talking to, and clicking through it proves nothing.\n\n` +
-      `Restart it — and start it with --reload so this cannot happen again:\n` +
-      `    uv run camea --headless --reload --port ${API_PORT}\n\n` +
-      `(The frontend needs none of this; Vite hot-reloads. If the author is mid-click and a ` +
-      `restart would interrupt them, say so instead of doing it silently.)\n`,
+    problems.join('\n') +
+      `\n⚠️ If the author is mid-click, a restart or a rebuild will interrupt them. Say what ` +
+      `is stale rather than doing it silently.\n`,
   );
   return 1;
 }

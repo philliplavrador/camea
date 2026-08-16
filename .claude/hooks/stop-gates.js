@@ -143,20 +143,25 @@ const GATES = [
     // ~120ms — two loopback probes, and a walk of src/camea for the newest .py mtime.
     //
     // ⭐ THE ONLY GATE THAT ASKS ABOUT THE WORLD RATHER THAN THE TREE. Everything else here
-    // decides from files; this one asks whether the process the author is looking at is
-    // running the code those files describe. uvicorn does not watch its own source, so a
-    // running backend serves whatever it imported at startup — and the symptom of that is
-    // not an error, it is the change appearing not to have happened.
+    // decides from files; this one asks whether the app the author can actually open is built
+    // from the code those files describe. Two things go stale on their own and neither says
+    // so: uvicorn does not watch its own source, and `web/dist` — what `camea --window`
+    // serves — is not rebuilt by anything.
     //
-    // Silent when nothing is listening, which is most turns. See the script's header.
+    // ⚠️ `web/src/` is in the matcher for the SECOND of those, and it was left out on the
+    // first pass because "Vite hot-reloads". Vite hot-reloads `npm run dev`. The author opens
+    // the window, which serves the build. He looked at a screen that had been rewritten end to
+    // end that afternoon and said "im still unable to do the thing".
+    //
+    // Silent when nothing is listening and the bundle is current, which is most turns.
     label: 'stale-app',
-    match: (p) => p.startsWith('src/camea/') && p.endsWith('.py'),
+    match: (p) => (p.startsWith('src/camea/') && p.endsWith('.py')) || p.startsWith('web/src/'),
     cmd: 'node scripts/check-app-fresh.js',
-    cost: '120ms',
+    cost: '150ms',
     hint:
-      'the app that is actually running is NOT the code in this tree. Read the lines below and ' +
-      'restart it before you tell him anything is done — a click-through against a stale ' +
-      'backend proves nothing, and "i dont see the updates" is what he says next:',
+      'the app he can actually open is NOT the code in this tree. Read the lines below and fix ' +
+      'it before you tell him anything is done — a click-through against a stale backend or a ' +
+      'stale bundle proves nothing, and "i dont see the updates" is what he says next:',
   },
   {
     // 120ms. A RATCHET, not a pass/fail: 13 of the 48 rulings had no citing test on

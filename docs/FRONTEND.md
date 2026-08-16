@@ -50,9 +50,23 @@ uv run camea --headless --reload --port 8000 --open <a-folder-that-contains-data
 > (measured, uvicorn 0.51.0). `camea.__main__.ReloadSupervisor` is the ~90-line replacement.
 >
 > The backstop is `scripts/check-app-fresh.js`, wired into the Stop hook as the **`stale-app`**
-> gate: a turn that changes `src/camea/**.py` is blocked if the backend on `:8000` started before
-> that change, or if `:5173` is up with nothing behind it. Ports are overridable —
-> `CAMEA_DEV_PORT` / `CAMEA_DEV_WEB_PORT`.
+> gate. It blocks a turn on any of three: the backend on `:8000` started before the newest change
+> under `src/camea/` · `:5173` is up with nothing behind it · **`web/dist` is older than
+> `web/src`**. Ports are overridable — `CAMEA_DEV_PORT` / `CAMEA_DEV_WEB_PORT`.
+>
+> 🔴 **That third one is the trap this whole section is really about.** The two-terminal loop
+> above is a *developer's* view of the app. **The author opens `camea --window`, which serves the
+> built bundle in `web/dist`** — Vite is not in that picture at all, and nothing rebuilds `dist`.
+> A change to `web/src/` is invisible to him until someone runs:
+>
+> ```bash
+> cd web && npm run build
+> ```
+>
+> On 2026-08-15 a session rewrote the MEA trace panel end to end, verified it against `:5173`,
+> and showed him the window: he saw the panel as it had been that morning, and said *"im still
+> unable to do the thing thats like the matplot lib widget"*. Everything was correct except what
+> he could see.
 
 > ⚠️ **There is no `--data-dir` flag.** The app carries no dataset knowledge (HARD RULE 3). `--open`
 > puts a path in `settings.recent_datasets` — *"start me near here"* — and nothing else. It opens no

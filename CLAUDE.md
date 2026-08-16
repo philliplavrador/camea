@@ -85,13 +85,19 @@ uvicorn watches nothing: a running `camea` serves the Python it imported at star
 edit under `src/camea/` the app answers happily *in the old code*, and the only symptom is that
 what you changed appears not to have happened. **Always start the dev backend as
 `uv run camea --headless --reload --port 8000`** — that watches `src/camea/` and restarts the
-server itself. `--reload` works in **all three modes**, `--window` included (it reloads the
-backend; the window's UI is the built bundle in `web/dist`, which it does not rebuild). The Stop hook's **`stale-app`** gate is the backstop: it blocks the turn
-when a backend is listening but started before your newest change, and when the Vite server is up
-with no backend behind it — a page that loads, paints, and answers nothing. Never tell him something
-is done off a click-through against a stale server. (The frontend needs none of this; Vite
-hot-reloads. The rule was written 2026-08-15, after a session shipped a whole feature and left the
-backend stopped — his first words on looking at it were *"i dont see the updates"*.)
+server itself. `--reload` works in **all three modes**, `--window` included.
+
+⚠️ **And the interface has the same problem, one layer up: `camea --window` serves `web/dist`,
+the BUILT bundle — not the dev server.** Vite's hot reload is a property of `npm run dev`, not of
+the app he opens, and nothing rebuilds `web/dist` on its own. **After changing anything under
+`web/src/`, run `cd web && npm run build`** or he is looking at the interface as it was at the
+last build. This is not hypothetical: it is how he came to be shown a screen whose rewrite had
+landed two hours earlier. The Stop hook's **`stale-app`** gate is the backstop: it blocks the turn
+on all three: a backend listening but started before your newest change · the Vite server up with
+no backend behind it · `web/dist` older than `web/src`. Never tell him something is done off a
+click-through against a stale server or a stale bundle. (Written 2026-08-15, after a session
+shipped a whole feature and left the backend stopped — *"i dont see the updates"* — and then, with
+that fixed, showed him a two-hour-old build — *"im still unable to do the thing"*.)
 
 The frontend (`web/`) is TypeScript + React + Vite; Node 22. Its API client is **generated** from
 the backend's OpenAPI schema (`cd web && npm run gen:api`; `npm run check:api` fails on drift) —

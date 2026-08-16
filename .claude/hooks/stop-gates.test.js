@@ -79,8 +79,14 @@ expectGates('src/camea/features/videomosaic/routes.py', [
 
 // A hand-edited generated client is exactly what check:api exists to catch, so the file
 // itself selects it.
-expectGates('web/src/api/schema.d.ts', ['check:api', 'tsc', 'vitest', 'eslint']);
-expectGates('web/src/features/mosaic/Sweep.tsx', ['tsc', 'vitest', 'eslint']);
+// (web/src/ also pulls `stale-app`: `camea --window` serves web/dist, which no watcher
+// rebuilds, so a change here leaves the app he opens showing the previous build.)
+expectGates('web/src/api/schema.d.ts', ['check:api', 'tsc', 'vitest', 'eslint', 'stale-app']);
+expectGates('web/src/features/mosaic/Sweep.tsx', ['tsc', 'vitest', 'eslint', 'stale-app']);
+
+// ...but an e2e SPEC does not: it is not compiled into the bundle, so it cannot make one
+// stale. Scope is the point of the table.
+expectGates('web/tests/e2e/regions.spec.ts', ['rulings', 'tsc', 'eslint', 'e2e']);
 
 // BEHAVIOUR.md and the e2e specs are two halves of one contract, so both pull the ratchet.
 expectGates('docs/BEHAVIOUR.md', ['links', 'rulings', 'e2e']);
