@@ -172,6 +172,41 @@ def test_kind_is_a_free_string(reg: JobRegistry) -> None:
     assert job.to_json()["kind"] == "segmentation:train"
 
 
+def test_a_labelled_holder_is_named_in_plain_words_by_the_busy_message(reg: JobRegistry) -> None:
+    """⭐ 2026-08-16: a submit may carry a plain-words label, and a refusal then names the running
+    job with it — "…while copying a recording in" beats a kind string he cannot read."""
+    ev = threading.Event()
+    held = reg.submit_thread("mea_copy", _block(ev), exclusive="disk",
+                             label="copying a recording in")
+    wait(held, "running")
+    assert held.label == "copying a recording in"
+    assert held.said_as == "copying a recording in"
+
+    with pytest.raises(Busy, match="while copying a recording in") as e:
+        reg.submit_thread("export", _block(ev), exclusive="disk")
+    assert held.job_id in str(e.value)          # the id still rides along for a debugger
+    ev.set()
+
+
+def test_an_unlabelled_holder_keeps_the_old_busy_message_byte_for_byte(reg: JobRegistry) -> None:
+    """⚠️ The videomosaic submit sites have not opted in, and their 409 bodies must not move under
+    them from a core change. This is the byte-compat promise, pinned."""
+    ev = threading.Event()
+    held = reg.submit_thread("build", _block(ev), exclusive="gpu")
+    wait(held, "running")
+
+    with pytest.raises(Busy) as e:
+        reg.submit_thread("build", _block(ev), exclusive="gpu")
+    assert str(e.value) == f"job {held.job_id} (build) holds the 'gpu' lease"
+    ev.set()
+
+
+def test_said_as_falls_back_to_a_humanized_kind() -> None:
+    """The default for any surface that must name an unlabelled job in a sentence."""
+    j = Job(job_id="job_x", kind="mea_envelope")
+    assert j.said_as == "running a mea envelope job"
+
+
 # =============================================================================
 # The Job object
 # =============================================================================

@@ -387,6 +387,19 @@ def test_the_document_records_where_it_came_from_and_nothing_about_what_is_in_it
         assert banned not in rec, f"{banned} is a fact about the DATA and must not be stored"
 
 
+def test_the_mea_jobs_carry_plain_words_labels(client, session):
+    """⭐ 2026-08-16: every mea submit names itself in words a refusal can use — `core/jobs`'s
+    `Busy` says "…while <label>" once a holder carries one. Forbidden-words rule (MAXWELL §7.5)
+    applies to these like any surface; both are checked here so a rewording is a conscious act."""
+    from camea.core.jobs import JOBS
+
+    a = _create(client, "labelled", paths=[session[0]])
+    _settled(client, a["analysis_id"])
+    labels = {j.kind: j.label for j in JOBS.list() if j.kind in ("mea_copy", "mea_envelope")}
+    assert labels.get("mea_copy") == "copying a recording in"
+    assert labels.get("mea_envelope") == "reading the recording end to end"
+
+
 # ---- adding from inside the project -------------------------------------------------------------
 def test_add_recordings_from_inside_the_project(client, session):
     """The second door. Same work, same three functions — so the wizard and the button cannot

@@ -439,7 +439,9 @@ def start_copy(project_dir: str | Path, analysis_id: str, rec: Mapping,
             save(rid, {"copy_state": "failed", "copy_error": f"{type(e).__name__}: {e}"})
             raise
 
-    job = core_jobs.JOBS.submit_thread(COPY_JOB_KIND, guarded)
+    # ⭐ The label is the plain words a refusal would name this job by ("…while copying a
+    # recording in"). Forbidden-words rule (MAXWELL §7.5) applies to labels like any surface.
+    job = core_jobs.JOBS.submit_thread(COPY_JOB_KIND, guarded, label="copying a recording in")
     _COPY_JOBS[rid] = job.job_id
     return job.job_id
 
@@ -528,7 +530,8 @@ def start_envelope(project_dir: str | Path, analysis_id: str, rec: Mapping, *,
         return {"kind": ENVELOPE_JOB_KIND, "analysis_id": analysis_id, "recording_id": rid,
                 "built": True, "n_buckets": int(env.n_buckets)}
 
-    job = core_jobs.JOBS.submit_thread(ENVELOPE_JOB_KIND, fn)
+    job = core_jobs.JOBS.submit_thread(ENVELOPE_JOB_KIND, fn,
+                                       label="reading the recording end to end")
     _ENVELOPE_JOBS[rid] = job.job_id
     return job.job_id
 

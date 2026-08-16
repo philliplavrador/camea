@@ -116,6 +116,10 @@ class Job:
     #: the exclusive-resource lease this job holds while it is queued/running, e.g. `"gpu"`. `None` =
     #: it competes with nothing.
     exclusive: str | None = None
+    #: ⭐ plain words for what this job is doing — "copying a recording in" — carried by the submit
+    #: so a refusal can name the running job in words he reads, not a kind string (2026-08-16).
+    #: Empty = the submitter has not opted in; `said_as` humanizes the kind as the fallback.
+    label: str = ""
     progress: Progress = field(default_factory=Progress)
     started_at: str = ""
     finished_at: str | None = None
@@ -131,6 +135,12 @@ class Job:
     _cancel: threading.Event | None = None
     _proc: Any = None                  # mp.Process for a process job
     _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    @property
+    def said_as(self) -> str:
+        """What to call this job in a sentence: its label, or a humanized kind as the default —
+        `"mea_envelope"` -> `"running a mea envelope job"`. Never empty."""
+        return self.label or f"running a {self.kind.replace('_', ' ')} job"
 
     def to_json(self) -> dict:
         """The exact shape of `GET /api/jobs/{job_id}` (`api.schemas.Job`). Must be JSON-safe.
@@ -373,10 +383,11 @@ class JobRegistry:
         self._ids = itertools.count(1)
 
     # --- internals ----------------------------------------------------------------------
-    def _new_job(self, kind: JobKind, cancellable: bool, exclusive: str | None) -> Job:
+    def _new_job(self, kind: JobKind, cancellable: bool, exclusive: str | None,
+                 label: str = "") -> Job:
         job_id = f"job_{uuid.uuid4().hex[:6]}"
         j = Job(job_id=job_id, kind=str(kind), state="queued", started_at=_iso(),
-                cancellable=cancellable, exclusive=exclusive)
+                cancellable=cancellable, exclusive=exclusive, label=str(label or ""))
         j._t0 = time.time()
         with self._lock:
             self._jobs[job_id] = j
@@ -392,14 +403,27 @@ class JobRegistry:
                     break
         return j
 
-    def _claim(self, kind: JobKind, cancellable: bool, exclusive: str | None) -> Job:
-        """Take the lease (if any) and create the job, atomically. -> `Busy` if it is held."""
+    def _claim(self, kind: JobKind, cancellable: bool, exclusive: str | None,
+               label: str = "") -> Job:
+        """Take the lease (if any) and create the job, atomically. -> `Busy` if it is held.
+
+        ⭐ **THE `Busy` MESSAGE NAMES THE RUNNING JOB IN PLAIN WORDS once it carries a label**
+        (2026-08-16) — "…while copying a recording in" beats a kind string and a job id he cannot
+        do anything with. ⚠️ A holder submitted WITHOUT a label keeps the old wording byte for
+        byte: the videomosaic submit sites have not opted in, and their 409 bodies must not move
+        under them from a core change. When they pass labels, they get the new form for free —
+        whose fallback for any future blank label is the humanized kind (`Job.said_as`).
+        """
         with self._lock:
             if exclusive:
                 held = self.holder(exclusive)
                 if held is not None:
+                    if held.label:
+                        raise Busy(f"Camea is busy while {held.said_as} "
+                                   f"(job {held.job_id}, holding the {exclusive!r} lease) — "
+                                   "try again when it finishes")
                     raise Busy(f"job {held.job_id} ({held.kind}) holds the {exclusive!r} lease")
-            return self._new_job(kind, cancellable, exclusive)
+            return self._new_job(kind, cancellable, exclusive, label)
 
     # --- submitting ---------------------------------------------------------------------
     def submit_thread(
@@ -408,6 +432,7 @@ class JobRegistry:
         fn: Callable[[Callable[[Progress], None], threading.Event], Any],
         cancellable: bool = True,
         exclusive: str | None = None,
+        label: str = "",
     ) -> Job:
         """Run `fn(report, cancel_event)` on a worker thread. For work that CAN be interrupted
         cooperatively — `open`, `export`: seconds, and they poll a flag.
@@ -418,9 +443,12 @@ class JobRegistry:
             (per frame loaded, per tile rendered) and raise `Cancelled` — use `check_cancelled()`.
             A job that ignores it is a job the user cannot stop.
 
+        `label` — optional plain words for what this job is doing ("copying a recording in"), used
+        by refusals that need to name it. See `_claim`; omitting it changes nothing.
+
         Whatever `fn` returns becomes `job.result` (it MUST be JSON-safe).
         """
-        job = self._claim(kind, cancellable, exclusive)
+        job = self._claim(kind, cancellable, exclusive, label)
         job._cancel = threading.Event()
 
         def report(p: Progress) -> None:
@@ -459,6 +487,7 @@ class JobRegistry:
         target: str,
         kwargs: dict,
         exclusive: str | None = None,
+        label: str = "",
     ) -> Job:
         """Run a job in a CHILD PROCESS. **This is how uninterruptible work runs, and it is why
         cancel works at all**: cancel is `proc.terminate()`, and there is no cooperative path
@@ -469,11 +498,13 @@ class JobRegistry:
                    `spawn` interpreter and every value in `kwargs` MUST be picklable (paths, ints,
                    dicts — never a numpy stack, never an open file, never a CuPy array).
         `exclusive` — a resource lease, e.g. `"gpu"`. See the class docstring.
+        `label` — optional plain words for what this job is doing, used by refusals that need to
+                  name it. See `_claim`; omitting it changes nothing.
 
         The child streams `Progress` objects and raw log lines back over an `mp.Queue`; the registry
         drains that queue on a reader thread and updates the `Job`. Protocol: `_apply`.
         """
-        job = self._claim(kind, cancellable=True, exclusive=exclusive)
+        job = self._claim(kind, cancellable=True, exclusive=exclusive, label=label)
 
         ctx = mp.get_context("spawn")
         q = ctx.Queue()
