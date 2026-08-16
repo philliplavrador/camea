@@ -91,6 +91,36 @@
   white-space: nowrap;
 }
 
+/* ── the µm scale bar: quiet, in the corner, over the canvas ────────────────────────────────── */
+
+.scalebar {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  pointer-events: none;
+  color: var(--text-dim);
+}
+
+.scalebarLabel {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* End ticks + a base line — the shape a microscopist already reads, in the muted ink. */
+.scalebarLine {
+  display: block;
+  height: 5px;
+  border-bottom: 2px solid currentcolor;
+  border-left: 1px solid currentcolor;
+  border-right: 1px solid currentcolor;
+}
+
 /* ── under the stage: the legend and its companions share a row, wrapping on narrow ─────────── */
 
 .below {

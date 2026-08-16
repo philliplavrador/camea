@@ -51,6 +51,7 @@ import {
   rampColour,
 } from './activityScale';
 import { hitRadiusUm } from './hitRadius';
+import { scaleBar } from './scalebar';
 import styles from './ChipMap.module.css';
 
 /** How far past fit you may zoom in. A pad is ~17 µm; this is plenty to separate neighbours. */
@@ -434,6 +435,10 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
   // `vm-zoom-level`. Fit is the natural unit here: there is no "1:1" for µm on a screen.
   const zoomPct = view && fitScale > 0 ? Math.round((view.scale / fitScale) * 100) : null;
 
+  // The µm scale bar — honest because the µm are the file's own pad coordinates, the same frame
+  // the dots are drawn in. Quiet, in the corner, and it follows every zoom.
+  const bar = view ? scaleBar(view.scale) : null;
+
   const hoverLabel = hover
     ? `Electrode ${hover.pad.electrode} · channel ${hover.pad.channel} · ` +
       (hover.pad.nSpikes === 0
@@ -508,6 +513,17 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
             data-testid="mea-chip-hover"
           >
             {hoverLabel}
+          </div>
+        )}
+        {bar && (
+          <div
+            className={styles.scalebar}
+            role="img"
+            aria-label={`Scale: ${bar.label}`}
+            data-testid="mea-chip-scalebar"
+          >
+            <span className={styles.scalebarLabel}>{bar.label}</span>
+            <span className={styles.scalebarLine} style={{ width: bar.px }} />
           </div>
         )}
       </div>
