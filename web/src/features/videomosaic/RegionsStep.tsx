@@ -56,7 +56,7 @@ import type {
 } from '../../api';
 import { Button, Help, Kbd, LiveWarning, Panel, cx } from '../../design';
 import { forSubmit, normalisePath } from '../home/pathText';
-import { PreviewViewer, type ViewFrame } from './PreviewViewer';
+import { PreviewViewer, type FrameRequest, type ViewFrame } from './PreviewViewer';
 import { WorkFrame } from './WorkFrame';
 import vm from './VideoMosaicFeature.module.css';
 import styles from './RegionsStep.module.css';
@@ -169,6 +169,23 @@ export function RegionsStep({
   useEffect(() => {
     setDrop((d) => (d && d.id === selectedId ? d : null));
   }, [selectedId]);
+
+  // ⭐ ZOOM TO THE RECORDING HE PICKED. A selection CHANGE — a row click, an arrow key — is the one
+  // thing that moves the camera; a re-render, a refetch or the list's own keep-something-selected
+  // effect never does, and neither does picking the row again (he may have panned away on purpose).
+  // The nonce makes each request one-shot on the viewer's side.
+  const [frameTo, setFrameTo] = useState<FrameRequest | null>(null);
+  const frameSeq = useRef(0);
+  const select = useCallback(
+    (r: RegionRecord) => {
+      if (r.id !== selectedId) {
+        frameSeq.current += 1;
+        setFrameTo({ x: r.x, y: r.y, w: r.w, h: r.h, nonce: frameSeq.current });
+      }
+      setSelectedId(r.id);
+    },
+    [selectedId],
+  );
 
   // ── the job: locate and snap land the same way ──────────────────────────────────────────────
   useEffect(() => {
@@ -554,6 +571,7 @@ export function RegionsStep({
             // ARE the answer it produces. (`PreviewViewer` keys the layer off `showGrid`.)
             showGrid
             overlay={overlay}
+            frameTo={frameTo}
             extraTools={
               <button
                 type="button"
@@ -686,7 +704,7 @@ export function RegionsStep({
                       data-region-id={r.id}
                       data-selected={isSel || undefined}
                       data-status={r.status}
-                      onClick={() => setSelectedId(r.id)}
+                      onClick={() => select(r)}
                     >
                       {/* ⭐ R47 — the row is two lines on a rail. Name, state and Delete read
                           across the top; the numbers sit under them instead of being squeezed
@@ -720,7 +738,7 @@ export function RegionsStep({
                             title="Rename"
                             onClick={(ev) => {
                               ev.stopPropagation();
-                              setSelectedId(r.id);
+                              select(r);
                               setRenameText(r.name);
                               setRenaming(r.id);
                             }}

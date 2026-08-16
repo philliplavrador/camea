@@ -384,6 +384,7 @@ export const TID = {
   vmElectrodesMapError: 'vm-electrodes-map-error', // the same refusal, verbatim, on the video screen
   vmViewer: 'vm-viewer', //                    the preview scroller; data-fit / data-identify
   vmZoomToggle: 'vm-zoom-toggle', //           Fit ↔ 100% — shown once plain click means identify
+  vmZoomLevel: 'vm-zoom-level', //             the live zoom % readout
   vmElectrodeMarker: 'vm-electrode-marker', // the video highlight ring; data-electrode
   vmElectrodeIdsToggle: 'vm-electrode-ids-toggle', // role=switch; the video screen's IDs overlay
 

@@ -38,6 +38,20 @@ export interface ViewFrame {
   height: number;
 }
 
+/**
+ * An outside request to point the camera at a world-space rectangle (`frameTo`). It is a REQUEST,
+ * not state: the camera moves once per `nonce` and never again, so a re-render cannot yank the view
+ * back from wherever the user has panned it since.
+ */
+export interface FrameRequest {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Bumped by the caller per request, so asking for the same rectangle twice still frames. */
+  nonce: number;
+}
+
 // ── The preview — a real zoom/pan viewer over the built mosaic ────────────────────────────────
 //
 // ⭐ 100 % MEANS 100 % OF THE MOSAIC (2026-08-07). This viewer used to show `preview.png` in both
@@ -65,6 +79,8 @@ interface ViewState {
 
 /** Zoom ceiling — 8 mosaic px per CSS px is well past the point where the pixels themselves show. */
 const MAX_SCALE = 8;
+/** A framed rectangle's longer side fills about this much of the shorter viewport side. */
+const FRAME_FILL = 0.5;
 /** `preview.png` is ~2048 px on the long side; past this the full file is worth its bytes. */
 const FULL_RES_ABOVE = 0.34;
 /** A press that travels further than this is a pan, not an identification click. */
@@ -80,6 +96,7 @@ export function PreviewViewer({
   showGrid = true,
   overlay,
   extraTools,
+  frameTo,
 }: {
   analysisId: string;
   builtAt: string | null;
@@ -93,6 +110,8 @@ export function PreviewViewer({
   overlay?: (v: ViewFrame) => ReactNode;
   /** Extra buttons for the zoom bar, so a step can add its own without forking the camera. */
   extraTools?: ReactNode;
+  /** Point the camera at a world rectangle, once per `nonce` — see `FrameRequest`. */
+  frameTo?: FrameRequest | null;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -168,6 +187,28 @@ export function PreviewViewer({
     if (view == null) fitNow();
     else setView((v) => (v ? clampView(v) : v)); // a resize must not strand the picture off-stage
   }, [view == null, fitNow, clampView]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ⭐ Frame a rectangle ON REQUEST — centred, at the zoom where its longer side fills FRAME_FILL
+  // of the shorter viewport side, clamped to the same [fit, MAX_SCALE] range the wheel obeys. The
+  // `nonce` guard is what keeps this a one-shot: the deps re-run on every resize and camera change,
+  // and a request already honoured must never fire again mid-pan.
+  const framed = useRef(0);
+  useEffect(() => {
+    if (!frameTo || frameTo.nonce === framed.current) return;
+    if (!world || box.w === 0 || box.h === 0 || fitScale === 0) return;
+    framed.current = frameTo.nonce;
+    const s = Math.min(
+      MAX_SCALE,
+      Math.max(fitScale, (FRAME_FILL * Math.min(box.w, box.h)) / Math.max(frameTo.w, frameTo.h, 1)),
+    );
+    setView(
+      clampView({
+        scale: s,
+        tx: box.w / 2 - (frameTo.x + frameTo.w / 2) * s,
+        ty: box.h / 2 - (frameTo.y + frameTo.h / 2) * s,
+      }),
+    );
+  }, [frameTo, world, box.w, box.h, fitScale, clampView]);
 
   // Wheel = zoom at the pointer. A native non-passive listener: React's is passive, so it could not
   // preventDefault and the page would scroll away underneath the zoom.

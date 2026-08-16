@@ -900,6 +900,50 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     }
   });
 
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  // ⭐ QUALITY OF LIFE (2026-08-15). The camera goes to the recording he picks; the keyboard
+  // walks the list; each row names its file; the runner-up spots are drawn as ghosts.
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+
+  test('selecting a recording frames it — and a re-render or a re-click never moves the camera', async ({
+    page,
+  }) => {
+    // r-2 sits at the CANVAS CENTRE on purpose: whether the framed view is clamped or centred by
+    // the stage, a centre-of-canvas rectangle lands at the centre of the stage either way, so the
+    // "centred" assertion below holds without knowing the stage's size.
+    await openRegions(page, {
+      regions: [
+        craftedRegion({ id: 'r-1', name: 'field A' }),
+        craftedRegion({ id: 'r-2', name: 'field B', x: 450, y: 340 }),
+      ],
+    });
+
+    // 1 · at open the camera sits at FIT — the auto-selected first row must not have moved it
+    const zoom = byId(page, TID.vmZoomLevel);
+    await expect(byId(page, TID.vmViewer)).toHaveAttribute('data-fit', 'true');
+    const atFit = (await zoom.textContent()) ?? '';
+
+    // 2 · clicking the other row frames its rectangle: zoomed past fit…
+    await rowOf(page, 'r-2').click();
+    await expect(rowOf(page, 'r-2')).toHaveAttribute('data-selected', 'true');
+    await expect(zoom).not.toHaveText(atFit, { timeout: SHORT });
+    await expect(byId(page, TID.vmViewer)).not.toHaveAttribute('data-fit', 'true');
+
+    // …and centred on the stage
+    const stage = await byId(page, TID.vmViewer).boundingBox();
+    const rect = await page
+      .locator(`[data-testid="${TID.regionRect}"][data-region-id="r-2"]`)
+      .boundingBox();
+    expect(Math.abs(rect!.x + rect!.width / 2 - (stage!.x + stage!.width / 2))).toBeLessThan(10);
+    expect(Math.abs(rect!.y + rect!.height / 2 - (stage!.y + stage!.height / 2))).toBeLessThan(10);
+
+    // 3 · re-clicking the row he is already on is NOT a selection change — the camera stays put
+    const framedAt = (await zoom.textContent()) ?? '';
+    await rowOf(page, 'r-2').click();
+    await page.waitForTimeout(150); // long enough for a wrong re-frame to have painted
+    await expect(zoom).toHaveText(framedAt);
+  });
+
   test('R47.5: Files is ONE door, opened by asking — and Escape closes it (R44 intact)', async ({
     page,
   }) => {
