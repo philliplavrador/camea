@@ -82,6 +82,20 @@ const FADE_STEP = 10;
 /** Above this the overlay counts as "up", so the flash key swaps to the mosaic instead of to it. */
 const FADE_MID = 50;
 
+/** How far Snap may look. `nearby` is the default: the server derives the window from the drag. */
+type SnapReach = 'nearby' | 'wider' | 'far';
+/**
+ * ⚠️ R45.7 — the two wider searches are SCREEN distances, converted to mosaic px with the
+ * viewer's current scale at snap time. A budget written in mosaic px means nothing as a gesture:
+ * at fit zoom on a big mosaic 160 mosaic px is a few CSS px, at 100 % it is a hand-span. These
+ * mean the same thing at any zoom (regions.md §A records the 506-px disaster this rule is from);
+ * the server still clamps, and the result quotes the width actually searched.
+ */
+const SNAP_REACH_SCREEN_PX: Record<Exclude<SnapReach, 'nearby'>, number> = {
+  wider: 160,
+  far: 320,
+};
+
 const f2 = (v: number): string => v.toFixed(2);
 const f3 = (v: number): string => v.toFixed(3);
 const f4 = (v: number): string => v.toFixed(4);
@@ -168,6 +182,12 @@ export function RegionsStep({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; x: number; y: number } | null>(null);
   const [banner, setBanner] = useState<{ loud: boolean; message: string } | null>(null);
+  // how far Snap searches — `nearby` is today's behaviour (the server derives it from the drag)
+  const [reach, setReach] = useState<SnapReach>('nearby');
+  /** Which reach the LAST posted snap used, so its banner can quote the width only when chosen. */
+  const reachSentRef = useRef<SnapReach>('nearby');
+  /** The viewer's current CSS-px-per-mosaic-px, captured off every drawn frame (R45.7). */
+  const viewScaleRef = useRef(1);
   const [fade, setFade] = useState(60);
   // ⭐ R47 — Space is HELD, not toggled: the eye stays on the boundary while the two pictures swap.
   const [flash, setFlash] = useState(false);
@@ -307,6 +327,11 @@ export function RegionsStep({
             r.ncc != null ? ` NCC ${f4(r.ncc)}` : '',
             r.snap_margin != null ? `, local margin ${f3(r.snap_margin)}` : '',
             r.ncc != null ? '.' : '',
+            // A CHOSEN width is quoted back — the server's clamped number, what was actually
+            // searched. The default stays silent: it was derived, not asked for.
+            reachSentRef.current !== 'nearby' && r.snap_radius_px != null
+              ? ` Searched ±${r.snap_radius_px} px around the drop.`
+              : '',
           ];
           setBanner({ loud: r.margin_thin || !r.confident, message: parts.join('') });
         }
@@ -410,16 +435,24 @@ export function RegionsStep({
   const snap = useCallback(async () => {
     if (busy || !selected) return;
     const at = drop && drop.id === selected.id ? drop : { x: selected.x, y: selected.y };
+    // ⭐ R45.7 — a chosen reach is a SCREEN distance; it becomes mosaic px at the zoom he is
+    // looking at, so "wider" is the same gesture whatever the camera is doing. `nearby` sends
+    // nothing and keeps today's behaviour: the server derives the window from the drag itself.
+    const radius =
+      reach === 'nearby'
+        ? undefined
+        : Math.max(1, Math.round(SNAP_REACH_SCREEN_PX[reach] / (viewScaleRef.current || 1)));
+    reachSentRef.current = reach;
     setJobError(null);
     setBanner(null);
     try {
-      const ref = await snapRegion(analysisId, selected.id, at.x, at.y);
+      const ref = await snapRegion(analysisId, selected.id, at.x, at.y, radius);
       setJobKind('snap');
       setJobId(ref.job_id);
     } catch (e) {
       setJobError(errMsg(e));
     }
-  }, [analysisId, busy, drop, selected]);
+  }, [analysisId, busy, drop, reach, selected]);
 
   // ── the keyboard ────────────────────────────────────────────────────────────────────────────
   // `S` snaps, exactly as it does in the sweep. ⭐ R47 adds the compare keys: HOLD `Space` to swap
@@ -653,6 +686,9 @@ export function RegionsStep({
   // ── the overlay (SCREEN space: screen = world × scale + t) ───────────────────────────────────
   const overlay = useCallback(
     (v: ViewFrame): ReactNode => {
+      // R45.7 — remember the frame's CSS-px-per-mosaic-px for the snap-reach conversion. Kept
+      // ahead of the Fields guard: the camera's scale is true whether or not the layer draws.
+      viewScaleRef.current = v.scale;
       if (!fieldsOn) return null;
       return (
         <div className={styles.layer}>
@@ -1054,7 +1090,7 @@ export function RegionsStep({
                           className={styles.del}
                           data-testid="region-delete"
                           title="Delete this region, its still and the project's copy of the recording"
-                          disabled={running}
+                          disabled={busy}
                           onClick={(ev) => {
                             ev.stopPropagation();
                             void remove(r);
@@ -1098,7 +1134,7 @@ export function RegionsStep({
                           className={styles.again}
                           data-testid="region-locate-again"
                           title="Search the whole mosaic again for this recording, using the project's own copy of its video"
-                          disabled={running}
+                          disabled={busy}
                           onClick={(ev) => {
                             ev.stopPropagation();
                             void relocate(r);
@@ -1125,7 +1161,9 @@ export function RegionsStep({
                 shown={shown}
                 flash={flash}
                 onFade={setFade}
-                busy={running}
+                busy={busy}
+                reach={reach}
+                onReach={setReach}
                 onSnap={() => void snap()}
                 onRevert={() => setDrop(null)}
                 onStatus={(s) => void setStatus(selected, s)}
@@ -1263,6 +1301,9 @@ interface RegionDetailProps {
   flash: boolean;
   onFade: (v: number) => void;
   busy: boolean;
+  /** How far Snap searches — `nearby` keeps the server's drag-derived default (R45.7). */
+  reach: SnapReach;
+  onReach: (r: SnapReach) => void;
   onSnap: () => void;
   onRevert: () => void;
   onStatus: (status: RegionRecord['status']) => void;
@@ -1279,6 +1320,8 @@ function RegionDetail({
   flash,
   onFade,
   busy,
+  reach,
+  onReach,
   onSnap,
   onRevert,
   onStatus,
@@ -1424,6 +1467,44 @@ function RegionDetail({
                 hold <Kbd>Space</Kbd> to swap · <Kbd>[</Kbd> <Kbd>]</Kbd> to nudge
               </p>
             )}
+          </div>
+
+          {/* ── how far Snap searches — plain words, measured on the SCREEN (R45.7) ───────── */}
+          <div
+            className={styles.reachRow}
+            role="radiogroup"
+            aria-label="How far Snap searches"
+            data-testid="region-snap-reach"
+          >
+            <span className={styles.reachLabel}>
+              Search
+              <Help
+                body={
+                  'How far around the rectangle Snap looks for the true position.\n' +
+                  '\n' +
+                  'nearby — the default: the search covers the distance you dragged it, plus a ' +
+                  'little.\n' +
+                  '\n' +
+                  'wider / far — look further around the drop, for when the rectangle needs to ' +
+                  'move more than you dragged. Both are measured on your screen (about 160 and ' +
+                  '320 screen pixels), so they mean the same hand movement at any zoom. The ' +
+                  'result says how far was actually searched.'
+                }
+              />
+            </span>
+            {(['nearby', 'wider', 'far'] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                role="radio"
+                aria-checked={reach === k}
+                data-reach={k}
+                className={cx(styles.reachBtn, reach === k && styles.reachBtnOn)}
+                onClick={() => onReach(k)}
+              >
+                {k}
+              </button>
+            ))}
           </div>
 
           {/* ── the drop, and the one button that commits it ──────────────────────────────── */}

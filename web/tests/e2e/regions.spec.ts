@@ -145,6 +145,8 @@ interface Region {
   source_stamp: string;
   moved_px: number | null;
   snap_margin: number | null;
+  /** What the last snap ACTUALLY searched — the server's clamped number, quoted in the banner. */
+  snap_radius_px: number | null;
   elapsed_ms: number;
 }
 
@@ -213,6 +215,7 @@ function craftedRegion(o: RegionOpts = {}): Region {
     source_stamp: BUILT_AT,
     moved_px: null,
     snap_margin: null,
+    snap_radius_px: null,
     elapsed_ms: 1840,
   };
 }
@@ -356,11 +359,12 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
     await json(route, { job_id: JOB_ID, kind: 'locate_region', state: 'queued' }, 202);
   });
   await page.route(new RegExp(`${ROUTES.regions}/snap$`), async (route, req) => {
-    const body = req.postDataJSON() as { region_id: string; x: number; y: number };
+    const body = req.postDataJSON() as { region_id: string; x: number; y: number; radius?: number };
     stub.snaps.push(body as unknown as Record<string, unknown>);
     const was = stub.regions.find((g) => g.id === body.region_id) ?? craftedRegion();
     // The COMMITTED number is the server's, never the browser's drop (R23): it lands a little off
-    // the dropped corner, and says how far.
+    // the dropped corner, and says how far. `snap_radius_px` is what was ACTUALLY searched —
+    // the ask through the server's clamp, or the drag-derived default.
     stub.jobRegion = {
       ...was,
       x: body.x - 1.5,
@@ -369,6 +373,7 @@ async function openPipeline(page: Page, opts: OpenOpts = {}): Promise<Stub> {
       status: 'unconfirmed',
       moved_px: 2.5,
       snap_margin: 0.087,
+      snap_radius_px: body.radius != null ? Math.min(body.radius, 768) : 102,
     };
     await json(route, { job_id: JOB_ID, kind: 'locate_region', state: 'queued' }, 202);
   });
@@ -722,6 +727,50 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(note).toContainText(/paste/i);
     await expect(byId(page, TID.regionsQueue)).toHaveCount(0);
     await expect(byId(page, TID.regionsPath)).toBeEnabled();
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+  // ⭐ R45.7 — WIDER SNAP ON REQUEST. The search width is chosen in plain words and measured on
+  // the SCREEN; the default stays exactly what it was (derived from the drag, nothing sent).
+  // ───────────────────────────────────────────────────────────────────────────────────────────
+
+  test('R45.7: the snap search is chosen in screen terms — sent only when chosen, and quoted back', async ({
+    page,
+  }) => {
+    const stub = await openRegions(page, { regions: [craftedRegion()] });
+
+    // 1 · default ("nearby"): NO radius rides the wire — the server derives it from the drag —
+    //     and the banner says nothing about a width nobody chose
+    await byId(page, TID.regionSnap).click();
+    await expect.poll(() => stub.snaps.length, { timeout: SHORT }).toBe(1);
+    expect((stub.snaps[0] as { radius?: number }).radius ?? null).toBeNull();
+    await expect(byId(page, TID.regionSnapBanner)).toContainText('Snapped', { timeout: SHORT });
+    await expect(byId(page, TID.regionSnapBanner)).not.toContainText(/searched/i);
+
+    // 2 · "wider": a number goes to the wire — mosaic px, converted from the screen budget at
+    //     the current zoom, so the same word means the same gesture at any zoom
+    const reach = byId(page, TID.regionSnapReach);
+    await expect(reach.locator('[data-reach="nearby"]')).toHaveAttribute('aria-checked', 'true');
+    await reach.locator('[data-reach="wider"]').click();
+    await expect(reach.locator('[data-reach="wider"]')).toHaveAttribute('aria-checked', 'true');
+    await byId(page, TID.regionSnap).click();
+    await expect.poll(() => stub.snaps.length, { timeout: SHORT }).toBe(2);
+    const wider = (stub.snaps[1] as { radius?: number }).radius;
+    expect(typeof wider).toBe('number');
+    expect(wider!).toBeGreaterThan(0);
+
+    // …and the banner now quotes the width that was ACTUALLY searched — the server's number
+    const echoed = Math.min(wider!, 768);
+    await expect(byId(page, TID.regionSnapBanner)).toContainText(`±${echoed} px`, {
+      timeout: SHORT,
+    });
+
+    // 3 · "far" reaches further than "wider" at the same zoom
+    await reach.locator('[data-reach="far"]').click();
+    await byId(page, TID.regionSnap).click();
+    await expect.poll(() => stub.snaps.length, { timeout: SHORT }).toBe(3);
+    const far = (stub.snaps[2] as { radius?: number }).radius;
+    expect(far!).toBeGreaterThan(wider!);
   });
 
   // ───────────────────────────────────────────────────────────────────────────────────────────

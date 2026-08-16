@@ -281,6 +281,44 @@
 
 /* ── the drop + Snap ──────────────────────────────────────────────────────── */
 
+/* How far Snap searches — three plain words, the chosen one lit like the zoom-bar buttons. */
+.reachRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reachLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 4px;
+  font: 600 var(--fs-label) / 1 var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-faint);
+}
+
+.reachBtn {
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font: 600 var(--fs-label) / 1.4 var(--font-sans);
+  cursor: pointer;
+}
+
+.reachBtn:hover {
+  color: var(--text);
+}
+
+.reachBtnOn {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-inset));
+}
+
 .snapRow {
   display: flex;
   align-items: center;

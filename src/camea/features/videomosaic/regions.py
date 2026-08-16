@@ -216,8 +216,12 @@ def resnap_region(doc: dict, out_dir: Path, region: dict, at: tuple[float, float
     a1, a2 = emap.get("a1"), emap.get("a2")
     lattice = ((a1, a2) if isinstance(a1, (list, tuple)) and isinstance(a2, (list, tuple))
                else None)
-    out = locate.snap(ref, refmask, tpl, tmsk, at,
-                      radius=int(radius or locate.snap_radius_for(moved)), lattice=lattice)
+    # ⭐ The half-width ACTUALLY searched: the caller's ask (or the drag-derived default) through
+    # the same clamp `locate.snap` applies — recorded on the region so a result can quote what
+    # was looked at, never what was asked for.
+    r_used = int(max(8, min(int(radius or locate.snap_radius_for(moved)),
+                            locate.SNAP_RADIUS_MAX)))
+    out = locate.snap(ref, refmask, tpl, tmsk, at, radius=r_used, lattice=lattice)
     if out.best is None:
         raise locate.NoLocation(out.refused or "nothing measurable where you dropped it")
 
@@ -231,6 +235,7 @@ def resnap_region(doc: dict, out_dir: Path, region: dict, at: tuple[float, float
         # is a neighbouring shoulder inside the window, not a rival place on the mosaic, so
         # quoting it as "the margin" would be a reassuring number about nothing.
         "snap_margin": round(out.margin, 4) if out.margin is not None else None,
+        "snap_radius_px": r_used,
         "moved_px": round(moved, 2),
         "placed_by": "hand+snap",
         "status": STATUS_UNCONFIRMED,

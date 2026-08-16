@@ -537,6 +537,35 @@ def test_snapping_moves_it_back_and_renames_the_electrodes_underneath(client, sc
     assert saved["placed_by"] == "hand+snap" and saved["x"] == snapped["x"]
 
 
+def test_the_snap_search_width_is_recorded_and_clamped(client, scene, built):
+    """The UI may ask for a wider local search (`SnapRegionRequest.radius`); the record answers
+    with `snap_radius_px` — what was ACTUALLY searched, i.e. the ask through the same clamp
+    `locate.snap` applies — so a banner can quote it honestly. And with no ask, the recorded
+    number is the drag-derived default, to the pixel."""
+    import math
+
+    from camea.core import locate as core_locate
+
+    aid = built["aid"]
+    region = _locate(client, aid, scene["recording"])["region"]
+
+    def _snap(**extra) -> dict:
+        cur = client.get(f"/api/videomosaic/{aid}/regions").json()["regions"][0]
+        r = client.post("/api/videomosaic/regions/snap",
+                        json={"analysis_id": aid, "region_id": region["id"],
+                              "x": cur["x"] + 24.0, "y": cur["y"] - 18.0, **extra})
+        assert r.status_code == 202, r.text
+        return run_job(client, r.json()["job_id"])["result"]["region"]
+
+    # an explicit ask is used as given (inside the clamp) and recorded
+    assert _snap(radius=120)["snap_radius_px"] == 120
+    # a tiny ask is floored exactly as `locate.snap` floors it — the record never understates
+    assert _snap(radius=4)["snap_radius_px"] == 8
+    # no ask: the window is derived from the drag (24, -18 → 30 px), and the record says so
+    expected = core_locate.snap_radius_for(math.hypot(24.0, 18.0))
+    assert _snap()["snap_radius_px"] == expected
+
+
 def test_confirm_is_the_humans_signature_and_a_name_cannot_be_blank(client, scene, built):
     """⭐ Nothing here ever promotes itself. A located region is `unconfirmed` until he says
     otherwise, and when he does it sticks — through the saved document and back out of a GET.
