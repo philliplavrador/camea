@@ -50,8 +50,11 @@ import {
   formatRate,
   rampColour,
 } from './activityScale';
+import { formatSeconds } from './format';
 import { hitRadiusUm } from './hitRadius';
 import { scaleBar } from './scalebar';
+import { SpreadChart } from './SpreadChart';
+import { bandHolds, spreadBands } from './spread';
 import styles from './ChipMap.module.css';
 
 /** How far past fit you may zoom in. A pad is ~17 µm; this is plenty to separate neighbours. */
@@ -107,6 +110,15 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
     () => activityScale((activity.pads ?? []).map((p) => p.rate_hz)),
     [activity],
   );
+
+  // The spread chart's bars — the legend's own values, so the two cannot disagree (spread.ts).
+  const bands = useMemo(
+    () => spreadBands(scale, (activity.pads ?? []).map((p) => p.rate_hz)),
+    [scale, activity],
+  );
+  /** The highlighted band (an index into `bands`), or null. Click the bar again to clear. */
+  const [band, setBand] = useState<number | null>(null);
+  const hiBand = band != null && band < bands.length ? bands[band]! : null;
 
   const pads = useMemo<Pad[]>(() => {
     // The two routes return the same pads in the same order, but join by channel anyway: an
@@ -201,8 +213,10 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
   }, [clamp]);
 
   // Fit when the picture arrives, when the box first has a size, and on a new recording.
+  // A new recording also clears the band highlight: it indexes the OLD recording's bands.
   useEffect(() => {
     setView(null);
+    setBand(null);
   }, [layout.recording_id]);
   useEffect(() => {
     if (view == null && fitScale > 0) fit();
@@ -399,11 +413,14 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
 
     // Pads that fired: filled with their colour. Grouped by colour would save state changes, but
     // ~1k arcs is nothing and per-pad fill keeps this readable.
+    // ⭐ With a spread-chart band highlighted, everything OUTSIDE it dims — the band's own pads
+    // keep their true colours, so a highlight never recolours the data, it only quiets the rest.
     for (const p of pads) {
       const px = sx(p.x);
       if (px < -m || px > box.w + m) continue;
       const py = sy(p.y);
       if (py < -m || py > box.h + m) continue;
+      g.globalAlpha = hiBand != null && !bandHolds(hiBand, p.rateHz) ? 0.15 : 1;
       g.beginPath();
       g.arc(px, py, rad, 0, Math.PI * 2);
       if (p.t == null) {
@@ -417,6 +434,7 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
         g.fill();
       }
     }
+    g.globalAlpha = 1;
 
     // The selection last, on top of everything.
     const sel = selectedPad;
@@ -429,7 +447,7 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
       g.lineWidth = 2;
       g.stroke();
     }
-  }, [pads, view, box, chip, selectedPad]);
+  }, [pads, view, box, chip, selectedPad, hiBand]);
 
   // The live zoom, relative to Fit = 100% — the same readout grammar as the mosaic viewer's
   // `vm-zoom-level`. Fit is the natural unit here: there is no "1:1" for µm on a screen.
@@ -558,7 +576,13 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
 
       {/* Under the stage: the legend and its companions share a row and wrap on a narrow window. */}
       <div className={styles.below}>
-        <ChipLegend scale={scale} />
+        <ChipLegend scale={scale} durationS={activity.duration_s} />
+        <SpreadChart
+          bands={bands}
+          selected={band}
+          onToggle={(i) => setBand((b) => (b === i ? null : i))}
+          durationS={activity.duration_s}
+        />
         <BusiestPads pads={pads} selected={selected} onPick={jumpTo} />
       </div>
     </div>
@@ -570,8 +594,18 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
  * are not equal rate steps, because the rank scale spreads the colours out.
  *
  * ⭐ And the ring is in the legend beside the colours, saying what it means in his terms.
+ *
+ * ⭐ **The recording's length sits beside the silent count** — MAXWELL §7.3: a silent tally from a
+ * 30 s window and one from a 300 s run are not the same kind of fact, so the window is stated
+ * wherever the count is.
  */
-function ChipLegend({ scale }: { scale: ReturnType<typeof activityScale> }) {
+function ChipLegend({
+  scale,
+  durationS,
+}: {
+  scale: ReturnType<typeof activityScale>;
+  durationS: number;
+}) {
   return (
     <div className={styles.legend} data-testid="mea-chip-legend">
       <div className={styles.ramp}>
@@ -588,6 +622,7 @@ function ChipLegend({ scale }: { scale: ReturnType<typeof activityScale> }) {
         <span>
           {SILENT_MEANING} — <b>{scale.nSilent.toLocaleString()}</b> of{' '}
           {(scale.nSilent + scale.nLive).toLocaleString()} recorded pads
+          {durationS > 0 && <> · in this {formatSeconds(durationS)} recording</>}
         </span>
       </div>
       <p className={styles.caveat}>{SCALE_CAVEAT}</p>

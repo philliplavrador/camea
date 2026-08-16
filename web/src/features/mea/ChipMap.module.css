@@ -209,6 +209,86 @@
   color: var(--text-faint);
 }
 
+/* ── the spread: pads per firing-rate band, beside the legend ──────────────────────────────── */
+
+.spread {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.spreadBars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+/* One bar and its numbers, as a button: count on top, the bar, the (silent-only) word under. */
+.spreadCol {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  min-width: 34px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  cursor: pointer;
+  color: var(--text-dim);
+}
+
+.spreadCol:hover:not(:disabled) {
+  background: var(--bg-inset);
+}
+
+.spreadCol:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+.spreadCol[aria-pressed='true'] {
+  border-color: var(--border-strong);
+  background: var(--bg-inset);
+}
+
+.spreadCol:disabled {
+  cursor: default;
+  color: var(--text-faint);
+}
+
+.spreadCount {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.spreadBar {
+  width: 18px;
+  border-radius: 2px 2px 0 0;
+}
+
+/* 🔴 The no-spike bar is HOLLOW — the same grammar as the ring on the map and in the legend key:
+   no colour, because "no spikes" is not a position on the ramp. */
+.spreadBarSilent {
+  width: 18px;
+  border: 2px solid var(--text-dim);
+  border-bottom: none;
+  border-radius: 2px 2px 0 0;
+  background: none;
+}
+
+.spreadLabel {
+  font-size: var(--fs-micro);
+  line-height: 1;
+  white-space: nowrap;
+  min-height: 10px;
+}
+
 /* ── the busiest pads: a short ranked list beside the legend ───────────────────────────────── */
 
 .busiest {

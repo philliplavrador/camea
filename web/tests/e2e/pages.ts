@@ -27,8 +27,10 @@ export type StepName = (typeof STEPS)[number];
  * ⭐ THE VIDEO PIPELINE (R46.1) — *"it should be all one pipeline with a progress bar at the top"*.
  * A DIFFERENT set from the snapshot wizard's `STEPS` above, with its own nav (`TID.pipelineStep`):
  * a step is LOCKED until the one before it is done, and the gate is read off the DOCUMENT.
+ * `orientation` joined 2026-08-15 (his ruling): the chip-seating question is its own step after
+ * Regions, unlocked by a located region in the document.
  */
-export const PIPELINE = ['survey', 'mosaic', 'electrodes', 'regions'] as const;
+export const PIPELINE = ['survey', 'mosaic', 'electrodes', 'regions', 'orientation'] as const;
 export type PipelineStepName = (typeof PIPELINE)[number];
 
 /** The frozen backend routes the specs inspect or stub. (docs/openapi.json — never hand-write a body.) */
@@ -144,6 +146,9 @@ export const TID = {
   meaChipLegendSilent: 'mea-chip-legend-silent', // ⭐ the hollow ring, and what it MEANS
   meaChipBusiest: 'mea-chip-busiest', //    the ranked busiest-pads list beside the legend
   meaChipBusiestPad: 'mea-chip-busiest-pad', // one row; data-channel; aria-pressed when selected
+  meaChipSpread: 'mea-chip-spread', //      pads per firing-rate band, beside the legend (§7.2)
+  meaChipSpreadBar: 'mea-chip-spread-bar', // one bar; data-band ('silent' | 0..); data-count;
+  //                                        aria-pressed while its pads are highlighted on the map
   meaTraceIdle: 'mea-trace-idle', //        "click a pad on the chip"
   meaTraceFacts: 'mea-trace-facts', //      electrode · channel · position · spikes
   meaTraceChart: 'mea-trace-chart', //      the CLOSE-UP's canvas; shared with the video pipeline
@@ -409,6 +414,33 @@ export const TID = {
   vmToMosaic: 'vm-to-mosaic', //             the forward button on each step — the pipeline walked
   vmToElectrodes: 'vm-to-electrodes',
   vmToRegions: 'vm-to-regions',
+  vmToOrientation: 'vm-to-orientation', //   Regions → Orientation; shown only once the DOCUMENT
+  //                                         holds a located region (the same gate the nav reads)
+
+  // ── 5 · Orientation — which way round the chip sits (his ruling 2026-08-15) ──
+  // ⭐ The four candidate seatings as PICTURES, picked by eye — and the honest test beside them.
+  // The mea-* ids survive from the retired Electrodes-rail panel, same meanings.
+  orientationStep: 'orientation-step', //    the step root
+  orientationWork: 'orientation-work', //    its WorkFrame (picture + rail)
+  orientationRefusal: 'orientation-refusal', // 🔴 the footprint route's 409, VERBATIM — an
+  //                                         instruction (attach the MEA / map electrodes first)
+  orientationCards: 'orientation-cards', //  the 2×2 grid of candidate cards
+  orientationCard: 'orientation-card', //    one candidate; data-flip-x, data-flip-y,
+  //                                         data-previewed, data-settled, data-winner
+  orientationUse: 'orientation-use', //      ⭐ the HUMAN confirm on each card — nothing auto-applies
+  orientationFootprint: 'orientation-footprint', // the big viewer's dot layer; data-flip-x/y say
+  //                                         which seating is being previewed
+  orientationSettled: 'mea-orientation-settled', // "Settled: <seating> — <source>"
+  orientationTest: 'mea-test-orientation', // the Test button
+  orientationCaveat: 'mea-orientation-caveat', // 🔴 the caveat, on the page, never behind a `?`
+  orientationScores: 'mea-orientation-scores', // the four-seating table
+  orientationRegionRows: 'orientation-region-rows', // ⭐ one per-region breakdown block; data-region-id
+  orientationAlignment: 'orientation-alignment', // what the clock alignment rested on, plain words
+  orientationChance: 'orientation-chance', // the luck bar, plain words
+  orientationUndecided: 'mea-orientation-undecided', // ⭐ "Cannot tell." — nothing to press
+  orientationVerdict: 'orientation-verdict', // the winner sentence, pointing at its card
+  orientationWinnerBadge: 'orientation-winner-badge', // the quiet badge on the test winner's card
+  orientationSettledBadge: 'orientation-settled-badge', // …and on the settled seating's card
 
   // ── ⭐ R47 · the work frame — picture left, tools right, nothing else scrolls ──
   vmRail: 'vm-rail', //                      the tool rail; the ONE scroller on a picture step

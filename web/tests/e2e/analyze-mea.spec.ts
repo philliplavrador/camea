@@ -1088,6 +1088,38 @@ test('clicking a busiest-pads row selects that pad, with the same announcement a
   }
 });
 
+test('the spread chart counts pads per legend band, and a click highlights the band', async ({
+  page,
+}) => {
+  // ⭐ Accepted 2026-08-15 (re-asked with MAXWELL §7.2's evidence). The fixture routes one pad with
+  // deliberately no spikes, so the no-spike bar is real on a 19 kB file.
+  const id = await openFirstRecording(page, 'spread chart');
+  try {
+    const chart = page.getByTestId(TID.meaChipSpread);
+    await expect(chart).toBeVisible();
+
+    // 🔴 The no-spike bar exists, counts at least the fixture's silent pad, and speaks the
+    // approved vocabulary — never a fault word.
+    const silentBar = chart.locator(`[data-testid="${TID.meaChipSpreadBar}"][data-band="silent"]`);
+    await expect(silentBar).toBeVisible();
+    const n = Number(await silentBar.getAttribute('data-count'));
+    expect(n).toBeGreaterThanOrEqual(1);
+    await expect(chart).not.toContainText(/dead|failed|broken|inactive/i);
+
+    // ⭐ MAXWELL §7.3 — the recording's length sits beside the silent count, in the legend row of
+    // this same block. A silent tally without its window is not a number anybody can use.
+    await expect(page.getByTestId(TID.meaChipLegendSilent)).toContainText(/in this .* recording/);
+
+    // Click to highlight, click again to clear.
+    await silentBar.click();
+    await expect(silentBar).toHaveAttribute('aria-pressed', 'true');
+    await silentBar.click();
+    await expect(silentBar).toHaveAttribute('aria-pressed', 'false');
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
 test('Home is itself undoable — one Back and he has his stretch again', async ({ page }) => {
   // 🔴 **THE ONE THAT LOOKS LIKE A BUG AND IS NOT.** `home` PUSHES the first view rather than
   // rewinding to it (matplotlib's `_Stack.home`), so a mis-aimed "Whole recording" never costs him

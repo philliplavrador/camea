@@ -15,6 +15,8 @@
 // ⭐ **RE-CONFIRMED 2026-08-15, WITH THE TOOL: keep the rank ramp exactly as it is.** The hedges
 // that called this mapping "provisional" or "held pending MAXWELL.md" are gone with that answer —
 // nothing about the ramp is pending. If it is ever revisited, that is a NEW question for him.
+// (The declined histogram was ALSO re-put that day, with §7.2's evidence, and he said yes — it
+// ships as the spread chart, `spread.ts` / `SpreadChart.tsx`, banded on this legend's own stops.)
 //
 // ⚠️ **This is still the only file that knows how a rate becomes a colour, and it must stay that
 // way.** `ChipMap` asks `position()` for a number between 0 and 1, or `null`, and draws that. If
