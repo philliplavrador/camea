@@ -38,7 +38,7 @@
 // exact. Importing that doubt would teach a doubt that does not exist.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { MeaChipActivity, MeaChipLayout } from '../../api';
 import { Button } from '../../design';
@@ -446,6 +446,33 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
         : `${hover.pad.nSpikes.toLocaleString()} spikes · ${formatRate(hover.pad.rateHz)}`)
     : '';
 
+  // ── the hover card flips at the edges ───────────────────────────────────────────────────────
+  // ⚠️ At raw pointer coords the card ran off the right and bottom edges — on exactly the pads
+  // nearest the chip's border, which are the ones a hover exists to name. So it is measured
+  // (before paint — `useLayoutEffect`, so the first frame is already placed) and flips to the
+  // pointer's other side when the default side would leave the stage.
+  const tipRef = useRef<HTMLDivElement>(null);
+  const [tipSize, setTipSize] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = tipRef.current;
+    if (!el) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    setTipSize((p) => (p.w === w && p.h === h ? p : { w, h }));
+  }, [hoverLabel]);
+  const TIP_GAP = 12;
+  const tipPos = hover
+    ? {
+        left: Math.max(
+          4,
+          hover.sx + TIP_GAP + tipSize.w > box.w - 4
+            ? hover.sx - TIP_GAP - tipSize.w
+            : hover.sx + TIP_GAP,
+        ),
+        top: Math.min(Math.max(hover.sy - tipSize.h / 2, 4), Math.max(4, box.h - tipSize.h - 4)),
+      }
+    : null;
+
   return (
     <div className={styles.wrap} data-testid="mea-chip-map">
       <div className={styles.toolbar}>
@@ -506,10 +533,11 @@ export function ChipMap({ layout, activity, selected, onSelect }: ChipMapProps) 
                 : `${selectedPad.nSpikes} spikes, ${formatRate(selectedPad.rateHz)}`)
             : ''}
         </div>
-        {hover && (
+        {hover && tipPos && (
           <div
+            ref={tipRef}
             className={styles.tip}
-            style={{ left: hover.sx, top: hover.sy }}
+            style={{ left: tipPos.left, top: tipPos.top }}
             data-testid="mea-chip-hover"
           >
             {hoverLabel}

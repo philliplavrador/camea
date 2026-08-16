@@ -75,9 +75,10 @@
   height: 100%;
 }
 
+/* Placed by the component, which measures it and flips it clear of the stage's edges — a fixed
+   translate() here is what used to run it off the right and bottom. */
 .tip {
   position: absolute;
-  transform: translate(12px, -50%);
   pointer-events: none;
   z-index: var(--z-tooltip);
   padding: 4px 8px;
