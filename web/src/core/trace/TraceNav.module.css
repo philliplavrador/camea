@@ -25,3 +25,14 @@
      both its ends every time the view changes. */
   text-align: left;
 }
+
+/* The time under the cursor. Same grammar as .pos, quieter still — and the line is RESERVED
+   (min-height) so appearing and vanishing under the moving pointer cannot reflow the row. */
+.pointer {
+  min-height: 1.2em;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}

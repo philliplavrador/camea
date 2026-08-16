@@ -53,7 +53,7 @@ import { TRACE_PAD, TraceChart } from '../../core/trace/TraceChart';
 import { TraceNav } from '../../core/trace/TraceNav';
 import { readout } from '../../core/trace/readout';
 import { nextSpike, prevSpike } from '../../core/trace/spikeStep';
-import { useTimeBrush } from '../../core/trace/useTimeBrush';
+import { inPlot, plotRect, timeAtX, useTimeBrush } from '../../core/trace/useTimeBrush';
 import * as vs from '../../core/trace/viewStack';
 import { Button, LiveWarning, Panel } from '../../design';
 import { SILENT_MEANING, formatRate } from './activityScale';
@@ -109,6 +109,8 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
   // showing "not read yet" after the job it started has finished — see the effect below.
   const [reload, setReload] = useState(0);
   const [said, setSaid] = useState('');
+  /** The moment the cursor is over on the close-up, or null when it is off the picture. */
+  const [pointerT, setPointerT] = useState<number | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
   // Every detail fetch carries a ticket; a late reply holding a stale one is dropped. Without it a
   // slow wide request can land after a fast narrow one and redraw the view he already left.
@@ -403,6 +405,23 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
     // polling effect above owns the flag now, and it is what ends it.
   }, [analysisId]);
 
+  // ── the time under the pointer ─────────────────────────────────────────────────────────────
+  // ⭐ Measured against the range the picture is actually DRAWN from (`data`'s served range, the
+  // same one the readout states), not the view in flight — during a load the old picture is still
+  // on screen and a time read off the new axis would point at the wrong sample. ⛔ Time only, no
+  // voltage: MAXWELL §7.6 leaves the amplitude unit deliberately unsettled.
+  const trackPointer = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      if (!data?.recorded) return;
+      const r = e.currentTarget.getBoundingClientRect();
+      const rect = plotRect(r.width, r.height, TRACE_PAD);
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      setPointerT(inPlot(x, y, rect) ? timeAtX(x, rect, data.t0_s, data.t1_s) : null);
+    },
+    [data],
+  );
+
   const flat = data?.health?.flat ?? false;
   const spikes = useMemo(() => data?.spikes ?? [], [data]);
   const undecodable = Boolean(data?.decode_error);
@@ -581,6 +600,11 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
               aria-label="The stretch of the recording you are looking at. Drag sideways to zoom in."
               onKeyDown={onKeyDown}
               {...brush.handlers}
+              onPointerMove={(e) => {
+                brush.handlers.onPointerMove(e);
+                trackPointer(e);
+              }}
+              onPointerLeave={() => setPointerT(null)}
             >
               <TraceChart
                 trace={data.trace_uv ?? NO_TRACE}
@@ -612,6 +636,7 @@ export function MeaTrace({ analysisId, recordingId, channel, onViewChange }: Mea
               onNextSpike={() => stepSpike(1)}
               canPrevSpike={spikeSteps.prev}
               canNextSpike={spikeSteps.next}
+              pointerT={pointerT}
             />
 
             {/* Where the keystroke happened, so a keyboard-only zoom is announced. The obligation

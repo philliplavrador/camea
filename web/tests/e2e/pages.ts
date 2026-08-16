@@ -195,6 +195,9 @@ export const TID = {
   meaTraceNextSpike: 'mea-trace-next-spike', // …and rightward. Both DISABLED past the last spike.
   meaTracePos: 'mea-trace-pos', //          the readout: "0.00–3.00 s of 3 s · 3.00 s wide · N spikes
   //                                        in view" — the range the SERVER SERVED, not the one asked
+  meaTracePointerTime: 'mea-trace-pointer-time', // "cursor 1.2345 s" while the cursor is on the
+  //                                        close-up, blank otherwise. ⛔ time only, never a µV
+  //                                        (MAXWELL §7.6 leaves the amplitude unit unsettled)
   meaTraceSaid: 'mea-trace-said', //        visually hidden role=status: a keyboard zoom is announced
   meaTraceNeedsEnvelope: 'mea-trace-needs-envelope', // ⭐ a fact + an offer, not an error: the
   //                                        one-off whole-recording read has not been done yet.

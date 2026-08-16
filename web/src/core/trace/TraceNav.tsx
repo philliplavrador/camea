@@ -20,7 +20,7 @@
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 import { Button } from '../../design';
-import { readout } from './readout';
+import { readout, timeDp } from './readout';
 import styles from './TraceNav.module.css';
 
 export interface TraceNavProps {
@@ -44,6 +44,14 @@ export interface TraceNavProps {
   onNextSpike?: () => void;
   canPrevSpike?: boolean;
   canNextSpike?: boolean;
+  /**
+   * ⭐ The moment the cursor is over on the close-up, in seconds — or null when it is not over the
+   * picture. Printed quietly with the same depth-adaptive decimals as the range readout, so the
+   * two can never state one moment at two precisions. ⛔ Time only, no voltage: MAXWELL §7.6
+   * leaves the amplitude unit deliberately unsettled, so a µV under the cursor would be a number
+   * nobody can stand behind.
+   */
+  pointerT?: number | null;
 }
 
 export function TraceNav({
@@ -60,6 +68,7 @@ export function TraceNav({
   onNextSpike,
   canPrevSpike = false,
   canNextSpike = false,
+  pointerT = null,
 }: TraceNavProps): React.JSX.Element {
   // ⚠️ The buttons on one row and the readout on its own, rather than all four in a line: the
   // readout grows as he zooms in (it gains decimals, deliberately — see `readout`), and a row that
@@ -115,6 +124,13 @@ export function TraceNav({
       </div>
       <span className={styles.pos} data-testid="mea-trace-pos">
         {readout(t0, t1, duration, nSpikes)}
+      </span>
+      {/* ⚠️ Always rendered (blank when the cursor is off the picture) with a reserved line, so
+          the row does not jump under the pointer that is producing it. aria-hidden: a value that
+          rewrites on every mousemove is noise to a screen reader, and the keyboard path has the
+          announced readout. */}
+      <span className={styles.pointer} data-testid="mea-trace-pointer-time" aria-hidden="true">
+        {pointerT != null ? `cursor ${pointerT.toFixed(timeDp(Math.max(0, t1 - t0)))} s` : ''}
       </span>
     </div>
   );

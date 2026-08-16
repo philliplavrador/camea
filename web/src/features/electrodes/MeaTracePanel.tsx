@@ -58,7 +58,7 @@ import { TRACE_PAD, TraceChart } from '../../core/trace/TraceChart';
 import { TraceNav } from '../../core/trace/TraceNav';
 import { readout } from '../../core/trace/readout';
 import { nextSpike, prevSpike } from '../../core/trace/spikeStep';
-import { useTimeBrush } from '../../core/trace/useTimeBrush';
+import { inPlot, plotRect, timeAtX, useTimeBrush } from '../../core/trace/useTimeBrush';
 import * as vs from '../../core/trace/viewStack';
 import { Button, LiveWarning, Panel } from '../../design';
 import styles from './MeaTracePanel.module.css';
@@ -114,6 +114,8 @@ export function MeaTracePanel({
   // keeps saying "not read yet" after the job it started has finished.
   const [reload, setReload] = useState(0);
   const [said, setSaid] = useState('');
+  /** The moment the cursor is over on the close-up, or null when it is off the picture. */
+  const [pointerT, setPointerT] = useState<number | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
   // Every close-up fetch carries a ticket; a late reply holding a stale one is dropped. A ref,
   // not state: it schedules nothing and must not re-render anything.
@@ -385,6 +387,21 @@ export function MeaTracePanel({
     // polling effect above owns the flag, and it is what ends it.
   }, [analysisId]);
 
+  // ── the time under the pointer — same rules as the Analyze MEA viewer ──────────────────────
+  // ⭐ Measured against the range the picture is DRAWN from (`data`'s served range), and ⛔ time
+  // only, no voltage: MAXWELL §7.6 leaves the amplitude unit deliberately unsettled.
+  const trackPointer = useCallback(
+    (e: React.PointerEvent<HTMLElement>) => {
+      if (!data?.recorded) return;
+      const r = e.currentTarget.getBoundingClientRect();
+      const rect = plotRect(r.width, r.height, TRACE_PAD);
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      setPointerT(inPlot(x, y, rect) ? timeAtX(x, rect, data.t0_s ?? 0, data.t1_s ?? 0) : null);
+    },
+    [data],
+  );
+
   const flat = data?.health?.flat ?? false;
   const undecodable = Boolean(data?.decode_error);
   const provisional = whole?.recorded ? !(whole.orientation?.confirmed ?? false) : false;
@@ -550,6 +567,11 @@ export function MeaTracePanel({
               aria-label="The stretch of the recording you are looking at. Drag sideways to zoom in."
               onKeyDown={onKeyDown}
               {...brush.handlers}
+              onPointerMove={(e) => {
+                brush.handlers.onPointerMove(e);
+                trackPointer(e);
+              }}
+              onPointerLeave={() => setPointerT(null)}
             >
               <TraceChart
                 trace={data.trace_uv ?? NO_TRACE}
@@ -580,6 +602,7 @@ export function MeaTracePanel({
               onNextSpike={() => stepSpike(1)}
               canPrevSpike={spikeSteps.prev}
               canNextSpike={spikeSteps.next}
+              pointerT={pointerT}
             />
 
             <dl className={styles.facts}>

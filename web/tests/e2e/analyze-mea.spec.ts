@@ -1173,6 +1173,43 @@ test('Next spike recenters the view at the same width — and Back undoes the ju
   }
 });
 
+test('the time under the pointer is read out — quietly, and with no voltage number', async ({
+  page,
+}) => {
+  // ⭐ 2026-08-16. Hover the close-up and the moment under the cursor is stated below the nav row.
+  // ⛔ No µV: MAXWELL §7.6 leaves the amplitude unit deliberately unsettled, so a voltage under the
+  // cursor would be a number nobody can stand behind.
+  const id = await openFirstRecording(page, 'pointer time');
+  try {
+    await pickFirstPad(page);
+    const pos = await posText(page);
+    const m = pos.match(/^([\d.]+)[–-]([\d.]+) s/);
+    if (!m) throw new Error(`no range in the readout: ${JSON.stringify(pos)}`);
+    const mid = (Number(m[1]) + Number(m[2])) / 2;
+
+    const el = page.getByTestId(TID.meaTraceDetail);
+    await el.scrollIntoViewIfNeeded();
+    const box = await el.boundingBox();
+    if (!box) throw new Error('the close-up has no box to hover');
+    await page.mouse.move(box.x + PAD_L + (box.width - PAD_L - PAD_R) / 2, box.y + box.height / 2);
+
+    const readoutEl = page.getByTestId(TID.meaTracePointerTime);
+    await expect(readoutEl).toContainText('s', { timeout: SHORT });
+    const text = ((await readoutEl.textContent()) ?? '').trim();
+    const t = Number(text.match(/([\d.]+)\s*s$/)?.[1]);
+    // Mid-plot means mid-view, within a little pointer slack.
+    expect(Math.abs(t - mid)).toBeLessThanOrEqual(0.05 * (Number(m[2]) - Number(m[1])) + 0.02);
+    // ⛔ Time only — nothing about volts anywhere in it.
+    expect(text).not.toMatch(/[µu]V|volt/i);
+
+    // Leave the picture and the readout goes quiet rather than freezing a stale number.
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height + 80);
+    await expect(readoutEl).toHaveText('', { timeout: SHORT });
+  } finally {
+    await deleteProject(page, id);
+  }
+});
+
 // =================================================================================================
 // 7 · the chip-map quality-of-life bundle (2026-08-15)
 // =================================================================================================
