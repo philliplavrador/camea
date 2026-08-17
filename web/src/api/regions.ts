@@ -27,7 +27,24 @@
 // location never silently drifts onto new pixels — the UI says so and the user re-snaps.
 
 import { api, unwrap } from './client';
+import type { components } from './schema';
 import type { JobRef, RegionRecord, RegionUpdateRequest, RegionsPayload } from './types';
+
+export type RegionVideoCandidate = components['schemas']['RegionVideoCandidate'];
+export type RegionVideoBrowseResult = components['schemas']['RegionVideoBrowseResult'];
+
+/**
+ * Every video under a folder, probed, as tick-list rows (`GET /api/videomosaic/browse-videos`).
+ *
+ * ⭐ **THE DOOR THAT WORKS IN EVERY MODE** — the native multi-select dialog only exists with
+ * `--window`, and the app is actually driven over VSCode remote where that route is a 501 (R38).
+ * Same contract as `browseRecordings` on the MEA side: no project, reads only, creates nothing.
+ * A file that is named like a video but does not decode comes back `readable: false` with the
+ * reason — listed, never dropped.
+ */
+export async function browseRegionVideos(path: string): Promise<RegionVideoBrowseResult> {
+  return unwrap(await api.GET('/api/videomosaic/browse-videos', { params: { query: { path } } }));
+}
 
 /**
  * Add a recording and find where on the built mosaic it was taken (`POST

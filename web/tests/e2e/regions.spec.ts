@@ -744,7 +744,7 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await expect(byId(page, TID.regionRow)).toHaveCount(3); // the one already placing still landed
   });
 
-  test('Pick files says so in one line when there is no dialog — the typed box stays the door (R38)', async ({
+  test('Pick files says so in one line when there is no dialog — and points at the served door (R38)', async ({
     page,
   }) => {
     await openRegions(page);
@@ -756,9 +756,61 @@ test.describe('regions — the pipeline, and where the recording was taken (R46)
     await byId(page, TID.regionsPickFiles).click();
     const note = byId(page, TID.regionsNoDialog);
     await expect(note).toBeVisible({ timeout: SHORT });
-    await expect(note).toContainText(/paste/i);
+    // ⭐ Since 2026-08-16 the note points at the door that works in this mode, instead of
+    // sentencing him to one pasted path at a time.
+    await expect(note).toContainText(/choose a folder/i);
     await expect(byId(page, TID.regionsQueue)).toHaveCount(0);
     await expect(byId(page, TID.regionsPath)).toBeEnabled();
+  });
+
+  test('Choose a folder — the served picker probes, refuses by name, and feeds the same queue (R38)', async ({
+    page,
+  }) => {
+    const stub = await openRegions(page);
+    // ⭐ The served browse: two decodable videos and one refusal — LISTED greyed with its reason,
+    // never dropped (the MEA import's rule, applied here).
+    await page.route(/\/api\/videomosaic\/browse-videos/, (r) =>
+      json(r, {
+        path: 'C:/recordings/session-1',
+        videos: [
+          { path: 'C:/recordings/session-1/one.avi', label: 'one.avi', bytes: 12_582_912,
+            width: 640, height: 480, fps: 20, n_frames: 2400, duration_s: 120,
+            readable: true, problem: '' },
+          { path: 'C:/recordings/session-1/two.avi', label: 'two.avi', bytes: 9_437_184,
+            width: 640, height: 480, fps: 20, n_frames: 1800, duration_s: 90,
+            readable: true, problem: '' },
+          { path: 'C:/recordings/session-1/broken.mp4', label: 'broken.mp4', bytes: 512,
+            width: null, height: null, fps: null, n_frames: null, duration_s: null,
+            readable: false, problem: 'could not decode broken.mp4' },
+        ],
+        truncated: false,
+      }),
+    );
+    // The FolderPicker's walk — one folder, straight to its confirm button.
+    await page.route(/\/api\/fs\/list/, (r) =>
+      json(r, { path: 'C:/recordings/session-1', parent: null, is_dataset: false,
+                entries: [], roots: ['C:/'], error: null }),
+    );
+
+    await byId(page, TID.regionsChooseFolder).click();
+    await expect(byId(page, TID.regionsPickVideos)).toBeVisible({ timeout: SHORT });
+    await byId(page, TID.rgvChooseFolder).click();
+    await byId(page, 'folder-picker-confirm').click();
+
+    // three rows: two tickable, the refusal greyed with its sentence
+    await expect(byId(page, TID.rgvRow)).toHaveCount(3, { timeout: SHORT });
+    await expect(byId(page, TID.rgvRefused)).toContainText('could not decode');
+
+    // tick-all takes only the decodable two; Locate hands them to the SAME queue as Pick files
+    await byId(page, TID.rgvTickAll).click();
+    await byId(page, TID.rgvAdd).click();
+    await expect(byId(page, TID.regionsPickVideos)).toHaveCount(0);
+
+    await expect(byId(page, TID.regionsQueue)).toHaveCount(0, { timeout: 15_000 });
+    await expect(byId(page, TID.regionRow)).toHaveCount(2);
+    expect(stub.locates).toHaveLength(2);
+    expect(String(stub.locates[0].path)).toMatch(/one\.avi$/);
+    expect(String(stub.locates[1].path)).toMatch(/two\.avi$/);
   });
 
   // ───────────────────────────────────────────────────────────────────────────────────────────

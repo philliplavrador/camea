@@ -2851,6 +2851,42 @@ class RelocateRegionRequest(Req):
     region_id: str
 
 
+class RegionVideoCandidate(Res):
+    """One row of the Regions step's served tick-list — a video found under the folder he pointed
+    at, probed (metadata plus a decode proof), so a ticked row is one the locate job can open."""
+
+    path: str
+    label: str = Field(default="", description="The file's own name.")
+    bytes: int = 0
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    n_frames: int | None = None
+    duration_s: float | None = None
+    readable: bool = Field(
+        default=True,
+        description="⭐ False = it is named like a video and does not decode. It is still LISTED, "
+        "greyed and un-tickable, with `problem` saying why — a file that silently vanished from "
+        "the list would make the folder look emptier than it is.",
+    )
+    problem: str = ""
+
+
+class RegionVideoBrowseResult(Res):
+    """`GET /api/videomosaic/browse-videos?path=` — every video under a folder, for the Regions
+    step's served picker. ⭐ **No project, on purpose** (the `GET /api/mea/browse` contract): it
+    browses, it lists, it creates nothing — and it is served in every mode, because the native
+    multi-select dialog only exists with `--window` (R38). ⛔ Reads; never writes."""
+
+    path: str
+    videos: list[RegionVideoCandidate] = Field(default_factory=list)
+    truncated: bool = Field(
+        default=False,
+        description="The walk hit its ceiling. The UI says so rather than quietly showing a "
+        "prefix of what is really down there.",
+    )
+
+
 # =================================================================================================
 # Analyze MEA (`features/mea`) — a MaxWell recording on its own, with no calcium in sight.
 # =================================================================================================
@@ -3399,6 +3435,8 @@ __all__ = [
     "RegionUpdateRequest",
     "RegionZoom",
     "RegionsPayload",
+    "RegionVideoBrowseResult",
+    "RegionVideoCandidate",
     "RelocateRegionRequest",
     "SnapRegionRequest",
     # electrodes (both features)

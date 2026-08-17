@@ -602,7 +602,19 @@ export const TID = {
   regionsLocate: 'regions-locate', //        starts the 202 locate job
   regionsPickFiles: 'regions-pick-files', // the native multi-select — several recordings, located
   //                                         one after another through the one lease
-  regionsNoDialog: 'regions-no-dialog', //   the one-line "no file dialog in this mode" note (R38)
+  regionsNoDialog: 'regions-no-dialog', //   the one-line "no file dialog in this mode" note (R38),
+  //                                         pointing at the served picker below
+  regionsChooseFolder: 'regions-choose-folder', // ⭐ the served picker's door (2026-08-16): browse a
+  //                                         folder through the backend, tick several — the ONLY
+  //                                         multi-add that exists over VSCode remote (R38)
+  regionsPickVideos: 'regions-pick-videos', // its modal: FolderPicker + the probed tick-list
+  rgvChooseFolder: 'rgv-choose-folder', //   opens the FolderPicker inside the modal
+  rgvRow: 'rgv-row', //                      one probed video; data-readable mirrors the server's
+  rgvTick: 'rgv-tick', //                    its box (disabled on a refusal)
+  rgvTickAll: 'rgv-tick-all', //             tick every decodable row at once
+  rgvRefused: 'rgv-refused', //              a file named like a video that does not decode — LISTED
+  //                                         greyed with the reason, never dropped
+  rgvAdd: 'rgv-add', //                      "Locate N recordings" — hands the paths to the batch queue
   regionsQueue: 'regions-queue', //          the whole several-at-once readout: the bar below plus
   //                                         the drain button. Text: "Placing 2 of 6 · 4 waiting —
   //                                         <file>" (R48.6 names the file in the machine at last).

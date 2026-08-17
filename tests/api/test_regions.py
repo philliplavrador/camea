@@ -732,3 +732,40 @@ def test_a_region_id_this_project_never_had_is_a_404(client, scene):
     s = client.post("/api/videomosaic/regions/snap",
                     json={"analysis_id": aid, "region_id": "ghost", "x": 10.0, "y": 10.0})
     assert s.status_code == 404 and err(s)["code"] == "not_found"
+
+
+# =================================================================================================
+# The served picker (2026-08-16) — `GET /api/videomosaic/browse-videos`
+# =================================================================================================
+
+
+def test_browse_videos_lists_probes_and_refuses_without_dropping(client, tmp_path, videosynth):
+    """⭐ The Regions step's folder door — the one that works over VSCode remote, where the native
+    multi-select dialog is a 501 (R38). Every video under the folder comes back probed; a file
+    that is named like a video but does not decode is LISTED with its refusal, never dropped."""
+    d = tmp_path / "acq"
+    (d / "sub").mkdir(parents=True)
+    videosynth.write_survey_video(d / "region_a.avi", rows=2)
+    (d / "sub" / "not_really.mp4").write_bytes(b"this is not a video")
+    (d / "notes.txt").write_text("not listed - not a video extension", encoding="utf-8")
+
+    r = client.get("/api/videomosaic/browse-videos", params={"path": str(d)})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    rows = {v["label"]: v for v in body["videos"]}
+    assert set(rows) == {"region_a.avi", "not_really.mp4"}
+
+    good = rows["region_a.avi"]
+    assert good["readable"] is True
+    assert good["n_frames"] > 0 and good["width"] > 0 and good["height"] > 0
+    assert good["bytes"] > 0
+
+    junk = rows["not_really.mp4"]
+    assert junk["readable"] is False
+    assert junk["problem"], "a refusal must say why"
+    assert body["truncated"] is False
+
+
+def test_browse_videos_refuses_a_missing_folder_by_name(client, tmp_path):
+    r = client.get("/api/videomosaic/browse-videos", params={"path": str(tmp_path / "nope")})
+    assert r.status_code == 400 and err(r)["code"] == "bad_request"

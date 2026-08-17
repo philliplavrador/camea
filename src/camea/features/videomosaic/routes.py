@@ -54,6 +54,7 @@ from camea.api.schemas import (  # schemas is deliberately importable by feature
     RegionRecord,
     RegionsPayload,
     RegionUpdateRequest,
+    RegionVideoBrowseResult,
     RelocateRegionRequest,
     SnapRegionRequest,
     VideoBuildRequest,
@@ -932,6 +933,26 @@ def get_regions(analysis_id: str) -> dict:
     """Every located region + `stale` (rebuild the mosaic and every location is stale)."""
     doc, ws = _video_project(analysis_id)
     return _regions_payload(analysis_id, doc, ws)
+
+
+@router.get("/api/videomosaic/browse-videos", response_model=RegionVideoBrowseResult)
+def get_browse_videos(path: str = Query(..., description="The folder to look under.")) -> dict:
+    """⭐ **THE REGIONS STEP'S SERVED PICKER** — every video under `path`, probed, as tick-list
+    rows. The `GET /api/mea/browse` contract, for the same reason: the native multi-select dialog
+    only exists with `--window`, and he drives Camea over VSCode remote where that route is a 501
+    (R38). ⚠️ **No `analysis_id`, and it must never be given one "for consistency"** — it browses,
+    it lists, it hands back paths, and it creates nothing. ⛔ It reads and never writes.
+    """
+    from . import regions as regions_mod  # noqa: PLC0415 — cv2 loads per handler, not at import
+
+    root = Path((path or "").strip()).expanduser()
+    if not root.is_dir():
+        raise ApiError(400, "bad_request", f"there is no folder at {root.as_posix()}")
+    try:
+        rows, truncated = regions_mod.browse_candidates(root)
+    except OSError as e:
+        raise ApiError(500, "io_error", f"could not read {root.as_posix()}: {e}") from e
+    return {"path": root.as_posix(), "videos": rows, "truncated": truncated}
 
 
 def _regions_payload(analysis_id: str, doc: dict, ws) -> dict:

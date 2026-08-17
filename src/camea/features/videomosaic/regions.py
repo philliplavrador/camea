@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -98,6 +99,72 @@ def emitter(report: Callable[..., None] | None, *,
         core_jobs.say(report, phase, names.index(phase), len(names), pct, message, eta)
 
     return emit
+
+
+# =================================================================================================
+# Browsing for recordings — the served picker's walk (2026-08-16)
+# =================================================================================================
+
+#: File endings worth probing when a folder is browsed for fixed-field recordings. ⭐ A filter for
+#: the walk, never a verdict about a file: `video.probe` is the authority, and a file that matches
+#: here but does not decode is LISTED with its refusal (`readable: false`), not dropped.
+VIDEO_EXTS = frozenset({".avi", ".mp4", ".mov", ".mkv", ".m4v", ".mpg", ".mpeg", ".wmv"})
+
+#: How many videos one browse may list. Same reasoning as the MEA import's cap: a folder of
+#: thousands is a wrong turn, not a workload — the UI says the list was cut rather than quietly
+#: showing a prefix of what is really down there.
+BROWSE_LIMIT = 200
+
+
+def browse_candidates(root: str | Path, *, limit: int = BROWSE_LIMIT) -> tuple[list[dict], bool]:
+    """Every video under `root`, as tick-list rows for the Regions step. -> `(rows, truncated)`.
+
+    ⭐ Each candidate is `video.probe`d — metadata plus a decode PROOF (the first frame is actually
+    read) — so a ticked row is one the locate job will be able to open. A file that does not decode
+    is listed greyed with the reason (the MEA import's rule, for the same reason: the one thing
+    worse than a refusal is a refusal he never saw).
+
+    ⛔ Reads only, and served in every mode — this is the door that works over VSCode remote,
+    where the native multi-select dialog is a 501 (R38).
+    """
+    from . import video  # noqa: PLC0415 — cv2 must stay out of the api import graph
+
+    rootp = Path(root)
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(rootp):
+        dirnames[:] = sorted((n for n in dirnames if not n.startswith((".", "$"))),
+                             key=str.lower)
+        for name in sorted(filenames, key=str.lower):
+            if name.startswith((".", "$")) or Path(name).suffix.lower() not in VIDEO_EXTS:
+                continue
+            found.append(Path(dirpath) / name)
+            if len(found) > limit:
+                break
+        if len(found) > limit:
+            break
+
+    truncated = len(found) > limit
+    rows: list[dict] = []
+    for p in found[:limit]:
+        row: dict[str, Any] = {
+            "path": p.as_posix(), "label": p.name, "bytes": 0,
+            "width": None, "height": None, "fps": None, "n_frames": None, "duration_s": None,
+            "readable": True, "problem": "",
+        }
+        try:
+            row["bytes"] = p.stat().st_size
+        except OSError:
+            pass
+        try:
+            info = video.probe(p)
+        except video.VideoError as e:
+            row["readable"] = False
+            row["problem"] = str(e)
+        else:
+            row.update({"width": info.width, "height": info.height, "fps": round(info.fps, 3),
+                        "n_frames": info.n_frames, "duration_s": round(info.duration_s, 2)})
+        rows.append(row)
+    return rows, truncated
 
 
 # =================================================================================================

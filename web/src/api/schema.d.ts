@@ -1714,6 +1714,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/videomosaic/browse-videos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Browse Videos
+         * @description ⭐ **THE REGIONS STEP'S SERVED PICKER** — every video under `path`, probed, as tick-list
+         *     rows. The `GET /api/mea/browse` contract, for the same reason: the native multi-select dialog
+         *     only exists with `--window`, and he drives Camea over VSCode remote where that route is a 501
+         *     (R38). ⚠️ **No `analysis_id`, and it must never be given one "for consistency"** — it browses,
+         *     it lists, it hands back paths, and it creates nothing. ⛔ It reads and never writes.
+         */
+        get: operations["get_browse_videos_api_videomosaic_browse_videos_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/videomosaic/{analysis_id}/mea": {
         parameters: {
             query?: never;
@@ -5749,6 +5773,66 @@ export interface components {
             status?: ("unconfirmed" | "confirmed") | null;
         };
         /**
+         * RegionVideoBrowseResult
+         * @description `GET /api/videomosaic/browse-videos?path=` — every video under a folder, for the Regions
+         *     step's served picker. ⭐ **No project, on purpose** (the `GET /api/mea/browse` contract): it
+         *     browses, it lists, it creates nothing — and it is served in every mode, because the native
+         *     multi-select dialog only exists with `--window` (R38). ⛔ Reads; never writes.
+         */
+        RegionVideoBrowseResult: {
+            /** Path */
+            path: string;
+            /** Videos */
+            videos?: components["schemas"]["RegionVideoCandidate"][];
+            /**
+             * Truncated
+             * @description The walk hit its ceiling. The UI says so rather than quietly showing a prefix of what is really down there.
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * RegionVideoCandidate
+         * @description One row of the Regions step's served tick-list — a video found under the folder he pointed
+         *     at, probed (metadata plus a decode proof), so a ticked row is one the locate job can open.
+         */
+        RegionVideoCandidate: {
+            /** Path */
+            path: string;
+            /**
+             * Label
+             * @description The file's own name.
+             * @default
+             */
+            label: string;
+            /**
+             * Bytes
+             * @default 0
+             */
+            bytes: number;
+            /** Width */
+            width?: number | null;
+            /** Height */
+            height?: number | null;
+            /** Fps */
+            fps?: number | null;
+            /** N Frames */
+            n_frames?: number | null;
+            /** Duration S */
+            duration_s?: number | null;
+            /**
+             * Readable
+             * @description ⭐ False = it is named like a video and does not decode. It is still LISTED, greyed and un-tickable, with `problem` saying why — a file that silently vanished from the list would make the folder look emptier than it is.
+             * @default true
+             */
+            readable: boolean;
+            /**
+             * Problem
+             * @default
+             */
+            problem: string;
+        };
+        /**
          * RegionZoom
          * @description How much the recording was shrunk/grown to sit on the mosaic, and where that came from.
          */
@@ -9146,6 +9230,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RegionsPayload"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_browse_videos_api_videomosaic_browse_videos_get: {
+        parameters: {
+            query: {
+                /** @description The folder to look under. */
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegionVideoBrowseResult"];
                 };
             };
             /** @description Validation Error */

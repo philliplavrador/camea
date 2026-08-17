@@ -3021,6 +3021,48 @@
         }
       }
     },
+    "/api/videomosaic/browse-videos": {
+      "get": {
+        "summary": "Get Browse Videos",
+        "description": "⭐ **THE REGIONS STEP'S SERVED PICKER** — every video under `path`, probed, as tick-list\nrows. The `GET /api/mea/browse` contract, for the same reason: the native multi-select dialog\nonly exists with `--window`, and he drives Camea over VSCode remote where that route is a 501\n(R38). ⚠️ **No `analysis_id`, and it must never be given one \"for consistency\"** — it browses,\nit lists, it hands back paths, and it creates nothing. ⛔ It reads and never writes.",
+        "operationId": "get_browse_videos_api_videomosaic_browse_videos_get",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The folder to look under.",
+              "title": "Path"
+            },
+            "description": "The folder to look under."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegionVideoBrowseResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/videomosaic/{analysis_id}/mea": {
       "get": {
         "summary": "Get Mea",
@@ -10586,6 +10628,124 @@
         ],
         "title": "RegionUpdateRequest",
         "description": "`PATCH /api/videomosaic/regions` — rename, or confirm. Both are the user's word."
+      },
+      "RegionVideoBrowseResult": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "videos": {
+            "items": {
+              "$ref": "#/components/schemas/RegionVideoCandidate"
+            },
+            "type": "array",
+            "title": "Videos"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "The walk hit its ceiling. The UI says so rather than quietly showing a prefix of what is really down there.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "RegionVideoBrowseResult",
+        "description": "`GET /api/videomosaic/browse-videos?path=` — every video under a folder, for the Regions\nstep's served picker. ⭐ **No project, on purpose** (the `GET /api/mea/browse` contract): it\nbrowses, it lists, it creates nothing — and it is served in every mode, because the native\nmulti-select dialog only exists with `--window` (R38). ⛔ Reads; never writes."
+      },
+      "RegionVideoCandidate": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "The file's own name.",
+            "default": ""
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes",
+            "default": 0
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "fps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fps"
+          },
+          "n_frames": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Frames"
+          },
+          "duration_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration S"
+          },
+          "readable": {
+            "type": "boolean",
+            "title": "Readable",
+            "description": "⭐ False = it is named like a video and does not decode. It is still LISTED, greyed and un-tickable, with `problem` saying why — a file that silently vanished from the list would make the folder look emptier than it is.",
+            "default": true
+          },
+          "problem": {
+            "type": "string",
+            "title": "Problem",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "RegionVideoCandidate",
+        "description": "One row of the Regions step's served tick-list — a video found under the folder he pointed\nat, probed (metadata plus a decode proof), so a ticked row is one the locate job can open."
       },
       "RegionZoom": {
         "properties": {

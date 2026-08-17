@@ -63,6 +63,7 @@ import type {
 import { Button, Help, Kbd, LiveWarning, Panel, Progress, cx } from '../../design';
 import { fmtSeconds, fmtWhen, phaseOf } from './format';
 import { forSubmit, normalisePath } from '../home/pathText';
+import { PickRegionVideos } from './PickRegionVideos';
 import { PreviewViewer, type FrameRequest, type ViewFrame } from './PreviewViewer';
 import { WorkFrame } from './WorkFrame';
 // ⛔ **NOT FOR A PROGRESS BAR ANY MORE (R48.2).** This module used to lend three of them — the
@@ -474,9 +475,9 @@ export function RegionsStep({
   }, []);
 
   // ⭐ SEVERAL AT ONCE — the native multi-select, queued through the one lease. `null` = there is
-  // no file explorer in this mode (headless / VSCode remote), said in one line — deliberately not
-  // a prompt, which can only carry one path; the typed box beside it is the always-working door
-  // (R38), and it is left exactly as it was.
+  // no file explorer in this mode (headless / VSCode remote), said in one line and pointing at
+  // the served picker below, which is the door that works everywhere; the typed box beside it is
+  // the always-working single-path door (R38), and it is left exactly as it was.
   const pickSeveral = useCallback(async () => {
     setNoDialog(false);
     const picked = await pickOpenFilePaths({ title: 'Which recordings do you want to locate?' });
@@ -492,6 +493,25 @@ export function RegionsStep({
       })),
     );
   }, [analysisId, startBatch]);
+
+  // ⭐ THE SERVED PICKER (2026-08-16) — `FolderPicker` + `GET /api/videomosaic/browse-videos`,
+  // the same shape the MEA import proved out, because it is the door he will actually use: he
+  // drives Camea over VSCode remote, where the native dialogs above are a 501 (R38). The ticked
+  // paths feed the SAME batch queue as the native multi-select — one door's manners, two handles.
+  const [pickingFolder, setPickingFolder] = useState(false);
+  const addFromPicker = useCallback(
+    (picked: string[]) => {
+      setPickingFolder(false);
+      const paths = picked.map((p) => normalisePath(p)).filter((p) => forSubmit(p) !== '');
+      startBatch(
+        paths.map((p) => ({
+          label: basenameOf(p),
+          start: () => locateRegion(analysisId, forSubmit(p)),
+        })),
+      );
+    },
+    [analysisId, startBatch],
+  );
 
   // ⭐ "Locate again" — re-run one row's placement from the project's own copy of its recording.
   // R46.6: the machine proposes again, so the row comes back `unconfirmed` with fresh evidence —
@@ -1446,8 +1466,9 @@ export function RegionsStep({
                 'does not break the region. The name is a label only — leave it empty to use the ' +
                 'file name.\n' +
                 '\n' +
-                'Paste a path or press Browse. Either way the path is the only thing asked for: ' +
-                'where a recording came FROM, never where anything is saved.'
+                'Paste a path, press Browse, or press "Choose a folder" to tick several at ' +
+                'once. Either way the path is the only thing asked for: where a recording came ' +
+                'FROM, never where anything is saved.'
               }
             >
               <div className={styles.addRow}>
@@ -1491,10 +1512,24 @@ export function RegionsStep({
                 >
                   Pick files…
                 </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setNoDialog(false);
+                    setPickingFolder(true);
+                  }}
+                  disabled={busy}
+                  title="Browse a folder and tick several recordings — works in every mode"
+                  data-testid="regions-choose-folder"
+                >
+                  Choose a folder…
+                </Button>
               </div>
               {noDialog && (
                 <p className={styles.noDialog} data-testid="regions-no-dialog">
-                  there is no file dialog in this mode — paste one path at a time instead
+                  This window has no file explorer. Use <b>Choose a folder…</b> — it works the
+                  same.
                 </p>
               )}
               <div className={styles.addRow}>
@@ -1531,6 +1566,10 @@ export function RegionsStep({
           </>
         }
       />
+
+      {pickingFolder && (
+        <PickRegionVideos onAdd={addFromPicker} onClose={() => setPickingFolder(false)} />
+      )}
     </div>
   );
 }
