@@ -102,6 +102,9 @@ export function ProjectManager() {
   const migrationJobId = state.status === 'ready' ? state.migrationJobId : null;
   const migJob = useJob(migrationJobId);
   const stopJob = useStopJob();
+  // R48.1 — the 400 ms grace, like every other wait: a one-small-project migration that lands
+  // inside it shows only the once-stated notice, never a bar that flashes.
+  const migrating = useDelayedFlag(migrationJobId != null && !migJob.isTerminal);
   useEffect(() => {
     if (migrationJobId && migJob.isTerminal) refresh();
   }, [migrationJobId, migJob.isTerminal, refresh]);
@@ -191,7 +194,7 @@ export function ProjectManager() {
         </div>
       </header>
 
-      {migrationJobId && !migJob.isTerminal && (
+      {migrationJobId && !migJob.isTerminal && migrating && (
         <Progress
           className={styles.busy}
           data-testid="projects-migrating"
