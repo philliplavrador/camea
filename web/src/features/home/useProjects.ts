@@ -26,6 +26,10 @@ export type ProjectsState =
       projects: AnalysisSummary[];
       unreadable: string[];
       migration: MigrationReport | null;
+      /** ⏱️ Set while the launch migration is still moving projects in (R48). The manager polls
+       *  this job for the one bar — and refetches the listing when it ends, which is when the
+       *  final `migration` report (and every migrated card) arrives. */
+      migrationJobId: string | null;
     };
 
 export interface UseProjects {
@@ -46,13 +50,14 @@ export function useProjects(): UseProjects {
     let cancelled = false;
     setState({ status: 'loading' });
     listAnalyses().then(
-      ({ analyses, unreadable, migration }) => {
+      ({ analyses, unreadable, migration, migration_job_id }) => {
         if (!cancelled)
           setState({
             status: 'ready',
             projects: analyses,
             unreadable: unreadable ?? [],
             migration: migration ?? null,
+            migrationJobId: migration_job_id ?? null,
           });
       },
       (e: unknown) => {

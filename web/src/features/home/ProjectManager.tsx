@@ -14,10 +14,12 @@
 // nothing here names a trial, a count or an exclusion.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   getDocument,
+  useJob,
+  useStopJob,
   type AnalysisSummary,
   type MigrationReport,
   type MosaicDocument,
@@ -91,6 +93,18 @@ export function ProjectManager() {
   // R48.1 — the 400 ms grace. Most renames beat it; no delete does.
   const showBusy = useDelayedFlag(busy != null);
   const loading = useDelayedFlag(state.status === 'loading');
+
+  // ⏱️ **THE LAUNCH MIGRATION, AS THE ONE BAR (R48).** On the first launch after R44 the server no
+  // longer holds every connection while projects move into the store — it answers at once and moves
+  // them as a job. This polls that job: pct from bytes, a real ETA, and a Stop wired to the only
+  // safe seam (between projects — a move that has started always completes). When it ends, the
+  // refetch brings the migrated cards and the once-stated report in one go — never a silent end.
+  const migrationJobId = state.status === 'ready' ? state.migrationJobId : null;
+  const migJob = useJob(migrationJobId);
+  const stopJob = useStopJob();
+  useEffect(() => {
+    if (migrationJobId && migJob.isTerminal) refresh();
+  }, [migrationJobId, migJob.isTerminal, refresh]);
 
   async function onRename(p: AnalysisSummary): Promise<void> {
     const next = window.prompt('Rename project', p.name);
@@ -176,6 +190,21 @@ export function ProjectManager() {
           </Button>
         </div>
       </header>
+
+      {migrationJobId && !migJob.isTerminal && (
+        <Progress
+          className={styles.busy}
+          data-testid="projects-migrating"
+          label={migJob.job?.said_as || "Bringing your projects into Camea's store"}
+          pct={migJob.pct}
+          etaText={migJob.etaText}
+          elapsedText={migJob.elapsedText}
+          message={migJob.message}
+          onStop={
+            (migJob.job?.cancellable ?? true) ? () => void stopJob(migrationJobId) : undefined
+          }
+        />
+      )}
 
       {state.status === 'ready' && state.migration && <MigrationNotice report={state.migration} />}
 
@@ -280,6 +309,12 @@ function MigrationNotice({ report }: { report: MigrationReport }) {
             ))}
           </ul>
         </>
+      )}
+      {report.stopped && (
+        <p data-testid="projects-migration-stopped">
+          You stopped the move, so the rest stayed exactly where they were. Camea will offer to
+          finish next time it starts.
+        </p>
       )}
     </div>
   );

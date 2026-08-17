@@ -60,7 +60,8 @@ from camea.core.workspace import (
 )
 from camea.core.workspace import _fwd as _fwd
 
-__all__ = ["MigrationReport", "migrate_to_store", "LEGACY_DRAFTS"]
+__all__ = ["MigrationReport", "migrate_to_store", "plan_migration", "run_migration",
+           "migration_job", "LEGACY_DRAFTS"]
 
 #: R43's draft area. Its contents are real projects under R44 and are kept, not swept.
 LEGACY_DRAFTS = "drafts"
@@ -74,13 +75,18 @@ class MigrationReport:
     migrated: list[dict] = field(default_factory=list)
     #: `{"path": ..., "reason": ...}` per project that did not. It is still where it was.
     failed: list[dict] = field(default_factory=list)
+    #: ⭐ The user pressed Stop between projects. What had not started stays exactly where it was
+    #: (and stays in `settings.projects`), so the next launch offers to finish the job. Never set
+    #: mid-project: a move that has started always completes.
+    stopped: bool = False
 
     @property
     def ran(self) -> bool:
         return bool(self.migrated or self.failed)
 
     def to_json(self) -> dict:
-        return {"migrated": list(self.migrated), "failed": list(self.failed)}
+        return {"migrated": list(self.migrated), "failed": list(self.failed),
+                "stopped": bool(self.stopped)}
 
 
 def _legacy_draft_folders() -> list[str]:
@@ -128,35 +134,15 @@ def _console(line: str) -> None:
         pass
 
 
-def migrate_to_store(legacy_folders: list[str],
-                     progress: Callable[[str], None] | None = None) -> MigrationReport:
-    """Move every pre-R44 project into the store. -> what happened. **Never raises.**
+def plan_migration(legacy_folders: list[str]) -> list[tuple[Path, int]]:
+    """WHAT is moving, and HOW BIG is it. -> `[(folder, bytes of Camea's own files)]`. Cheap.
 
-    `legacy_folders` is the old `settings.projects` list; R43's drafts are found here rather than
-    passed in, because nothing outside this module should still know that directory existed.
-
-    ⏱️ **IT NARRATES ITSELF TO THE CONSOLE (BEHAVIOUR R48), AND THAT IS THE HALF-MEASURE IT IS.**
-    This runs *inside* `create_app()`, so the server accepts no connection until it returns — and a
-    multi-GB `shutil.move` across drives can hold that for minutes with no HTTP surface in existence
-    to serve a bar. Until it moves behind a startup event, the console is the only place a waiting
-    human can be told anything, so it is told: the count, the bytes, and an estimate.
-
-    ⏱️ **The countable unit is BYTES OF CAMEA'S OWN FILES**, summed up front across every project
-    that will actually move. ⚠️ It advances **per project**, because `shutil.move` has no callback —
-    so a single large project cannot anchor an estimate at all (2 % is never reached until it is
-    100 % done) and prints its size instead of a countdown. That is honest; it is not sufficient,
-    and the fix is the startup event, not a fake number.
-
-    `progress` takes one line of plain text. It defaults to printing.
+    ⭐ The filtering here is exactly `_migrate_one`'s first two early returns (not a project;
+    already home), lifted so the work can be counted before it starts — and so the launch can know
+    in one stat-walk whether there is a migration at all. Anything this pass cannot judge is kept
+    and handed to `_migrate_one`, which owns every refusal and every `failed` entry.
     """
-    report = MigrationReport()
-    say = _console if progress is None else progress
     seen: set[str] = set()
-
-    # --- pass 1: WHAT is moving, and HOW BIG is it -------------------------------------------
-    # ⭐ The filtering here is exactly `_migrate_one`'s first two early returns (not a project;
-    # already home), lifted so the work can be counted before it starts. Anything this pass cannot
-    # judge is kept and handed to `_migrate_one`, which owns every refusal and every `failed` entry.
     todo: list[tuple[Path, int]] = []
     for folder in [*legacy_folders, *_legacy_draft_folders()]:
         key = folder.rstrip("/").lower()
@@ -171,18 +157,45 @@ def migrate_to_store(legacy_folders: list[str],
             todo.append((pth, _own_bytes(pr)))
         except Exception:                               # noqa: BLE001 — a launch is not failable
             todo.append((pth, 0))                       # let `_migrate_one` produce the real reason
+    return todo
 
+
+def run_migration(todo: list[tuple[Path, int]],
+                  say: Callable[[str], None],
+                  *,
+                  advancing: Callable[[int, int, int, str], None] | None = None,
+                  should_stop: Callable[[], bool] | None = None) -> MigrationReport:
+    """Move a planned migration. -> what happened. **Never raises.**
+
+    ⏱️ **The countable unit is BYTES OF CAMEA'S OWN FILES**, summed up front across every project
+    that will actually move. ⚠️ It advances **per project**, because `shutil.move` has no callback —
+    so a single large project cannot anchor an estimate at all (2 % is never reached until it is
+    100 % done) and the narration prints its size instead of a countdown. Honest, and said so.
+
+    `advancing(done_bytes, total_bytes, i, name)` fires as each project starts — it is where the
+    job path turns bytes into a bar. `should_stop()` is checked **between projects only**: a move
+    that has started always completes, so nothing is ever left half-way (rule 2 above).
+    """
+    report = MigrationReport()
     if not todo:
         return report                                   # ⭐ every launch after the first: silent
 
-    # --- pass 2: move them, saying so ---------------------------------------------------------
     total = sum(b for _, b in todo)
     t0 = time.monotonic()
     done = 0
     say(f"Camea: bringing {len(todo)} project(s) home into its own store "
-        f"({_human_bytes(total)}). The app starts when this finishes.")
+        f"({_human_bytes(total)}).")
 
     for i, (pth, nbytes) in enumerate(todo):
+        if should_stop is not None and should_stop():
+            # ⭐ Stopped BETWEEN projects: what has not started stays where it was, still listed in
+            # `settings.projects`, and the next launch offers to finish. Said, never silent (R48.7).
+            report.stopped = True
+            say(f"Camea: stopped — {len(todo) - i} project(s) stay where they are until the "
+                f"next launch.")
+            return report
+        if advancing is not None:
+            advancing(done, total, i, pth.name)
         eta = eta_from_counts(time.monotonic() - t0, done, total)
         left = f", about {int(eta)} s left" if eta is not None else ""
         say(f"  [{i + 1}/{len(todo)}] {int(100 * done / total) if total else 100}% - "
@@ -196,6 +209,62 @@ def migrate_to_store(legacy_folders: list[str],
     say(f"Camea: {len(report.migrated)} project(s) came home, {len(report.failed)} did not, "
         f"in {time.monotonic() - t0:.1f} s.")
     return report
+
+
+def migrate_to_store(legacy_folders: list[str],
+                     progress: Callable[[str], None] | None = None) -> MigrationReport:
+    """Move every pre-R44 project into the store, narrating to the console. **Never raises.**
+
+    `legacy_folders` is the old `settings.projects` list; R43's drafts are found here rather than
+    passed in, because nothing outside this module should still know that directory existed.
+
+    ⏱️ Since 2026-08-16 the app no longer calls this on the request path: the launch runs
+    `plan_migration` cheaply and, only when there is work, submits `migration_job` to the job
+    registry — so the server answers immediately and the home screen gets a real bar with an ETA
+    and a Stop (`api.routes_core.start_migration`). This synchronous form remains the unit-test
+    surface and the one-call answer for anything that wants the move done before it returns.
+
+    `progress` takes one line of plain text. It defaults to printing.
+    """
+    return run_migration(plan_migration(legacy_folders),
+                         _console if progress is None else progress)
+
+
+def migration_job(todo: list[tuple[Path, int]],
+                  on_done: Callable[[MigrationReport], None]):
+    """-> `fn(report, cancel)` for `JOBS.submit_thread` — the launch migration as an ordinary job.
+
+    ⏱️ This is what replaced the create_app()-blocking call (BEHAVIOUR R48): the bar's denominator
+    is bytes of Camea's own files, the ETA is `eta_from_counts` called only when the fraction
+    actually advances (⛔ never on a timer — R8b), and Stop is wired to the between-projects seam,
+    the only place a stop cannot strand a half-moved project.
+
+    `on_done(report)` runs on the worker thread whatever happens — it is how the launch records the
+    report for the home screen (and drains `settings.projects` only when everything came home).
+    """
+    from camea.core.jobs import Progress  # noqa: PLC0415 — jobs imports nothing from here; safe
+
+    def fn(report_progress, cancel) -> dict:
+        n = len(todo)
+
+        def advancing(done: int, total: int, i: int, name: str) -> None:
+            report_progress(Progress(
+                phase="move", phase_index=0, n_phases=1,
+                pct=(100.0 * done / total) if total else None,
+                message=f"moving {name} in — project {i + 1} of {n}",
+                eta_s=eta_from_counts(time.monotonic() - t0, done, total),
+            ))
+
+        t0 = time.monotonic()
+        result = run_migration(todo, _console, advancing=advancing,
+                               should_stop=cancel.is_set)
+        try:
+            on_done(result)
+        except Exception:                               # noqa: BLE001 — a launch is not failable
+            pass
+        return {"kind": "migrate", **result.to_json()}
+
+    return fn
 
 
 def _migrate_one(folder: Path, report: MigrationReport) -> None:

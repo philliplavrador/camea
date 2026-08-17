@@ -41,6 +41,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import Any
@@ -1110,6 +1111,10 @@ def get_projects(dataset_key: str | None = None, feature: str | None = None) -> 
         "analyses": [a.to_json() for a in found],
         "unreadable": unreadable,
         "migration": MIGRATION.to_json() if MIGRATION is not None and MIGRATION.ran else None,
+        # ⏱️ Set while the launch migration is still moving projects in (R48): the home screen
+        # polls this job for the one bar — pct from bytes, ETA, a Stop wired to the
+        # between-projects seam — and refetches this listing when it ends.
+        "migration_job_id": MIGRATION_JOB_ID,
     }
 
 
@@ -1857,14 +1862,57 @@ def set_headless(headless: bool) -> None:
 
 
 # =================================================================================================
-# The one-time migration's report (R44)
+# The one-time migration (R44) — planned at launch, run as a job (R48)
 # =================================================================================================
 
 #: ⭐ What `core.migrate` did on the way up, held for `GET /api/projects` to state **once**.
-#: `create_app()` sets it; it is `None` in a process that never ran a migration (and its `.ran` is
-#: False on every launch after the first, which is the same thing to the home screen).
+#: The lifespan's `start_migration()` sets it — immediately when there is nothing to move, from the
+#: job's own thread when there is. `None` in a process that never ran a migration (and its `.ran`
+#: is False on every launch after the first, which is the same thing to the home screen).
 MIGRATION: Any = None
+
+#: ⏱️ The launch migration's job id while it is still moving projects in; `None` before, after,
+#: and on every launch with nothing to do. `GET /api/projects` serves it so the home screen can
+#: show the one bar instead of a list that silently grows.
+MIGRATION_JOB_ID: str | None = None
+
+
+def start_migration() -> None:
+    """⭐ **THE LAUNCH MIGRATION, OFF THE REQUEST PATH.** Called once by the app's lifespan.
+
+    Plans cheaply (a stat-walk); when there is nothing to move — every launch after the first —
+    it records the empty report and the server is already done. When there IS work, it becomes an
+    ordinary background job: the server answers while projects come home, and the home screen
+    gets pct-from-bytes, an ETA, and a Stop wired to the only safe seam (between projects).
+
+    ⚠️ **`settings.projects` is drained only when everything came home** — not on a stop, not on a
+    failure. That list is the only record of where those folders were; a launch that hit an
+    unplugged drive keeps it for the next one to finish. **Never raises**: a launch is not failable.
+    """
+    global MIGRATION, MIGRATION_JOB_ID
+    try:
+        from camea.core import migrate as core_migrate  # noqa: PLC0415
+
+        todo = core_migrate.plan_migration(SETTINGS.ensure_loaded().legacy_projects)
+        if not todo:
+            MIGRATION = core_migrate.MigrationReport()
+            return
+
+        def finished(report) -> None:
+            global MIGRATION, MIGRATION_JOB_ID
+            MIGRATION = report
+            MIGRATION_JOB_ID = None
+            if report.ran and not report.failed and not report.stopped:
+                # Only when everything came home: the old index is the only record of where those
+                # folders were, so a stopped or failing launch keeps it for the next one to finish.
+                SETTINGS.drop_legacy_projects()
+
+        job = JOBS.submit_thread("migrate", core_migrate.migration_job(todo, finished),
+                                 label="bringing your projects into Camea's store")
+        MIGRATION_JOB_ID = job.job_id
+    except Exception:                                   # noqa: BLE001 — a launch is not failable
+        traceback.print_exc()
 
 
 __all__ = ["router", "ApiError", "Session", "SESSIONS", "SessionRegistry", "gpu_info", "set_window",
-           "FsEntry", "FsListResponse", "MIGRATION"]
+           "FsEntry", "FsListResponse", "MIGRATION", "MIGRATION_JOB_ID", "start_migration"]

@@ -2206,6 +2206,11 @@ export interface components {
             unreadable?: string[];
             /** @description ⭐ Set on the first launch after R44, when pre-R44 projects were brought into the store. The home screen states it once. null on every ordinary launch. */
             migration?: components["schemas"]["MigrationReport"] | null;
+            /**
+             * Migration Job Id
+             * @description ⏱️ Set while the launch migration is still moving projects in (R48): poll this job for the bar, the ETA and the Stop; refetch this listing when it ends.
+             */
+            migration_job_id?: string | null;
         };
         /**
          * AnalysisRef
@@ -3682,7 +3687,7 @@ export interface components {
              * Result
              * @description null until state == 'done'. Discriminated on `kind`.
              */
-            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["DatasetScanResult"] | components["schemas"]["LoadDocumentResult"] | components["schemas"]["CopyOutputsResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"] | components["schemas"]["OrientationTestResult"] | components["schemas"]["MeaAttachResult"] | components["schemas"]["MeaCopyResult"] | components["schemas"]["MeaEnvelopeResult"]) | null;
+            result?: (components["schemas"]["OpenJobResult"] | components["schemas"]["DatasetScanResult"] | components["schemas"]["LoadDocumentResult"] | components["schemas"]["CopyOutputsResult"] | components["schemas"]["MigrateResult"] | components["schemas"]["BuildResult"] | components["schemas"]["ExportResult"] | components["schemas"]["RecheckResult"] | components["schemas"]["RecomputeResult"] | components["schemas"]["VideoMosaicBuildResult"] | components["schemas"]["ElectrodeMapResult"] | components["schemas"]["LocateRegionResult"] | components["schemas"]["OrientationTestResult"] | components["schemas"]["MeaAttachResult"] | components["schemas"]["MeaCopyResult"] | components["schemas"]["MeaEnvelopeResult"]) | null;
             /** @description Set iff state == 'failed'. */
             error?: components["schemas"]["JobError"] | null;
         };
@@ -4865,6 +4870,27 @@ export interface components {
             peak_channels: number;
         };
         /**
+         * MigrateResult
+         * @description `Job.result` when `kind == "migrate"` — the launch migration, run as a job since 2026-08-16
+         *     (R48) so the server answers while projects come home.
+         */
+        MigrateResult: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "migrate";
+            /** Migrated */
+            migrated?: components["schemas"]["MigratedProject"][];
+            /** Failed */
+            failed?: components["schemas"]["FailedMigration"][];
+            /**
+             * Stopped
+             * @default false
+             */
+            stopped: boolean;
+        };
+        /**
          * MigratedProject
          * @description One project that came home to the store.
          */
@@ -4894,6 +4920,12 @@ export interface components {
             migrated?: components["schemas"]["MigratedProject"][];
             /** Failed */
             failed?: components["schemas"]["FailedMigration"][];
+            /**
+             * Stopped
+             * @description ⭐ The user pressed Stop between projects. What had not started stays exactly where it was and the next launch offers to finish the job.
+             * @default false
+             */
+            stopped: boolean;
         };
         /**
          * MosaicDocument

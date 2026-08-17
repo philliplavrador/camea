@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import time
 import traceback
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,6 @@ from fastapi.staticfiles import StaticFiles
 import camea
 from camea.api import routes_core
 from camea.api.schemas import ErrorCode
-from camea.core import migrate as core_migrate
 
 __all__ = ["create_app", "APP", "CORS_ORIGINS"]
 
@@ -85,11 +85,26 @@ def _envelope(status: int, code: str, message: str,
     return JSONResponse({"error": body}, status_code=status)
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """⭐ **BRING PRE-R44 PROJECTS HOME — OFF THE REQUEST PATH (R48).** Until 2026-08-16 the
+    migration ran *inside* `create_app()`, so a multi-GB `shutil.move` across drives held every
+    connection — including the one that would have shown a progress bar — for minutes, and the only
+    narration was the server console. Now the launch plans it cheaply here and, only when there is
+    work, runs it as an ordinary background job: the server answers immediately, the home screen
+    (and the running-jobs strip) gets the one bar with an ETA and a wired Stop, and
+    `GET /api/projects` names the job while it runs and states the report once when it is done."""
+    routes_core.start_migration()
+    yield
+
+
 def create_app(*, cors: bool = True) -> FastAPI:
-    """The app. Import-safe: it touches no disk, opens no dataset and does not look for a GPU."""
+    """The app. Import-safe: it touches no disk, opens no dataset and does not look for a GPU.
+    (True since 2026-08-16 — the launch migration moved off `create_app()` into the lifespan.)"""
     app = FastAPI(
         title="Camea",
         version=camea.__version__,
+        lifespan=_lifespan,
         description=(
             "A microscopy analysis desktop app. A DATASET is raw and read-only; an ANALYSIS is what "
             "you did to it, and it lives in the WORKSPACE you chose. This schema is THE CONTRACT: "
@@ -189,18 +204,6 @@ def create_app(*, cors: bool = True) -> FastAPI:
 
     mea_routes.set_store(projects=routes_core._projects)
     app.include_router(mea_routes.router)
-
-    # ⭐ **BRING PRE-R44 PROJECTS HOME** (`core.migrate`). Runs on every launch and does nothing on
-    # all but the first: a folder already in the store is skipped. It never raises, and what it did
-    # (or could not do) is held for the home screen to state once — a project that silently moved
-    # would be indistinguishable from one that silently vanished.
-    routes_core.MIGRATION = core_migrate.migrate_to_store(
-        routes_core.SETTINGS.ensure_loaded().legacy_projects
-    )
-    if routes_core.MIGRATION.ran and not routes_core.MIGRATION.failed:
-        # Only when everything came home: the old index is the only record of where those folders
-        # were, so a launch that hit an unplugged drive keeps it for the next one to finish.
-        routes_core.SETTINGS.drop_legacy_projects()
 
     # ---------------------------------------------------------------------------------------------
     # The built UI. `--window` and `--browser` both load from THIS origin (see the CORS note above) —

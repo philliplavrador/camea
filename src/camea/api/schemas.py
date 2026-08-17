@@ -664,6 +664,21 @@ class MigrationReport(Res):
 
     migrated: list[MigratedProject] = Field(default_factory=list)
     failed: list[FailedMigration] = Field(default_factory=list)
+    stopped: bool = Field(
+        default=False,
+        description="⭐ The user pressed Stop between projects. What had not started stays exactly "
+        "where it was and the next launch offers to finish the job.",
+    )
+
+
+class MigrateResult(Res):
+    """`Job.result` when `kind == "migrate"` — the launch migration, run as a job since 2026-08-16
+    (R48) so the server answers while projects come home."""
+
+    kind: Literal["migrate"] = "migrate"
+    migrated: list[MigratedProject] = Field(default_factory=list)
+    failed: list[FailedMigration] = Field(default_factory=list)
+    stopped: bool = False
 
 
 class AnalysisSummary(Res):
@@ -712,6 +727,11 @@ class AnalysisListResponse(Res):
         default=None,
         description="⭐ Set on the first launch after R44, when pre-R44 projects were brought into "
         "the store. The home screen states it once. null on every ordinary launch.",
+    )
+    migration_job_id: str | None = Field(
+        default=None,
+        description="⏱️ Set while the launch migration is still moving projects in (R48): poll "
+        "this job for the bar, the ETA and the Stop; refetch this listing when it ends.",
     )
 
 
@@ -3326,6 +3346,7 @@ class MeaChannelTrace(Res):
 
 JobResult = Annotated[
     Union[OpenJobResult, DatasetScanResult, LoadDocumentResult, CopyOutputsResult,
+          MigrateResult,
           BuildResult, ExportResult, RecheckResult, RecomputeResult,
           VideoMosaicBuildResult, ElectrodeMapResult, LocateRegionResult,
           OrientationTestResult, MeaAttachResult, MeaCopyResult, MeaEnvelopeResult],
@@ -3456,6 +3477,7 @@ __all__ = [
     "MigratedProject",
     "FailedMigration",
     "MigrationReport",
+    "MigrateResult",
     "OutputEntry",
     "OutputListResponse",
     "CopyOutputsRequest",
