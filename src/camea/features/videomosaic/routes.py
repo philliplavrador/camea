@@ -28,6 +28,7 @@ pipeline is imported inside handlers/jobs only.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Callable
@@ -1026,6 +1027,52 @@ def _summarise(paths: list[Path], *,
     return out, stride, pitch
 
 
+#: ⭐ **`_summarise`, REMEMBERED** — keyed by the recording directory, validated by a fingerprint of
+#: the files themselves (path, size, mtime). `GET .../mea` runs on every open of the feature screen
+#: and `_summarise` opens every h5 header on the request thread — headers that never change on the
+#: read-only mirror, re-read on each visit. Worse than the milliseconds: HDF5 holds a global lock,
+#: so those "cheap" opens serialise against a running envelope read and the screen stalls behind it.
+#: The fingerprint keeps it honest — a stat-walk per request, h5 opens only when a file actually
+#: changed — and the attach job primes it, having just paid for the very same summary.
+_SUMMARY_CACHE: dict[str, tuple[tuple, tuple[list[dict], int | None, float | None]]] = {}
+_SUMMARY_CACHE_LOCK = threading.Lock()
+_SUMMARY_CACHE_MAX = 8
+
+
+def _summary_fingerprint(paths: list[Path]) -> tuple:
+    out = []
+    for p in paths:
+        try:
+            st = p.stat()
+            out.append((str(p), st.st_size, st.st_mtime_ns))
+        except OSError:
+            out.append((str(p), -1, -1))                 # unreadable is a state too; cache on it
+    return tuple(out)
+
+
+def _remember_summary(mea_dir: str, fingerprint: tuple,
+                      summary: tuple[list[dict], int | None, float | None]) -> None:
+    recs, stride, pitch = summary
+    with _SUMMARY_CACHE_LOCK:
+        while len(_SUMMARY_CACHE) >= _SUMMARY_CACHE_MAX and mea_dir not in _SUMMARY_CACHE:
+            _SUMMARY_CACHE.pop(next(iter(_SUMMARY_CACHE)))
+        _SUMMARY_CACHE[mea_dir] = (fingerprint, ([dict(r) for r in recs], stride, pitch))
+
+
+def _summarise_cached(mea_dir: str,
+                      paths: list[Path]) -> tuple[list[dict], int | None, float | None]:
+    """`_summarise`, but the h5 headers are only re-opened when a file changed."""
+    fp = _summary_fingerprint(paths)
+    with _SUMMARY_CACHE_LOCK:
+        hit = _SUMMARY_CACHE.get(mea_dir)
+        if hit is not None and hit[0] == fp:
+            recs, stride, pitch = hit[1]
+            return [dict(r) for r in recs], stride, pitch
+    summary = _summarise(paths)                          # LayoutDisagreement propagates, uncached
+    _remember_summary(mea_dir, fp, summary)
+    return summary
+
+
 @router.get("/api/videomosaic/{analysis_id}/mea", response_model=MeaAttachment)
 def get_mea(analysis_id: str) -> dict:
     """What electrical data this project has. Empty-but-fine when nothing is attached yet."""
@@ -1039,7 +1086,7 @@ def get_mea(analysis_id: str) -> dict:
                 "orientation": _orientation_of(block).as_dict()}
     paths = mearecording.find_recordings(block["mea_dir"])
     try:
-        recs, stride, pitch = _summarise(paths)
+        recs, stride, pitch = _summarise_cached(str(block["mea_dir"]), paths)
     except LayoutDisagreement as e:
         raise ApiError(409, "refused", str(e)) from e
     return {"attached": bool(recs), "mea_dir": block["mea_dir"], "recordings": recs,
@@ -1129,6 +1176,10 @@ def post_mea_attach(body: MeaAttachRequest) -> dict:
         if not recs:
             raise RuntimeError(
                 "found recording files but none could be read as a MaxLab recording")
+        # ⭐ Prime the summary cache: `GET .../mea` will ask for exactly this, on the request
+        # thread, the moment the panel refreshes — and this job has just paid for it.
+        _remember_summary(str(root).replace("\\", "/"), _summary_fingerprint(paths),
+                          (recs, stride, pitch))
 
         orientation = (mr.Orientation(**body.orientation.model_dump())
                        if body.orientation else _orientation_of(_mea_block(doc)))
